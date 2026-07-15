@@ -55,7 +55,7 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
 7. Open: diagonal movement (allowed? same cost?). Affects LoS and corner math —
    decide before dungeon-gen work. *(Elevated to Open Question 3 — this blocks
    implementation.)*
-8. **Commit feedback (added v0.3).** The feedback rule (2.3.7) applies to movement:
+8. **Commit feedback (added v0.3).** The feedback rule (2.3.4) applies to movement:
    pressing a move renders an instant, local **"commit sent"** acknowledgment, so the
    player always knows the input registered. The **verdict** — glide start, or a rejection
    "bonk" (sound + visual) when the destination is reserved (2.2.5) — always comes from
