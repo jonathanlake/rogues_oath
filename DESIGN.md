@@ -52,9 +52,11 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    second entity committing into a reserved tile fails (input rejected; no queuing for v1).
 6. Attack of opportunity: starting a glide out of a tile adjacent to a hostile that is alive and
    able to act grants that hostile one free attack.
-7. Open: diagonal movement (allowed? same cost?). Affects LoS and corner math —
-   decide before dungeon-gen work. *(Elevated to Open Question 3 — this blocks
-   implementation.)*
+7. **Diagonal movement (decided 2026-07-15, Jeff — see Part 4 Q3):** 8-way movement;
+   a diagonal glide costs a duration multiplier on the step (designer-tunable `@export`,
+   default 2.0× — between Pathfinder's 1.5× and Tibia's 3× — tuned in playtest).
+   Corner-cut/squeeze reservation rules and diagonal LoS math get defined when the
+   movement and dungeon-visibility milestones build them.
 8. **Commit feedback (added v0.3).** The feedback rule (2.3.4) applies to movement:
    pressing a move renders an instant, local **"commit sent"** acknowledgment, so the
    player always knows the input registered. The **verdict** — glide start, or a rejection
@@ -197,11 +199,14 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    save-on-quit / resume story? Note the reused host-left UX (2.5.2) handles the
    disconnect moment either way — this question is about whether the run state survives it.
 
-3. **Diagonal movement.** **[BLOCKS IMPLEMENTATION]** Allowed? Same cost as
-   cardinal? This decides LoS and corner math for dungeon generation *and* the
-   adjacency/AoO rules for combat — it's the first design decision needed before the grid,
-   movement, or dungeon-gen code gets written. (DCSS is 8-way; Tibia is 8-way with
-   heavily penalized diagonals.)
+3. **Diagonal movement.** **ANSWERED (Jeff, 2026-07-15): Option C — 8-way with a
+   diagonal duration penalty.** ("Every roguelike I play uses B, but I do know that
+   diagonal is faster; in Pathfinder it takes more movement points to move diagonal, so I
+   trust that C will be a decent enough compromise for now.") Recorded in §2.2.7:
+   designer-tunable multiplier, default 2.0×. Options considered: A) 4-way — simplest
+   rules, mis-press-proof; B) 8-way equal cost — classic feel, but real-time glides make
+   diagonals visibly ~40% faster (a kiting buff); C) 8-way penalized — Tibia's 25-year
+   live-multiplayer precedent (3×), Pathfinder's tabletop rule (1.5×).
 
 4. **Origin-tile timing during a glide.** Is the departed tile freed at glide start or held until the
    glide ends? Affects chase/kiting feel, body-blocking in corridors, and whether allies can
