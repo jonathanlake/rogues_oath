@@ -11,9 +11,17 @@ config_version=5
 [application]
 
 config/name="Rogue's Oath"
+run/main_scene="res://ui/main_menu/main_menu.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
 config/tags=PackedStringArray("2d", "multiplayer")
+
+[autoload]
+
+GameManager="*res://autoloads/game_manager.gd"
+NetworkManager="*res://autoloads/network_manager.gd"
+GameEvents="*res://autoloads/game_events.gd"
+Debug="*res://debug/debug.gd"
 
 [display]
 

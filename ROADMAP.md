@@ -14,7 +14,7 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
 - [x] **M0 — Foundations** *(2026-07-15)*
   DESIGN.md v0.3, CLAUDE.md router, git repo, 32rogues assets, v0.3 PDF exported for Jeff.
 
-- [ ] **M1 — See Each Other** *(next up)* **[size S]**
+- [x] **M1 — See Each Other** *(2026-07-15)* **[size S]**
   The smallest real multiplayer milestone. Lift from MWF: `network_manager.gd`
   (near-verbatim), minimal GameManager/GameConfig, simplified 2D host/join menu. Fresh
   `main.tscn`/`main.gd`: MultiplayerSpawner, `peer_ready` flow, player = 32rogues sprite +
