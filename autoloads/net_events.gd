@@ -6,9 +6,14 @@ extends Node
 ## attacks, and item use all land on this same pipe.
 ##
 ## Topology: listen-server. The host (peer 1) is the authority AND a player; there is no
-## dedicated server and NO host migration. `seq` is a per-SESSION counter that resets to 0
-## with every fresh host — it is meaningful only within one host's lifetime, never persisted
-## or reconciled across a host change.
+## dedicated server and NO host migration. `seq` is a per-SESSION counter — it is meaningful
+## only within one host's lifetime, never persisted or reconciled across a host change. It is
+## reset (with the handler registry) by the session root on teardown via reset_session(), not
+## automatically per-host: the autoload outlives any one session.
+##
+## Admission is deferred: this pipe does NOT verify that a sender belongs to the session — no
+## pipe-level membership/admission gate exists yet. Until M2 designs the shared gate, EACH
+## validator must check membership itself (e.g. chat rejects senders with no player node).
 ##
 ## The shape, in one breath: any peer calls submit_intent(action, data). The host runs it
 ## through the registered validator; on accept it stamps a monotonic event and broadcasts it
@@ -27,11 +32,34 @@ signal intent_rejected(action: String, reason: String)
 # action name -> validator Callable(sender_peer_id: int, data: Dictionary) -> Dictionary.
 var _handlers: Dictionary = {}
 # Host-only monotonic event counter. seq IS the ordering field for all clients; it starts at
-# 1 for the first accepted event of a session. Resets to 0 here because there is no host
-# migration — a new host is a new session.
+# 1 for the first accepted event of a session. Reset to 0 by reset_session() on teardown (no
+# host migration — a new session is a fresh counter).
 var _seq: int = 0
+# Compiled once, reused for every sanitize_wire_text call: matches a single C0 control char
+# (incl. newline/CR/tab) so wire text can be flattened without a per-char scan.
+static var _control_char_re: RegEx = RegEx.create_from_string("[\\x00-\\x1f]")
 
 # ── Public methods ────────────────────────────────────────────────────────────
+
+## Flatten untrusted wire text into a single-line, length-capped display string. Shared by
+## every validator/name path so control-char forgery (fake newlines splitting one message into
+## several log lines, embedded NULs) has exactly one chokepoint. strip → flatten every control
+## char to a space (cached RegEx, not a per-char loop) → clamp → strip again so a clamp that
+## lands mid-space or a leading/trailing flattened char leaves no ragged edge.
+static func sanitize_wire_text(s: String, max_chars: int) -> String:
+	var t := s.strip_edges()
+	t = _control_char_re.sub(t, " ", true)
+	t = t.left(max_chars)
+	return t.strip_edges()
+
+
+## Clear the pipe for a fresh session: drop every registered validator and reset the event
+## counter. Called by the session root on teardown (it owns session lifetime); the autoload
+## itself persists across sessions, so nothing else is safe to assume about carry-over state.
+func reset_session() -> void:
+	_handlers.clear()
+	_seq = 0
+
 
 ## Submit an intent to the referee. Identical call on host and client: the host adjudicates
 ## locally (no RPC round-trip to itself); a client ships it to peer 1. The caller never learns
@@ -64,7 +92,20 @@ func _handle_intent(sender: int, action: String, data: Dictionary) -> void:
 	if not _handlers.has(action):
 		_reject(sender, action, "unknown action")
 		return
-	var verdict: Dictionary = _handlers[action].call(sender, data)
+	# Guard the Callable itself: a freed validator target (e.g. the session root torn down
+	# mid-flight) leaves a stale-but-registered entry. Calling it would abort the frame, so
+	# reject cleanly instead.
+	if not _handlers[action].is_valid():
+		push_error("[NetEvents] validator for '%s' is no longer valid" % action)
+		_reject(sender, action, "validator invalid")
+		return
+	# Call untyped: a validator that returns Nil (missing return path) assigned into a typed
+	# Dictionary would hard-abort. Type-check the verdict and reject instead of crashing.
+	var verdict = _handlers[action].call(sender, data)
+	if typeof(verdict) != TYPE_DICTIONARY:
+		push_error("[NetEvents] validator for '%s' returned non-Dictionary" % action)
+		_reject(sender, action, "validator error")
+		return
 	if not verdict.get("ok", false):
 		_reject(sender, action, str(verdict.get("reason", "rejected")))
 		return
@@ -84,15 +125,20 @@ func _handle_intent(sender: int, action: String, data: Dictionary) -> void:
 ## Single accept-path trace + signal emit, run once per peer as _rpc_event lands (call_local
 ## means the host runs it too). This is the ONLY stdout print on the accept path.
 func _emit_event(event: Dictionary) -> void:
-	print("[NetEvents] seq=%d peer=%d %s %s" % [
-		event.get("seq", 0), event.get("peer", 0), event.get("action", ""), event.get("data", {})])
+	# Trace is the harness's verification channel (debug builds only): release skips the
+	# per-event stringify + stdout write.
+	if OS.is_debug_build():
+		print("[NetEvents] seq=%d peer=%d %s %s" % [
+			event.get("seq", 0), event.get("peer", 0), event.get("action", ""), event.get("data", {})])
 	event_received.emit(event)
 
 
 ## Single reject-path emit + trace, shared by host-local rejects and the client-bound RPC, so
 ## the trace fires exactly once on the sender's instance regardless of who the sender is.
 func _emit_reject(action: String, reason: String) -> void:
-	print("[NetEvents] rejected %s: %s" % [action, reason])
+	# Same debug-only gate as the accept trace: harness verification in debug, silent in release.
+	if OS.is_debug_build():
+		print("[NetEvents] rejected %s: %s" % [action, reason])
 	intent_rejected.emit(action, reason)
 
 

@@ -12,11 +12,24 @@ extends Node
 ## capture, no window focus games, and the clean quit() avoids force-kill teardown noise.
 @export var screenshot_delay_sec: float = 6.0
 
-## Delay before an autostart `say=` fires. Long enough that in the two-instance harness (client
-## launches ~3s after the host) BOTH peers are already connected when EITHER fires — there is no
-## late-join event replay (DESIGN §2.7), so an event broadcast before a peer connects is gone
-## for that peer. Exercises the real pipe (submit_intent), never a bypass.
+## Delay before the HOST's autostart `say=` fires. Long enough that a client launched a few
+## seconds later has connected and spawned first — there is no late-join event replay
+## (DESIGN §2.7), so an event broadcast before a peer connects is gone for that peer. The
+## CLIENT's say is NOT on a blind timer: it is anchored to its own connection event (see
+## _on_autostart_connected) so the host is guaranteed present when it fires. Exercises the real
+## pipe (submit_intent), never a bypass.
 @export var say_delay_sec: float = 5.0
+
+## Settle delay after the CLIENT connects before its `say=` fires — just long enough for the
+## scene change + host-side spawn to land. Short because the connection event already
+## guarantees the host is up (unlike the host's fixed wait for an unknown client).
+@export var client_say_settle_sec: float = 1.0
+
+# Parsed autostart chat payload, stashed so the client can fire it from its connection handler
+# (CONNECT_ONE_SHOT, no args) instead of a blind timer. has_say (not is_empty) tracks presence,
+# since "say=   " (whitespace) is a valid reject-path test value.
+var _say_text: String = ""
+var _has_say: bool = false
 
 
 func _ready() -> void:
@@ -26,17 +39,20 @@ func _ready() -> void:
 	var is_host := "host" in args or "server" in args
 	var is_client := "join" in args or "client" in args
 
-	# say=<text> may contain spaces — a quoted arg arrives as ONE token, so parse by prefix
-	# (like screenshot=) rather than splitting on whitespace. has_say (not is_empty) tracks
-	# presence, since "say=   " (whitespace) is a valid reject-path test value.
-	var say_text := ""
-	var has_say := false
+	# say=<text> / name=<text> may contain spaces — a quoted arg arrives as ONE token, so parse
+	# by prefix (like screenshot=) rather than splitting on whitespace. name= overrides the
+	# autostart player name so hostile-name injection (e.g. `name=[color=red]x`) is testable E2E.
+	var name_text := ""
+	var has_name := false
 	for arg in args:
 		if arg.begins_with("screenshot="):
 			_schedule_screenshot(arg.trim_prefix("screenshot="))
 		elif arg.begins_with("say="):
-			say_text = arg.trim_prefix("say=")
-			has_say = true
+			_say_text = arg.trim_prefix("say=")
+			_has_say = true
+		elif arg.begins_with("name="):
+			name_text = arg.trim_prefix("name=")
+			has_name = true
 
 	if not (is_host or is_client):
 		return
@@ -47,17 +63,21 @@ func _ready() -> void:
 
 	if is_host:
 		DisplayServer.window_set_title("HOST")
-		GameManager.player_name = "HOST"
+		# name= overrides the default BEFORE host_game(), so the host's own player carries the
+		# injected name through the real spawn/sanitize path.
+		GameManager.player_name = name_text if has_name else "HOST"
 		print("[Debug] autostart: hosting on port %d" % NetworkManager.DEFAULT_PORT)
 		if NetworkManager.host_game() != OK:
 			push_error("[Debug] autostart host failed")
 			return
 		get_tree().change_scene_to_packed(load(GameManager.MAIN_SCENE))
-		if has_say:
-			_schedule_say(say_text)
+		# Host waits a fixed span for a client to join before saying anything.
+		if _has_say:
+			_schedule_say(_say_text, say_delay_sec)
 	elif is_client:
 		DisplayServer.window_set_title("CLIENT")
-		GameManager.player_name = "CLIENT"
+		# name= overrides the default BEFORE join_game(), so peer_ready ships the injected name.
+		GameManager.player_name = name_text if has_name else "CLIENT"
 		print("[Debug] autostart: joining 127.0.0.1:%d" % NetworkManager.DEFAULT_PORT)
 		# This bypasses the menu's join flow (its _connecting flag stays false), so the menu
 		# swallows connection_failed by design. A test harness must fail LOUDLY, not hang on
@@ -67,23 +87,24 @@ func _ready() -> void:
 			get_tree().quit(1))
 		NetworkManager.connection_succeeded.connect(_on_autostart_connected, CONNECT_ONE_SHOT)
 		NetworkManager.join_game("127.0.0.1")
-		if has_say:
-			_schedule_say(say_text)
 
 
 # Success-path scene transition, owned by INITIATOR: this handler is only ever connected
 # for joins debug.gd itself started, so it transitions unconditionally. The menu's own
 # success handler guards on its _connecting flag (false for autostart joins), so exactly
-# one of the two paths acts — never both.
+# one of the two paths acts — never both. The client's say is scheduled HERE (not on a blind
+# timer) so it fires only once the connection is real and the host is guaranteed present.
 func _on_autostart_connected() -> void:
 	get_tree().change_scene_to_packed(load(GameManager.MAIN_SCENE))
+	if _has_say:
+		_schedule_say(_say_text, client_say_settle_sec)
 
 
-## Fire one chat intent through the real pipe after a short settle delay. Works identically on
-## host and client — submit_intent is the single public entry point; there is deliberately no
+## Fire one chat intent through the real pipe after a settle delay. Works identically on host
+## and client — submit_intent is the single public entry point; there is deliberately no
 ## host/client branch and no bypass. Debug is an autoload, so this survives the scene change.
-func _schedule_say(text: String) -> void:
-	await get_tree().create_timer(say_delay_sec).timeout
+func _schedule_say(text: String, delay_sec: float) -> void:
+	await get_tree().create_timer(delay_sec).timeout
 	NetEvents.submit_intent("chat", {"text": text})
 
 

@@ -8,9 +8,10 @@ extends Node2D
 ##    join with a plain client->host RPC (peer_ready) and the host decides.
 ## Nothing moves in this milestone: players just stand at their assigned spawn slots.
 
-# Brand-new scenes: referenced by res:// path until the editor assigns them a uid.
-var player_scene: PackedScene = preload("res://entities/player/player.tscn")
-var game_log_scene: PackedScene = preload("res://ui/game_log/game_log.tscn")
+# Brand-new scenes: referenced by res:// path until the editor assigns them a uid. Immutable,
+# so const (consts legitimately precede @export in script order).
+const PLAYER_SCENE: PackedScene = preload("res://entities/player/player.tscn")
+const GAME_LOG_SCENE: PackedScene = preload("res://ui/game_log/game_log.tscn")
 
 ## Server-side clamp on chat body length (chars). The referee never trusts the wire; the
 ## client's LineEdit does no length limiting, so the host is the only guard.
@@ -40,14 +41,17 @@ var _game_log: Node = null
 
 # Host-only: peer_id -> spawn slot index, so a disconnect frees the slot for reuse.
 var _slots: Dictionary = {}
-# Client-side one-shot guard so losing the host only bails to the menu once.
+# Teardown guard. Suppresses the child_exiting_tree "X left." spam when players leave because
+# the SESSION is ending (returning to menu, app quit) rather than one peer disconnecting.
+# INVARIANT: any deliberate session-teardown path added later (host quit-to-menu, etc.) MUST
+# set _leaving = true before it tears anything down. Also the client's one-shot host-left guard.
 var _leaving: bool = false
 
 
 func _ready() -> void:
 	# Add the log first, on EVERY peer, so the very first spawn's "joined." line has somewhere
 	# to go (the host spawns its own player later in this same _ready).
-	_game_log = game_log_scene.instantiate()
+	_game_log = GAME_LOG_SCENE.instantiate()
 	add_child(_game_log)
 
 	# Departure lines on EVERY peer: the host frees a leaver directly; clients see the same
@@ -61,7 +65,7 @@ func _ready() -> void:
 
 	# Runs on every peer with the same replicated config, so avatars match everywhere.
 	_spawner.spawn_function = func(data):
-		var player := player_scene.instantiate() as Player
+		var player := PLAYER_SCENE.instantiate() as Player
 		player.name = str(data.peer_id)
 		player.peer_id = data.peer_id
 		player.player_name = data.player_name
@@ -94,6 +98,20 @@ func _ready() -> void:
 		peer_ready.rpc_id(1, GameManager.player_name)
 		# Only clients can lose the host. NetworkManager re-emits and nulls the peer.
 		NetworkManager.server_disconnected.connect(_on_server_disconnected)
+
+
+## The session root owns session lifetime, so it clears the shared pipe when it leaves the
+## tree: drop stale validators (their target — this node — is going away) and reset the seq
+## counter for the next session. Safe on all peers; NetEvents outlives any one session.
+func _exit_tree() -> void:
+	NetEvents.reset_session()
+
+
+## Window close fires BEFORE node teardown, so we flip _leaving here to keep the departure hook
+## quiet while the whole app quits (otherwise every player's exit would log a bogus "X left.").
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		_leaving = true
 
 
 func _on_peer_connected(peer_id: int) -> void:
@@ -157,24 +175,23 @@ func _slot_position(index: int) -> Vector2:
 	return base + overflow_offset * float(over)
 
 
-## Host-only chat referee, registered with NetEvents in _ready. Strips the wire text, rejects
-## empty, clamps to chat_max_chars, and resolves the sender's display name from their player
-## node (fallback "Peer N" if it's gone). Returns rewritten data so the broadcast carries clean
-## body + server-resolved name — clients render only what the authority produced here.
+## Host-only chat referee, registered with NetEvents in _ready. Sanitizes the wire text (strip,
+## flatten control chars, clamp to chat_max_chars), rejects empty, enforces membership, and
+## resolves the sender's display name server-side from their player node. Returns rewritten data
+## so the broadcast carries clean body + server-resolved name — clients render only what the
+## authority produced here. NetEvents defers admission to each validator, so we do it here.
 func _validate_chat(sender_peer_id: int, data: Dictionary) -> Dictionary:
-	var text := str(data.get("text", "")).strip_edges()
+	# Single shared sanitizer (flattens internal newlines to spaces so one message can't
+	# masquerade as several log lines, strips control chars, clamps length).
+	var text := NetEvents.sanitize_wire_text(str(data.get("text", "")), chat_max_chars)
 	if text.is_empty():
 		return { "ok": false, "reason": "empty" }
-	text = text.left(chat_max_chars)
-	# Flatten control characters (incl. internal newlines) to spaces: a multi-line body would
-	# desync the log's paragraph accounting and let one message masquerade as several lines.
-	var clean := ""
-	for ch in text:
-		clean += " " if ch.unicode_at(0) < 0x20 else ch
-	text = clean
+	# Admission: only peers with a live player node are in the session. No fabricated "Peer N"
+	# fallback — a sender the host can't resolve is refused outright.
 	var player_node := _players.get_node_or_null(str(sender_peer_id))
-	var resolved: String = player_node.player_name if player_node else "Peer %d" % sender_peer_id
-	return { "ok": true, "data": { "text": text, "name": resolved } }
+	if player_node == null:
+		return { "ok": false, "reason": "not in session" }
+	return { "ok": true, "data": { "text": text, "name": player_node.player_name } }
 
 
 # ── RPCs ──────────────────────────────────────────────────────────────────────
@@ -188,10 +205,11 @@ func peer_ready(p_name: String) -> void:
 	# double-spawn, and break the name-IS-peer-id contract via Godot's auto-rename.
 	if _slots.has(peer_id):
 		return
-	# The referee never trusts the wire: clamp the client-supplied name server-side
-	# (strip, cap, fallback) before it enters the replicated spawn config. The menu's UI
-	# gate is UX; this is the authority's validation.
-	p_name = p_name.strip_edges().left(24)
+	# The referee never trusts the wire: sanitize the client-supplied name server-side (strip,
+	# flatten control chars — kills newline/NUL forgery in names — cap at 24) via the shared
+	# wire-text sanitizer before it enters the replicated spawn config. The menu's UI gate is
+	# UX; this is the authority's validation. Empty after sanitizing falls back to "Player".
+	p_name = NetEvents.sanitize_wire_text(p_name, 24)
 	if p_name.is_empty():
 		p_name = "Player"
 	# Capacity gate (+1 for the host itself). The transport already caps clients at

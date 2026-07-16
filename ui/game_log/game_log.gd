@@ -17,13 +17,16 @@ extends CanvasLayer
 @onready var _log: RichTextLabel = $Panel/VBox/Log
 @onready var _input: LineEdit = $Panel/VBox/Input
 
-# Paragraph count mirror. RichTextLabel exposes get_paragraph_count(), but tracking our own
-# counter keeps add_line's trim decision O(1) and independent of how bbcode maps to paragraphs.
-var _line_count: int = 0
-
 
 func _ready() -> void:
 	_input.text_submitted.connect(_on_input_submitted)
+	# Focus release lives on editing_toggled, not an Esc key branch: a focused LineEdit
+	# consumes ui_cancel in its own gui_input before _unhandled_input ever sees it (verified in
+	# engine source), and unedit() does NOT release focus in 4.x. editing_toggled(false) fires
+	# for BOTH Esc and click-away, so this one hook covers every way editing ends. Releasing
+	# focus matters for M2: the movement gate reads gui_get_focus_owner(), so a lingering focus
+	# would silently swallow movement input. (The send path clears too — double clear is harmless.)
+	_input.editing_toggled.connect(_on_editing_toggled)
 	NetEvents.event_received.connect(_on_event_received)
 	# The referee's refusals surface HERE (DESIGN §2.3.4: a rejection must never be silent —
 	# the sender sees why their message vanished). Only the sender's instance receives these.
@@ -31,32 +34,38 @@ func _ready() -> void:
 
 
 # Focus flow lives here, not on the LineEdit, so the log owns "am I typing?" end-to-end.
-# Enter while unfocused grabs the input; Esc while focused clears + releases without sending
-# (submitting is text_submitted's job, wired in _ready). Handled (not _input) so a focused
-# LineEdit consumes its own keys first — we only see Enter when nothing else wanted it.
+# Enter while unfocused grabs the input; the send/cancel side is handled by text_submitted and
+# editing_toggled (wired in _ready). Handled (not _input) so a focused LineEdit consumes its
+# own keys first — we only see Enter when nothing else wanted it.
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if (event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER) and not _input.has_focus():
 			_input.grab_focus()
 			get_viewport().set_input_as_handled()
-		elif event.keycode == KEY_ESCAPE and _input.has_focus():
-			_input.clear()
-			_input.release_focus()
-			get_viewport().set_input_as_handled()
 
 # ── Public methods ────────────────────────────────────────────────────────────
 
-## Append one line. append_text is fine at chat volume (comment retained deliberately: if
-## combat spam ever chafes on the string rebuilds, revisit — e.g. batch or switch to
-## add_text). Enforces the max_lines cap by dropping the oldest paragraph as we grow past it.
+## Append one PLAIN-TEXT line — the input is escaped here at the sink, so callers never worry
+## about a name or reason containing bbcode. Every system line (join/left/reject) flows through
+## here. The chat renderer is the one exception: it composes markup and uses _append_markup.
 func add_line(text: String) -> void:
-	_log.append_text(text + "\n")
-	_line_count += 1
-	if _line_count > max_lines:
-		_log.remove_paragraph(0)
-		_line_count -= 1
+	_append_markup(_escape_bbcode(text))
 
 # ── Private methods ───────────────────────────────────────────────────────────
+
+# Append an already-composed markup line (bbcode intended to render) and enforce the ring cap.
+# The ONLY caller that legitimately passes live markup is the chat renderer, which escapes each
+# field first and wraps the escaped pieces (escape-then-wrap) — plain-text callers go through
+# add_line, which escapes for them. append_text is fine at chat volume (if combat spam ever
+# chafes on the string rebuilds, revisit — e.g. batch or switch to add_text).
+func _append_markup(line: String) -> void:
+	_log.append_text(line + "\n")
+	# Trim straight off get_paragraph_count() — no mirrored counter to drift. The +1 accounts
+	# for the trailing empty paragraph the final "\n" leaves. no_invalidate=true is safe because
+	# every line is self-contained (no wraps spanning removed paragraphs), making this O(1).
+	while _log.get_paragraph_count() > max_lines + 1:
+		_log.remove_paragraph(0, true)
+
 
 func _on_input_submitted(text: String) -> void:
 	# Empty/whitespace: just drop focus, send nothing (no wasted intent, no empty chat event).
@@ -70,6 +79,15 @@ func _on_input_submitted(text: String) -> void:
 	_input.release_focus()
 
 
+# Editing ended (Esc, click-away, or focus loss). Clear the pending text and release focus so
+# the M2 movement gate (gui_get_focus_owner) sees no focused LineEdit. See _ready for why this
+# lives here rather than on an Esc key branch.
+func _on_editing_toggled(toggled_on: bool) -> void:
+	if not toggled_on:
+		_input.clear()
+		_input.release_focus()
+
+
 func _on_event_received(event: Dictionary) -> void:
 	if event.get("action", "") != "chat":
 		return
@@ -79,7 +97,7 @@ func _on_event_received(event: Dictionary) -> void:
 	# inject markup into the log.
 	var display_name := _escape_bbcode(str(data.get("name", "")))
 	var body := _escape_bbcode(str(data.get("text", "")))
-	add_line("[b]%s[/b]: %s" % [display_name, body])
+	_append_markup("[b]%s[/b]: %s" % [display_name, body])
 
 
 func _on_intent_rejected(action: String, reason: String) -> void:
