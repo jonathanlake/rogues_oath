@@ -10,9 +10,6 @@ extends Node2D
 
 # Brand-new scene: referenced by res:// path until the editor assigns it a uid.
 var player_scene: PackedScene = preload("res://entities/player/player.tscn")
-# Loaded (not preloaded) so returning to the menu can't create a cyclic scene dependency
-# with main_menu.gd, which preloads this scene.
-const _MENU_SCENE_PATH := "res://ui/main_menu/main_menu.tscn"
 
 ## Server-assigned spawn slots. The host hands each player a spawn_index; every peer derives
 ## the same position from it, so no single shared hardcoded point and no client authority.
@@ -47,6 +44,9 @@ func _ready() -> void:
 		player.player_name = data.player_name
 		player.spawn_index = int(data.spawn_index)
 		player.position = _slot_position(int(data.spawn_index))
+		# get_child_count() here is deliberate: this logs the PEER-LOCAL render count (the
+		# spawn_function runs on every peer; clients don't have _slots — that's the host's
+		# authority bookkeeping, used by the capacity gate in peer_ready).
 		print("[peer %d] spawned player '%s' (peer %d) at slot %d — %d player(s) total" % [
 			multiplayer.get_unique_id(), player.player_name, player.peer_id,
 			player.spawn_index, _players.get_child_count() + 1])
@@ -87,7 +87,7 @@ func _on_server_disconnected() -> void:
 	_leaving = true
 	print("[CLIENT] server disconnected — returning to menu")
 	NetworkManager.disconnect_game()
-	get_tree().change_scene_to_packed(load(_MENU_SCENE_PATH))
+	get_tree().change_scene_to_packed(load(GameManager.MENU_SCENE))
 
 
 ## Host-only. Builds the replicated spawn config. spawn_index is the server-assigned slot;
@@ -131,10 +131,17 @@ func _slot_position(index: int) -> Vector2:
 @rpc("any_peer", "call_remote", "reliable")
 func peer_ready(p_name: String) -> void:
 	var peer_id := multiplayer.get_remote_sender_id()
-	# Duplicate guard: a re-sent peer_ready would spawn a second node Godot auto-renames,
-	# breaking the name-IS-peer-id contract every host lookup relies on.
-	if _players.get_node_or_null(str(peer_id)) != null:
+	# Duplicate guard via _slots (synchronous bookkeeping), not a node lookup: a re-sent
+	# peer_ready in the same frame could race a spawn whose node isn't in the tree yet,
+	# double-spawn, and break the name-IS-peer-id contract via Godot's auto-rename.
+	if _slots.has(peer_id):
 		return
+	# The referee never trusts the wire: clamp the client-supplied name server-side
+	# (strip, cap, fallback) before it enters the replicated spawn config. The menu's UI
+	# gate is UX; this is the authority's validation.
+	p_name = p_name.strip_edges().left(24)
+	if p_name.is_empty():
+		p_name = "Player"
 	# Capacity gate (+1 for the host itself). The transport already caps clients at
 	# max_players - 1; this is the backstop — kick so an over-capacity peer falls back to
 	# its menu (via server_disconnected) instead of sitting connected-but-playerless.

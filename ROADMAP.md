@@ -26,9 +26,11 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   basic disconnect paths work.
 
 - [ ] **M1.2 — Session Hardening** **[size S]**
-  Over-capacity join kicked back to menu; `peer_ready` dedup guard (the name-IS-peer-id
-  race); host-left overlay polish; clean NetworkManager reset so a second host/join in
-  one app run works.
+  Host-left overlay polish. Join handshake: `peer_ready` can theoretically arrive before
+  the host's main scene finishes loading (same-frame localhost joins) and be silently
+  dropped — add a retry/ack so a client can't wait forever (GLM sweep finding, 2026-07-15).
+  (Capacity kick, dedup guard, NetworkManager reset, and server-side name clamping shipped
+  early — M1 + the code-smell pass already cover them.)
 
 - [ ] **M1.3 — Event Pipe** **[size S]**
   The referee plumbing all gameplay will use: client intent RPC → host validates + stamps

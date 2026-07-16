@@ -5,8 +5,6 @@ extends Node
 ## keyword is present, skips the menu and drives the same host/join path the menu uses. This is
 ## the two-instance test harness: launch one instance with `-- host` and one with `-- join`.
 
-# Brand-new scene: referenced by res:// path until the editor assigns it a uid.
-var _main_scene: PackedScene = preload("res://main.tscn")
 
 
 ## Verification aid: `-- host screenshot=C:/path/out.png` makes this instance save its OWN
@@ -40,7 +38,7 @@ func _ready() -> void:
 		if NetworkManager.host_game() != OK:
 			push_error("[Debug] autostart host failed")
 			return
-		get_tree().change_scene_to_packed(_main_scene)
+		get_tree().change_scene_to_packed(load(GameManager.MAIN_SCENE))
 	elif is_client:
 		DisplayServer.window_set_title("CLIENT")
 		GameManager.player_name = "CLIENT"
@@ -51,8 +49,16 @@ func _ready() -> void:
 		NetworkManager.connection_failed.connect(func():
 			push_error("[Debug] autostart join FAILED — is a host running?")
 			get_tree().quit(1))
-		# main_menu._on_connection_succeeded handles the scene transition.
+		NetworkManager.connection_succeeded.connect(_on_autostart_connected, CONNECT_ONE_SHOT)
 		NetworkManager.join_game("127.0.0.1")
+
+
+# Success-path scene transition, owned by INITIATOR: this handler is only ever connected
+# for joins debug.gd itself started, so it transitions unconditionally. The menu's own
+# success handler guards on its _connecting flag (false for autostart joins), so exactly
+# one of the two paths acts — never both.
+func _on_autostart_connected() -> void:
+	get_tree().change_scene_to_packed(load(GameManager.MAIN_SCENE))
 
 
 func _schedule_screenshot(path: String) -> void:

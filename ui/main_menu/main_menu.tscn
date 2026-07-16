@@ -1,8 +1,8 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://cvxjobklm0gc3"]
 
-[ext_resource type="Script" path="res://ui/main_menu/main_menu.gd" id="1_menu"]
+[ext_resource type="Script" uid="uid://cd0u5eg46qei1" path="res://ui/main_menu/main_menu.gd" id="1_menu"]
 
-[node name="MainMenu" type="Control"]
+[node name="MainMenu" type="Control" unique_id=2067551728]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -11,16 +11,16 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_menu")
 
-[node name="Background" type="ColorRect" parent="."]
+[node name="Background" type="ColorRect" parent="." unique_id=544638346]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.09, 0.09, 0.12, 1)
+color = Color(9.62615e-07, 0.30586717, 0.44093448, 1)
 
-[node name="VBoxContainer" type="VBoxContainer" parent="."]
+[node name="VBoxContainer" type="VBoxContainer" parent="." unique_id=815278139]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -31,39 +31,39 @@ grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/separation = 8
 
-[node name="Title" type="Label" parent="VBoxContainer"]
+[node name="Title" type="Label" parent="VBoxContainer" unique_id=268637912]
 custom_minimum_size = Vector2(260, 40)
 layout_mode = 2
 text = "Rogue's Oath"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="NameLineEdit" type="LineEdit" parent="VBoxContainer"]
+[node name="NameLineEdit" type="LineEdit" parent="VBoxContainer" unique_id=1327008165]
 custom_minimum_size = Vector2(260, 50)
 layout_mode = 2
 placeholder_text = "Name"
 
-[node name="IpLineEdit" type="LineEdit" parent="VBoxContainer"]
+[node name="IpLineEdit" type="LineEdit" parent="VBoxContainer" unique_id=1300082708]
 custom_minimum_size = Vector2(260, 50)
 layout_mode = 2
 text = "127.0.0.1"
 placeholder_text = "IP or IP:port"
 
-[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer"]
+[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer" unique_id=1959746887]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="HostButton" type="Button" parent="VBoxContainer/HBoxContainer"]
+[node name="HostButton" type="Button" parent="VBoxContainer/HBoxContainer" unique_id=1629825934]
 custom_minimum_size = Vector2(120, 60)
 layout_mode = 2
 text = "Host"
 
-[node name="JoinButton" type="Button" parent="VBoxContainer/HBoxContainer"]
+[node name="JoinButton" type="Button" parent="VBoxContainer/HBoxContainer" unique_id=525199739]
 custom_minimum_size = Vector2(120, 60)
 layout_mode = 2
 text = "Join"
 
-[node name="ErrorLabel" type="Label" parent="VBoxContainer"]
+[node name="ErrorLabel" type="Label" parent="VBoxContainer" unique_id=741115608]
 custom_minimum_size = Vector2(260, 24)
 layout_mode = 2
 horizontal_alignment = 1

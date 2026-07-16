@@ -6,8 +6,6 @@ extends Control
 ##  - Join: start the client and wait. connection_succeeded changes scene;
 ##    connection_failed (or a bounded timeout) shows an error and stays on the menu.
 
-# Brand-new scene: referenced by res:// path until the editor assigns it a uid.
-var main_scene: PackedScene = preload("res://main.tscn")
 
 @onready var name_input: LineEdit = $VBoxContainer/NameLineEdit
 @onready var ip_input: LineEdit = $VBoxContainer/IpLineEdit
@@ -16,12 +14,10 @@ var main_scene: PackedScene = preload("res://main.tscn")
 @onready var error_label: Label = $VBoxContainer/ErrorLabel
 
 const JOIN_TIMEOUT_SEC := 5.0
+const NAME_HINT := "Enter a name to play"
 
 var _connecting: bool = false
 var _attempt_token: int = 0  # invalidates stale timeout timers from earlier attempts
-
-
-const NAME_HINT := "Enter a name to play"
 
 
 func _ready() -> void:
@@ -59,7 +55,7 @@ func _on_host_pressed() -> void:
 	if NetworkManager.host_game(port) != OK:
 		error_label.text = "Could not host on port %d (already in use?)." % port
 		return
-	get_tree().change_scene_to_packed(main_scene)
+	get_tree().change_scene_to_packed(load(GameManager.MAIN_SCENE))
 
 
 func _on_join_pressed() -> void:
@@ -92,8 +88,14 @@ func _on_join_timeout(token: int) -> void:
 
 
 func _on_connection_succeeded() -> void:
+	# Ownership rule: the menu only transitions for joins IT initiated (_connecting).
+	# Guards two cases: a stale success arriving after our timeout already tore the peer
+	# down (would otherwise enter the game with a dead peer), and debug-autostart joins,
+	# whose transition is owned by debug.gd's own one-shot handler.
+	if not _connecting:
+		return
 	_connecting = false
-	get_tree().change_scene_to_packed(main_scene)
+	get_tree().change_scene_to_packed(load(GameManager.MAIN_SCENE))
 
 
 func _on_connection_failed() -> void:
