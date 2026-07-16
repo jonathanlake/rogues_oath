@@ -105,10 +105,7 @@ use it for all prototyping; re-check the license terms before any public release
 
 ## Status
 
-- **Exists today:** project shell, `DESIGN.md` (v0.3), this file, 32rogues assets. No code yet.
-- **Next milestone:** MWF plumbing extraction — two local instances, host + join, empty 2D
-  scene.
+- Current status + the milestone chain live in **`ROADMAP.md`** — read it at session start;
+  update its checkboxes in the milestone's final commit.
 - **Blocked:** grid / movement / dungeon-gen code is blocked on DESIGN.md Part 4 Q3
   (diagonal movement) — do not start those systems before it's decided.
-- **Named follow-up:** add a headless validation gate (parse / boot smoke, in the spirit of
-  MWF's `tools/validate.sh`) when the first code lands.
