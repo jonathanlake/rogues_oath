@@ -21,11 +21,33 @@ var _connecting: bool = false
 var _attempt_token: int = 0  # invalidates stale timeout timers from earlier attempts
 
 
+const NAME_HINT := "Enter a name to play"
+
+
 func _ready() -> void:
 	host_button.pressed.connect(_on_host_pressed)
 	join_button.pressed.connect(_on_join_pressed)
+	name_input.text_changed.connect(_on_name_changed)
 	NetworkManager.connection_succeeded.connect(_on_connection_succeeded)
 	NetworkManager.connection_failed.connect(_on_connection_failed)
+	_update_button_gate()
+
+
+# Host/Join require a non-empty name. The hint keeps disabled buttons reading as
+# intentional, not broken (the feedback rule's spirit); real errors overwrite it and a
+# name edit restores/clears appropriately.
+func _on_name_changed(_new_text: String) -> void:
+	_update_button_gate()
+
+
+func _update_button_gate() -> void:
+	var has_name := not name_input.text.strip_edges().is_empty()
+	host_button.disabled = not has_name or _connecting
+	join_button.disabled = not has_name or _connecting
+	if not has_name:
+		error_label.text = NAME_HINT
+	elif error_label.text == NAME_HINT:
+		error_label.text = ""
 
 
 func _on_host_pressed() -> void:
@@ -51,10 +73,9 @@ func _on_join_pressed() -> void:
 		ip = address.split(":", false, 1)[0]
 	var port := _parse_port(address)
 
-	host_button.disabled = true
-	join_button.disabled = true
-	error_label.text = "Connecting..."
 	_connecting = true
+	_update_button_gate()
+	error_label.text = "Connecting..."
 	_attempt_token += 1
 	var token := _attempt_token
 	NetworkManager.join_game(ip, port)
@@ -103,6 +124,5 @@ func _resolved_name() -> String:
 
 func _fail_connection(message: String) -> void:
 	_connecting = false
+	_update_button_gate()  # re-enable only if the name gate allows it
 	error_label.text = message
-	host_button.disabled = false
-	join_button.disabled = false
