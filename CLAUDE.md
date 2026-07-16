@@ -33,6 +33,12 @@ decision.
 
 - **GDScript only. 2D top-down tiles only.** No C#, no 3D nodes or 3D physics.
 
+- **Multiplayer-first, always.** Every feature is designed for and demonstrated in
+  two-instance multiplayer from its first commit. No offline-only code paths, no "we'll
+  network it later," no logic that assumes a single local player. If it can't be shown
+  working over the wire, it isn't done. (This is why milestone Done= criteria in ROADMAP.md
+  are two-instance demos.)
+
 - **The Commitment Rule is a code invariant** (DESIGN §2.1). Every action has a duration and
   plays to completion once started; no system — including UI — may cancel, interrupt-by-input,
   or redirect a committed action. Test every mechanic AND every implementation shortcut
