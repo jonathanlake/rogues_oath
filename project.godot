@@ -20,6 +20,7 @@ config/icon="res://icon.svg"
 
 GameManager="*res://autoloads/game_manager.gd"
 NetworkManager="*res://autoloads/network_manager.gd"
+NetEvents="*res://autoloads/net_events.gd"
 GameEvents="*res://autoloads/game_events.gd"
 Debug="*res://debug/debug.gd"
 

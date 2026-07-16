@@ -32,11 +32,12 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   (Capacity kick, dedup guard, NetworkManager reset, and server-side name clamping shipped
   early — M1 + the code-smell pass already cover them.)
 
-- [ ] **M1.3 — Event Pipe** **[size S]**
-  The referee plumbing all gameplay will use: client intent RPC → host validates + stamps
-  `{peer, action, duration, outcome, server_time}` → broadcast → all instances react.
-  Demo via one dev-console command visible on both instances. Dev console (MWF lift)
-  arrives here.
+- [x] **M1.3 — Event Pipe + Chat/Combat Log** *(2026-07-16)* **[size S]**
+  The referee plumbing all gameplay rides: `submit_intent` → host validator registry →
+  stamped `{seq, peer, action, data, server_time}` broadcast (+ reject-to-sender — the
+  §2.2.8 bonk seam). First passenger: player chat, rendered in the shared chat/combat log
+  panel (join/leave system lines included; the §2.3.4 combat-log surface). Dev console
+  (MWF lift) deferred to when it's needed.
 
 - [ ] **M1.5 — Wire Check** **[size S — needs Jeff ~20 min, schedule opportunistically]**
   Event round-trips between Jon's and Jeff's machines over the real internet; log median
@@ -103,6 +104,8 @@ Not scheduled — pulled in when their moment comes:
 - Shared-beat coordination mechanic (DESIGN §2.4.2) — only if a concrete need appears
 - Resource-editing GUI tool for designers (CLAUDE.md ground rule: design resources as if it
   already exists)
+- Chat polish: speech bubbles overhead (WoW-style), name colors (escape-then-wrap the
+  already-escaped name), timestamps, chat sounds
 
 ---
 

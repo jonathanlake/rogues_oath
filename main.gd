@@ -8,8 +8,13 @@ extends Node2D
 ##    join with a plain client->host RPC (peer_ready) and the host decides.
 ## Nothing moves in this milestone: players just stand at their assigned spawn slots.
 
-# Brand-new scene: referenced by res:// path until the editor assigns it a uid.
+# Brand-new scenes: referenced by res:// path until the editor assigns them a uid.
 var player_scene: PackedScene = preload("res://entities/player/player.tscn")
+var game_log_scene: PackedScene = preload("res://ui/game_log/game_log.tscn")
+
+## Server-side clamp on chat body length (chars). The referee never trusts the wire; the
+## client's LineEdit does no length limiting, so the host is the only guard.
+@export var chat_max_chars: int = 200
 
 ## Server-assigned spawn slots. The host hands each player a spawn_index; every peer derives
 ## the same position from it, so no single shared hardcoded point and no client authority.
@@ -29,6 +34,10 @@ var player_scene: PackedScene = preload("res://entities/player/player.tscn")
 @onready var _spawner: MultiplayerSpawner = $MultiplayerSpawner
 @onready var _players: Node2D = $Players
 
+# Chat/combat log, added on every peer in _ready. Held so spawn/disconnect can post system
+# lines through it. Set before the host spawns its own player so that spawn's "joined." lands.
+var _game_log: Node = null
+
 # Host-only: peer_id -> spawn slot index, so a disconnect frees the slot for reuse.
 var _slots: Dictionary = {}
 # Client-side one-shot guard so losing the host only bails to the menu once.
@@ -36,6 +45,20 @@ var _leaving: bool = false
 
 
 func _ready() -> void:
+	# Add the log first, on EVERY peer, so the very first spawn's "joined." line has somewhere
+	# to go (the host spawns its own player later in this same _ready).
+	_game_log = game_log_scene.instantiate()
+	add_child(_game_log)
+
+	# Departure lines on EVERY peer: the host frees a leaver directly; clients see the same
+	# node removed by the MultiplayerSpawner's despawn. Both paths exit the Players container,
+	# so this one hook covers all peers with no double-logging. _leaving guards the client's
+	# own teardown (returning to menu removes every player at once — that's not "X left.").
+	_players.child_exiting_tree.connect(func(node: Node):
+		if node is Player and not _leaving and is_instance_valid(_game_log):
+			print("[peer %d] %s left" % [multiplayer.get_unique_id(), node.player_name])
+			_game_log.add_line("%s left." % node.player_name))
+
 	# Runs on every peer with the same replicated config, so avatars match everywhere.
 	_spawner.spawn_function = func(data):
 		var player := player_scene.instantiate() as Player
@@ -50,9 +73,15 @@ func _ready() -> void:
 		print("[peer %d] spawned player '%s' (peer %d) at slot %d — %d player(s) total" % [
 			multiplayer.get_unique_id(), player.player_name, player.peer_id,
 			player.spawn_index, _players.get_child_count() + 1])
+		# System line, posted on every peer as the spawn event replicates (so everyone sees
+		# every join, including the host's own player at startup).
+		_game_log.add_line("%s joined." % player.player_name)
 		return player
 
 	if multiplayer.is_server():
+		# Host-only: the chat referee. Strip, reject empty, clamp, and resolve the sender's
+		# display name server-side (never from the payload) into the broadcast event's data.
+		NetEvents.register_handler("chat", _validate_chat)
 		print("[HOST] server started (peer %d) — spawning host player" % multiplayer.get_unique_id())
 		# Spawn the host's own player immediately — no RPC needed.
 		_spawner.spawn(_spawn_config(multiplayer.get_unique_id(), GameManager.player_name))
@@ -75,6 +104,9 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	_slots.erase(peer_id)
 	var player_node := _players.get_node_or_null(str(peer_id))
 	if player_node:
+		# Host-only handler (connected inside the is_server() branch of _ready). Just free the
+		# node — the "X left." line comes from the Players container's child_exiting_tree hook,
+		# which fires on every peer (host free here, clients via spawner despawn).
 		player_node.queue_free()
 		print("[HOST] peer %d disconnected — freed its player" % peer_id)
 
@@ -123,6 +155,26 @@ func _slot_position(index: int) -> Vector2:
 	var over := index - spawn_positions.size() + 1
 	var base: Vector2 = spawn_positions.back() if not spawn_positions.is_empty() else Vector2.ZERO
 	return base + overflow_offset * float(over)
+
+
+## Host-only chat referee, registered with NetEvents in _ready. Strips the wire text, rejects
+## empty, clamps to chat_max_chars, and resolves the sender's display name from their player
+## node (fallback "Peer N" if it's gone). Returns rewritten data so the broadcast carries clean
+## body + server-resolved name — clients render only what the authority produced here.
+func _validate_chat(sender_peer_id: int, data: Dictionary) -> Dictionary:
+	var text := str(data.get("text", "")).strip_edges()
+	if text.is_empty():
+		return { "ok": false, "reason": "empty" }
+	text = text.left(chat_max_chars)
+	# Flatten control characters (incl. internal newlines) to spaces: a multi-line body would
+	# desync the log's paragraph accounting and let one message masquerade as several lines.
+	var clean := ""
+	for ch in text:
+		clean += " " if ch.unicode_at(0) < 0x20 else ch
+	text = clean
+	var player_node := _players.get_node_or_null(str(sender_peer_id))
+	var resolved: String = player_node.player_name if player_node else "Peer %d" % sender_peer_id
+	return { "ok": true, "data": { "text": text, "name": resolved } }
 
 
 # ── RPCs ──────────────────────────────────────────────────────────────────────
