@@ -16,16 +16,18 @@ const _MENU_SCENE_PATH := "res://ui/main_menu/main_menu.tscn"
 
 ## Server-assigned spawn slots. The host hands each player a spawn_index; every peer derives
 ## the same position from it, so no single shared hardcoded point and no client authority.
+## Coordinates are DESIGN pixels (the 640x360 base viewport), never window pixels: a 3x2 grid
+## centered on (320,180), 96px (3 tiles) apart.
 @export var spawn_positions: Array[Vector2] = [
-	Vector2(360, 300),
-	Vector2(600, 300),
-	Vector2(360, 480),
-	Vector2(600, 480),
-	Vector2(480, 200),
-	Vector2(480, 560),
+	Vector2(224, 132),
+	Vector2(320, 132),
+	Vector2(416, 132),
+	Vector2(224, 228),
+	Vector2(320, 228),
+	Vector2(416, 228),
 ]
 ## Grid step (px) used to spread overflow players past the explicit slot list.
-@export var overflow_offset: Vector2 = Vector2(0, 120)
+@export var overflow_offset: Vector2 = Vector2(0, 96)
 
 @onready var _spawner: MultiplayerSpawner = $MultiplayerSpawner
 @onready var _players: Node2D = $Players
