@@ -113,5 +113,7 @@ use it for all prototyping; re-check the license terms before any public release
 
 - Current status + the milestone chain live in **`ROADMAP.md`** — read it at session start;
   update its checkboxes in the milestone's final commit.
+- If **`HANDOFF.md`** exists, a milestone is mid-flight — read it right after ROADMAP.md.
+  It records in-flight state only and is deleted in the milestone's final commit.
 - **Blocked:** grid / movement / dungeon-gen code is blocked on DESIGN.md Part 4 Q3
   (diagonal movement) — do not start those systems before it's decided.

@@ -114,3 +114,7 @@ Not scheduled — pulled in when their moment comes:
 One milestone per session-or-few. A milestone ends when its **Done =** criterion is
 demonstrated, not when the code compiles. Update this file's checkboxes in the milestone's
 final commit.
+
+Ending a session mid-milestone? Write `HANDOFF.md`, dated (what's done, what's in progress,
+next concrete step, surprises). Delete it in the milestone's final commit — a lingering
+HANDOFF.md means unfinished work; the date tells you how stale.
