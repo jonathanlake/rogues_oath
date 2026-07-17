@@ -48,6 +48,12 @@ func _ready() -> void:
 	# silent-drop race; maxplayers= forces the capacity-kick path with two windows.
 	var host_delay_sec := 0.0
 	var max_players := 0
+	# client-only wire-test knob (inert on the host, inert without the arg): join=<address[:port]>
+	# points a scripted client at a REMOTE host instead of localhost — the playit.gg tunnel /
+	# real-internet path for M1.5 testing. Limitation: bare IPv6 literals are unsupported (the
+	# first-colon split below can't tell them from ip:port), matching the menu's parser. Tunnel
+	# addresses are hostnames, so this is fine in practice.
+	var join_address := ""
 	for arg in args:
 		if arg.begins_with("screenshot="):
 			_schedule_screenshot(arg.trim_prefix("screenshot="))
@@ -61,6 +67,8 @@ func _ready() -> void:
 			host_delay_sec = arg.trim_prefix("hostdelay=").to_float()
 		elif arg.begins_with("maxplayers="):
 			max_players = arg.trim_prefix("maxplayers=").to_int()
+		elif arg.begins_with("join="):
+			join_address = arg.trim_prefix("join=")
 
 	if not (is_host or is_client):
 		return
@@ -97,7 +105,22 @@ func _ready() -> void:
 		DisplayServer.window_set_title("CLIENT")
 		# name= overrides the default BEFORE join_game(), so peer_ready ships the injected name.
 		GameManager.player_name = name_text if has_name else "CLIENT"
-		print("[Debug] autostart: joining 127.0.0.1:%d" % NetworkManager.DEFAULT_PORT)
+		# join= aims this client at a remote host; absent, it stays on localhost exactly as before.
+		# Split on the FIRST colon only (same shape as the menu's _on_join_pressed) into ip + optional
+		# port; an out-of-range or non-integer port falls back to DEFAULT_PORT rather than reaching
+		# ENet as a confusing failure.
+		var ip := "127.0.0.1"
+		var port := NetworkManager.DEFAULT_PORT
+		if not join_address.is_empty():
+			ip = join_address
+			if ":" in join_address:
+				var parts := join_address.split(":", false, 1)
+				ip = parts[0]
+				if parts.size() > 1 and parts[1].is_valid_int():
+					var parsed := parts[1].to_int()
+					if parsed >= 1 and parsed <= 65535:
+						port = parsed
+		print("[Debug] autostart: joining %s:%d" % [ip, port])
 		# This bypasses the menu's join flow (its _connecting flag stays false), so the menu
 		# swallows connection_failed by design. A test harness must fail LOUDLY, not hang on
 		# the menu forever — so handle failure here: report and quit nonzero.
@@ -105,7 +128,7 @@ func _ready() -> void:
 			push_error("[Debug] autostart join FAILED — is a host running?")
 			get_tree().quit(1))
 		NetworkManager.connection_succeeded.connect(_on_autostart_connected, CONNECT_ONE_SHOT)
-		NetworkManager.join_game("127.0.0.1")
+		NetworkManager.join_game(ip, port)
 
 
 # Success-path scene transition, owned by INITIATOR: this handler is only ever connected

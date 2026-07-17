@@ -45,6 +45,13 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
 - [ ] **M1.5 — Wire Check** **[size S — needs Jeff ~20 min, schedule opportunistically]**
   Event round-trips between Jon's and Jeff's machines over the real internet; log median
   RTT/jitter as a latency baseline. Validates NAT/reachability. Does not block M2.
+  *Pre-check (2026-07-17, same-PC through the playit.gg tunnel):* full join + chat
+  round-trip works via both `147.185.221.211:22619` and the ply.gg hostname (Godot
+  resolves TYPE_ANY → the A record; the AAAA is never picked on Jon's IPv4-only machine).
+  Jon's earlier "Could not connect" was transient playit-agent churn — its log looping
+  `udp channel requires auth` while the tunnel showed In>0/Out=0 B; it settled on its
+  own. If it recurs: restart the agent and retest with the raw-IP form (the two-address
+  discriminator). Harness knob for Jeff's session: `-- join join=<addr[:port]>`.
 
 - [ ] **M2 — Grid & Glide** **[size M]** *(unblocked — Q3 answered: 8-way, diagonal
   duration penalty, default 2.0×, DESIGN §2.2.7)*
