@@ -76,6 +76,10 @@ func _ready() -> void:
 	# host-only glide-duration override (seconds); inert on the client and without the arg.
 	# Stretches every glide's base step time so conga/timing tests are scriptable + observable.
 	var glide_override := 0.0
+	# host-only AoO demo knob (inert on the client, inert without the arg): hostile=1 makes every
+	# entity mutually hostile so a glide out of an adjacent tile fires the free_attack event — the
+	# two-instance demo of the attack-of-opportunity wiring before monsters exist (M3).
+	var all_hostile := false
 	for arg in args:
 		if arg.begins_with("screenshot="):
 			_schedule_screenshot(arg.trim_prefix("screenshot="))
@@ -99,6 +103,8 @@ func _ready() -> void:
 			_move_wait_sec = arg.trim_prefix("movewait=").to_float()
 		elif arg.begins_with("glidesec="):
 			glide_override = arg.trim_prefix("glidesec=").to_float()
+		elif arg.begins_with("hostile="):
+			all_hostile = arg.trim_prefix("hostile=").to_int() != 0
 
 	if not (is_host or is_client):
 		return
@@ -121,6 +127,10 @@ func _ready() -> void:
 		# so setting it any time before the moves fire is enough. Inert on the client.
 		if glide_override > 0.0:
 			GameManager.debug_glide_override_sec = glide_override
+		# hostile= is host-only: set the AoO demo flag before host_game() so the referee reads it
+		# the moment it adjudicates the first glide. Inert on the client and without the arg.
+		if all_hostile:
+			GameManager.all_hostile = true
 		print("[Debug] autostart: hosting on port %d" % NetworkManager.DEFAULT_PORT)
 		if NetworkManager.host_game() != OK:
 			push_error("[Debug] autostart host failed")

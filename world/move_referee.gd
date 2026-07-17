@@ -130,6 +130,14 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# completion timer and every client's tween, so the two can never disagree.
 	var duration := _step_duration(mover, dir)
 
+	# Attack of opportunity (DESIGN §2.2.6): starting a glide OUT of a tile grants a free attack to
+	# each hostile adjacent to the origin. Fired at verdict time, BEFORE the occupancy mutation below
+	# — the mover must still be counted at `from` (§2.2.6 "starting a glide out of a tile"), and in
+	# the conga branch the swap that follows erases `from` and claims `to`, which would change the
+	# adjacency this scan reads. Names are resolved host-side from the player nodes; no wire name is
+	# ever trusted or carried through.
+	_trigger_attacks_of_opportunity(from, sender_peer_id, mover)
+
 	# Mutate occupancy and record the glide, branching on the origin-timing toggle. Both branches
 	# live only here — clients never touch this state.
 	var token := _next_token
@@ -165,6 +173,35 @@ func _step_duration(mover: Player, dir: Vector2i) -> float:
 	if dir.x != 0 and dir.y != 0:
 		base *= GameManager.config.diagonal_step_multiplier
 	return base
+
+
+## Attack-of-opportunity scan (host-only, DESIGN §2.2.6). For each of the origin's 8 neighbours
+## holding a body, if that occupant's player node is hostile to the mover the host AUTHORS a
+## `free_attack` event on the pipe (peer=0, via NetEvents.post_event) — the wiring only, no damage:
+## M2 proves the trigger fires; combat resolution arrives in M3. Names are read from the player
+## nodes host-side, never carried from the wire.
+func _trigger_attacks_of_opportunity(from: Vector2i, mover_peer_id: int, mover: Player) -> void:
+	for dy in [-1, 0, 1]:
+		for dx in [-1, 0, 1]:
+			if dx == 0 and dy == 0:
+				continue
+			var neighbor := from + Vector2i(dx, dy)
+			if not _occupied.has(neighbor):
+				continue
+			var occupant_peer: int = _occupied[neighbor]
+			var occupant := _players.get_node_or_null(str(occupant_peer)) as Player
+			if occupant == null:
+				continue
+			# M3 adds the "alive and able to act" qualifiers here (§2.2.6) — trivially true in M2
+			# (no HP, no incapacitation yet), so every hostile neighbour gets its free attack.
+			if not occupant.is_hostile_to(mover):
+				continue
+			NetEvents.post_event("free_attack", {
+				"attacker_peer": occupant_peer,
+				"attacker_name": occupant.player_name,
+				"target_peer": mover_peer_id,
+				"target_name": mover.player_name,
+			})
 
 
 ## Completion timer callback. Stale-guard: only finalize if the peer's current glide is still the

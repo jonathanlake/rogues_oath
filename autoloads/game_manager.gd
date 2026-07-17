@@ -19,6 +19,12 @@ var player_name: String = ""
 ## the main menu shows it in its error label on _ready and clears it. Empty = none.
 var last_disconnect_reason: String = ""
 
+## DEBUG ONLY. When true, every entity is mutually hostile — the harness `hostile=1` knob sets it
+## host-side (before host_game()) so the attack-of-opportunity trigger can be demoed two-instance
+## before monsters exist (M3). Players are never hostile to each other in real play; gameplay code
+## never sets or reads this outside the AoO scan.
+var all_hostile: bool = false
+
 ## DEBUG ONLY. When > 0, the movement referee uses this (seconds) as every glide's BASE per-step
 ## time instead of the mover's GlideSpeed tier — set host-side via debug.gd's `glidesec=` arg to
 ## stretch glides long enough to script/observe conga timing. The diagonal multiplier still

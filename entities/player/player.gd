@@ -84,6 +84,14 @@ func _ready() -> void:
 
 # ── Public methods ────────────────────────────────────────────────────────────
 
+## Hostility test for the attack-of-opportunity trigger (DESIGN §2.2.6), read HOST-side by the
+## MoveReferee. Players are never mutually hostile in real play; the debug-only GameManager.all_hostile
+## flag exists solely so the AoO wiring can be honestly demoed two-instance BEFORE monsters exist
+## (M3) — when it's set, every entity counts as hostile to every other, itself excepted.
+func is_hostile_to(other: Node) -> bool:
+	return GameManager.all_hostile and other != self
+
+
 ## Play back a server-accepted glide (called on every peer by Main from the broadcast event).
 ## Idempotent-late-safe: it always kills any running tween and tweens from the CURRENT rendered
 ## position to the new target, so a verdict arriving after the client's safety-clear still renders

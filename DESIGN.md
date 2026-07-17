@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.3)
+# Rogue's Oath — Design Doc (v0.3.1)
 
 ## Part 1 — The Game
 
@@ -55,8 +55,13 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
 7. **Diagonal movement (decided 2026-07-15, Jeff — see Part 4 Q3):** 8-way movement;
    a diagonal glide costs a duration multiplier on the step (designer-tunable `@export`,
    default 2.0× — between Pathfinder's 1.5× and Tibia's 3× — tuned in playtest).
-   Corner-cut/squeeze reservation rules and diagonal LoS math get defined when the
-   movement and dungeon-visibility milestones build them.
+   **Corner rule (defined in M2, Jon/Jeff 2026-07-17 — provisional, pending playtest):** a
+   diagonal step requires both orthogonal flank tiles of the origin — `origin+(dx,0)` and
+   `origin+(0,dy)` — to be non-wall, so a squeeze between two walls that touch only at a corner
+   is illegal even when both endpoints are floor. Flank **occupancy** does NOT block by default —
+   walls block corners, bodies don't — with the `bodies_block_corners` GameConfig toggle as the
+   playtest alternative: flip it and an occupied flank blocks the diagonal too. Diagonal LoS math
+   is still deferred to the dungeon-visibility milestone.
 8. **Commit feedback (added v0.3).** The feedback rule (2.3.4) applies to movement:
    pressing a move renders an instant, local **"commit sent"** acknowledgment, so the
    player always knows the input registered. The **verdict** — glide start, or a rejection
@@ -211,6 +216,13 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 4. **Origin-tile timing during a glide.** Is the departed tile freed at glide start or held until the
    glide ends? Affects chase/kiting feel, body-blocking in corridors, and whether allies can
    file through a chokepoint tightly behind each other.
+   **PROVISIONAL (not a final answer), M2 2026-07-17:** M2 ships **origin frees at glide start**
+   (conga-line — Jeff leans this; playtest pending), with the `origin_frees_at_glide_start`
+   GameConfig toggle to flip it without code. Under this rule the §2.2.1 "one entity per tile"
+   bookkeeping counts the mover at its DESTINATION for the whole glide (the origin is released the
+   instant the step commits); the toggle's false branch instead holds the origin and reserves the
+   destination until arrival. Localized entirely to the MoveReferee — no other system depends on
+   which branch is live, so settling this in playtest is a one-bool change.
 
 5. **Stepping away from the keyboard.** Real-time multiplayer can't pause. Since there is
    no action queuing (2.2.5), nothing runs away while AFK — after the current commit
@@ -227,6 +239,11 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.3.1 (2026-07-17)** — M2 (Grid & Glide) design calls, both provisional pending playtest:
+  §2.2.7 diagonal **corner rule** defined (walls block the squeeze, bodies don't by default;
+  `bodies_block_corners` GameConfig toggle flips it); Part 4 Q4 **origin-tile timing** given a
+  provisional answer (origin frees at glide start; `origin_frees_at_glide_start` toggle flips it).
+  Neither is a final decision — both are designer-editable bools so Jeff can settle them in playtest.
 - **v0.3 (2026-07-15)** — Named the game (Rogue's Oath). Decisions: 2D top-down tile
   presentation; networking plumbing sourced from Magick With Friends `framework/`
   (scope of reuse made explicit, continuous-sync components excluded); commit

@@ -19,6 +19,14 @@ extends Node
 ## through the registered validator; on accept it stamps a monotonic event and broadcasts it
 ## to everyone (call_local, so the host sees its own event too); on reject only the sender is
 ## told. Public API is identical on every peer — callers never branch on is_server().
+##
+## Host-originated events (no client intent): post_event(action, data) stamps and broadcasts a
+## server-AUTHORED event on this SAME pipe, marking its origin with `peer: 0`. 0 is never a real
+## peer id, so it is the unambiguous "the server authored this — no validator ran, the host IS
+## the authority" sentinel. Host-authored and client-driven events share the one monotonic seq
+## stream, so they stay totally ordered together. This is the seam every future host-originated
+## event reuses (M3+: monster actions, roll outcomes); M2's first passenger is the
+## attack-of-opportunity `free_attack` event.
 
 # ── Signals ──────────────────────────────────────────────────────────────────
 
@@ -69,6 +77,29 @@ func submit_intent(action: String, data: Dictionary) -> void:
 		_handle_intent(1, action, data)
 	else:
 		_rpc_submit_intent.rpc_id(1, action, data)
+
+
+## Host-only: author and broadcast a server-originated event on the same pipe, WITHOUT any client
+## intent or validator — the host IS the authority (DESIGN §2.5.3). Stamps `peer: 0` (the
+## server-originated sentinel; 0 is never a real peer id) onto the SAME monotonic seq stream as
+## validated events, so host-authored and client-driven events stay totally ordered together, and
+## broadcasts via the same call_local RPC (the host receives its own event too). Used for events
+## the world decides on its own (M2: attack-of-opportunity; M3+: monster acts, roll outcomes).
+func post_event(action: String, data: Dictionary) -> void:
+	if not multiplayer.is_server():
+		push_error("[NetEvents] post_event('%s') called off-server — ignored" % action)
+		return
+	_seq += 1
+	# Same stamped shape as an accepted intent (see _handle_intent), but peer=0: no sender, no
+	# validator — the host authored it. server_time is display/telemetry only; seq is the order.
+	var event := {
+		"seq": _seq,
+		"peer": 0,
+		"action": action,
+		"data": data,
+		"server_time": Time.get_unix_time_from_system(),
+	}
+	_rpc_event.rpc(event)
 
 
 ## Register the validator for an action. Called host-side (the only place _handle_intent runs).

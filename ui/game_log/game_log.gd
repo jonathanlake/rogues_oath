@@ -89,15 +89,21 @@ func _on_editing_toggled(toggled_on: bool) -> void:
 
 
 func _on_event_received(event: Dictionary) -> void:
-	if event.get("action", "") != "chat":
-		return
 	var data: Dictionary = event.get("data", {})
-	# Escape BOTH fields BEFORE composing the bbcode line. Future name-coloring wraps color
-	# tags around the ESCAPED name (escape-then-wrap), so a name containing "[" can never
-	# inject markup into the log.
-	var display_name := _escape_bbcode(str(data.get("name", "")))
-	var body := _escape_bbcode(str(data.get("text", "")))
-	_append_markup("[b]%s[/b]: %s" % [display_name, body])
+	match str(event.get("action", "")):
+		"chat":
+			# Escape BOTH fields BEFORE composing the bbcode line. Future name-coloring wraps color
+			# tags around the ESCAPED name (escape-then-wrap), so a name containing "[" can never
+			# inject markup into the log.
+			var display_name := _escape_bbcode(str(data.get("name", "")))
+			var body := _escape_bbcode(str(data.get("text", "")))
+			_append_markup("[b]%s[/b]: %s" % [display_name, body])
+		"free_attack":
+			# Combat-log line for the attack-of-opportunity trigger (DESIGN §2.2.6 / §2.3.4). The
+			# names are server-resolved, but they STILL go through add_line's sink escape — the file's
+			# rule is escape-at-render regardless of source, no "trusted" bypass.
+			add_line("%s gets a free attack on %s." % [
+				str(data.get("attacker_name", "")), str(data.get("target_name", ""))])
 
 
 func _on_intent_rejected(action: String, reason: String) -> void:

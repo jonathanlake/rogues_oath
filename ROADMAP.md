@@ -53,13 +53,15 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   own. If it recurs: restart the agent and retest with the raw-IP form (the two-address
   discriminator). Harness knob for Jeff's session: `-- join join=<addr[:port]>`.
 
-- [ ] **M2 — Grid & Glide** **[size M]** *(unblocked — Q3 answered: 8-way, diagonal
-  duration penalty, default 2.0×, DESIGN §2.2.7)*
-  Tile grid; commit/glide movement with speed tiers (diagonal steps cost the multiplier);
-  tile reservation incl. the diagonal corner/squeeze rule (must be defined here);
-  server verdicts; "commit sent" ack + rejection bonk (DESIGN §2.2.8);
-  attack-of-opportunity trigger wiring (no combat yet — just the free-attack event over
-  8-neighbor adjacency).
+- [x] **M2 — Grid & Glide** *(2026-07-17)* **[size M]**
+  Logical tile grid (WorldGrid is truth, TileMapLayer is paint); commit/glide movement with
+  designer-editable speed tiers (`.tres`) and the diagonal duration multiplier; host-authoritative
+  tile reservation incl. the diagonal corner rule (walls block the squeeze, bodies don't — both
+  rules are provisional GameConfig toggles: `bodies_block_corners`, `origin_frees_at_glide_start`);
+  server verdicts stamped from shared config; §2.2.8 "commit sent" ack + rejection bonk
+  (sound + flash + log line); attack-of-opportunity TRIGGER wiring — the host-authored
+  `free_attack` event over 8-neighbour adjacency (no combat yet), demoable two-instance via the
+  `hostile=1` harness knob.
   **Done =** two players glide around one room; commitment is *felt* — no canceling
   mid-glide.
 
@@ -106,9 +108,13 @@ Not scheduled — pulled in when their moment comes:
 
 - Death design — Q1's real answer replaces the M3 spectate placeholder
 - Host disconnect policy (Q2): accept run-loss vs. save/resume story
-- Origin-tile timing during a glide (Q4)
+- Origin-tile timing during a glide (Q4) — *(provisional shipped in M2: frees at glide start —
+  `origin_frees_at_glide_start` GameConfig toggle; final call awaits playtest)*
 - AFK / rest zones (Q5)
-- Ranged combat & LoS design pass (Q6) — alongside the build system pass
+- Ranged combat & LoS design pass (Q6) — alongside the build system pass; include whether
+  AoO adjacency should respect walls/corners (M2 wires pure 8-adjacency per §2.2.6 — a
+  hostile diagonally around a wall corner currently still threatens; GLM review flag,
+  2026-07-17)
 - Build system design pass (Rogue Fable-legibility bar, DESIGN §2.7)
 - Dungeon generation depth (beyond M4's basic rooms-and-corridors)
 - Shared-beat coordination mechanic (DESIGN §2.4.2) — only if a concrete need appears
