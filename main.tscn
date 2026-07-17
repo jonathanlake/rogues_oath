@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://main.gd" id="1_main"]
+[ext_resource type="Script" path="res://world/move_referee.gd" id="2_referee"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
@@ -17,6 +18,9 @@ color = Color(0.09, 0.09, 0.12, 1)
 [node name="Room" type="TileMapLayer" parent="."]
 
 [node name="Players" type="Node2D" parent="."]
+
+[node name="MoveReferee" type="Node" parent="."]
+script = ExtResource("2_referee")
 
 [node name="MultiplayerSpawner" type="MultiplayerSpawner" parent="."]
 spawn_path = NodePath("../Players")

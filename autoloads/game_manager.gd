@@ -18,3 +18,9 @@ var player_name: String = ""
 ## Transient "why did the last session end" message. Written by main.gd's teardown paths;
 ## the main menu shows it in its error label on _ready and clears it. Empty = none.
 var last_disconnect_reason: String = ""
+
+## DEBUG ONLY. When > 0, the movement referee uses this (seconds) as every glide's BASE per-step
+## time instead of the mover's GlideSpeed tier — set host-side via debug.gd's `glidesec=` arg to
+## stretch glides long enough to script/observe conga timing. The diagonal multiplier still
+## applies on top. 0 = off (normal tier-driven pacing). Never touched by gameplay code.
+var debug_glide_override_sec: float = 0.0

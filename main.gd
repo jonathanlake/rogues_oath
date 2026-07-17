@@ -43,6 +43,10 @@ const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN
 
 @onready var _spawner: MultiplayerSpawner = $MultiplayerSpawner
 @onready var _players: Node2D = $Players
+# Host-only movement brain. Present on every peer (it's in main.tscn) but activated ONLY inside
+# the is_server() branch below, so a client's referee stays inert. Held so the spawn path can ask
+# it whether a slot's tile is free before assigning it.
+@onready var _referee := $MoveReferee
 
 # Chat/combat log, added on every peer in _ready. Held so spawn/disconnect can post system
 # lines through it. Set before the host spawns its own player so that spawn's "joined." lands.
@@ -102,7 +106,16 @@ func _ready() -> void:
 		_game_log.add_line("%s joined." % player.player_name)
 		return player
 
+	# Movement, on EVERY peer: play back accepted glide events, and bonk our own player when the
+	# host refuses ours. Chat events flow to the game log via its own connection; these two hooks
+	# handle only "glide_to" (accept) and glide rejects (sender-only).
+	NetEvents.event_received.connect(_on_net_event)
+	NetEvents.intent_rejected.connect(_on_intent_rejected)
+
 	if multiplayer.is_server():
+		# Host-only: hand the movement referee the Players container BEFORE spawning the host's own
+		# player, so its child_entered_tree seeds occupancy for every player including the host's.
+		_referee.activate(_players)
 		# Host-only: the chat referee. Strip, reject empty, clamp, and resolve the sender's
 		# display name server-side (never from the payload) into the broadcast event's data.
 		NetEvents.register_handler("chat", _validate_chat)
@@ -133,6 +146,30 @@ func _exit_tree() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		_leaving = true
+
+
+## All peers: play back an accepted glide. Chat events go to the game log via its own hook; this
+## reacts only to "glide_to". The event's `peer` is the mover, so every peer animates that mover's
+## node — including the mover's own instance, where the glide begins ONLY now (no client predict).
+func _on_net_event(event: Dictionary) -> void:
+	if event.get("action", "") != "glide_to":
+		return
+	var mover := _players.get_node_or_null(str(event.get("peer", 0))) as Player
+	if mover == null:
+		return
+	var data: Dictionary = event.get("data", {})
+	mover.glide_to(data.get("to"), float(data.get("duration_sec", 0.0)))
+
+
+## Sender only: the host refused our glide. Bonk our OWN player (§2.3.4 — the sound+visual half;
+## the game log adds the line via its own connection). Rejects reach only the sender, so the
+## local player is always the right target.
+func _on_intent_rejected(action: String, reason: String) -> void:
+	if action != "glide_to":
+		return
+	var me := _players.get_node_or_null(str(multiplayer.get_unique_id())) as Player
+	if me != null:
+		me.play_bonk()
 
 
 func _on_peer_connected(peer_id: int) -> void:
@@ -215,11 +252,22 @@ func _assign_slot(peer_id: int) -> int:
 	var used := {}
 	for v in _slots.values():
 		used[v] = true
+	# Skip a slot whose tile is already held by a body (a player may have glided onto another
+	# slot's spawn tile since — spawn tiles are legal glide targets). Falls to the next free slot.
 	var slot := 0
-	while used.has(slot):
+	while used.has(slot) or _slot_occupied(slot):
 		slot += 1
 	_slots[peer_id] = slot
 	return slot
+
+
+## Host-only guard for _assign_slot: is this slot's tile currently held by a body, per the
+## referee's authoritative occupancy? A no-op off-host or before the referee is active (clients
+## never assign slots), so the walkable-tile derivation stays a pure function everywhere else.
+func _slot_occupied(slot: int) -> bool:
+	if not multiplayer.is_server() or _referee == null:
+		return false
+	return not _referee.is_tile_free(_slot_tile(slot))
 
 
 ## The tile for a spawn slot — the single slot->tile accessor; the spawn path derives both

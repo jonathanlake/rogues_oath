@@ -1,8 +1,11 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://entities/player/player.gd" id="1_player"]
 [ext_resource type="Texture2D" uid="uid://djrojs1kpsyss" path="res://assets/32rogues/rogues.png" id="2_rogues"]
 [ext_resource type="Resource" path="res://resources/speed_tiers/speed_normal.tres" id="3_speed"]
+[ext_resource type="Script" path="res://entities/player/move_input.gd" id="4_moveinput"]
+[ext_resource type="AudioStream" path="res://assets/audio/commit_sent.wav" id="5_commit"]
+[ext_resource type="AudioStream" path="res://assets/audio/bonk.wav" id="6_bonk"]
 
 [node name="Player" type="Node2D"]
 script = ExtResource("1_player")
@@ -21,3 +24,12 @@ offset_right = 48.0
 offset_bottom = -24.0
 horizontal_alignment = 1
 vertical_alignment = 1
+
+[node name="MoveInput" type="Node" parent="."]
+script = ExtResource("4_moveinput")
+
+[node name="CommitSent" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("5_commit")
+
+[node name="Bonk" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("6_bonk")

@@ -103,6 +103,26 @@ func _on_event_received(event: Dictionary) -> void:
 func _on_intent_rejected(action: String, reason: String) -> void:
 	if action == "chat":
 		add_line("(message not sent: %s)" % reason)
+	elif action == "glide_to":
+		_log_glide_reject(reason)
+
+
+# A refused move must never be silent when the cause is the world (§2.3.4): a wall/corner/occupied
+# bonk gets a plain-language line here to sit alongside the sound + flash. "already moving" is the
+# ONE suppressed case — it's the player mashing during their own committed glide, not a world
+# refusal; the bonk sound/flash (fired via main.gd) already says "not now" without log spam.
+func _log_glide_reject(reason: String) -> void:
+	match reason:
+		"blocked":
+			add_line("Blocked — a wall is in the way.")
+		"corner":
+			add_line("Blocked — can't squeeze through that corner.")
+		"occupied":
+			add_line("Blocked — someone's there.")
+		"already moving":
+			pass
+		_:
+			add_line("Move rejected (%s)." % reason)
 
 
 # Neutralize user text before it reaches a bbcode_enabled label: only "[" can open a tag, so

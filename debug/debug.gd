@@ -31,6 +31,25 @@ extends Node
 var _say_text: String = ""
 var _has_say: bool = false
 
+# Scripted-move harness (move=/movedelay=/movewait=), stashed like say so it survives the scene
+# change and can be anchored to the same events (host: after scene change; client: after connect).
+# The moves go through the REAL pipe (submit_intent), DELIBERATELY bypassing MoveInput — that
+# tests the SERVER's enforcement (already-moving, blocked, corner, occupied), not the client gate.
+var _move_dirs: Array[Vector2i] = []
+var _has_move: bool = false
+# Interval between scripted moves (seconds). Tight values (e.g. 0.05) exercise the "already
+# moving" backstop; wide ones (≥ glide duration) land clean back-to-back steps.
+var _move_delay_sec: float = 0.8
+# Delay before the FIRST scripted move (seconds), after its role's anchor. -1 = unset: fall back
+# to the say anchor default for that role (host say_delay_sec, client client_say_settle_sec).
+var _move_wait_sec: float = -1.0
+
+# Compass token -> 8-way step. n/s use screen-space y (down is +y), matching Vector2i grid coords.
+const _MOVE_DIRS := {
+	"n": Vector2i(0, -1), "s": Vector2i(0, 1), "e": Vector2i(1, 0), "w": Vector2i(-1, 0),
+	"ne": Vector2i(1, -1), "nw": Vector2i(-1, -1), "se": Vector2i(1, 1), "sw": Vector2i(-1, 1),
+}
+
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -54,6 +73,9 @@ func _ready() -> void:
 	# first-colon split below can't tell them from ip:port), matching the menu's parser. Tunnel
 	# addresses are hostnames, so this is fine in practice.
 	var join_address := ""
+	# host-only glide-duration override (seconds); inert on the client and without the arg.
+	# Stretches every glide's base step time so conga/timing tests are scriptable + observable.
+	var glide_override := 0.0
 	for arg in args:
 		if arg.begins_with("screenshot="):
 			_schedule_screenshot(arg.trim_prefix("screenshot="))
@@ -69,6 +91,14 @@ func _ready() -> void:
 			max_players = arg.trim_prefix("maxplayers=").to_int()
 		elif arg.begins_with("join="):
 			join_address = arg.trim_prefix("join=")
+		elif arg.begins_with("move="):
+			_parse_move_list(arg.trim_prefix("move="))
+		elif arg.begins_with("movedelay="):
+			_move_delay_sec = arg.trim_prefix("movedelay=").to_float()
+		elif arg.begins_with("movewait="):
+			_move_wait_sec = arg.trim_prefix("movewait=").to_float()
+		elif arg.begins_with("glidesec="):
+			glide_override = arg.trim_prefix("glidesec=").to_float()
 
 	if not (is_host or is_client):
 		return
@@ -87,6 +117,10 @@ func _ready() -> void:
 		# is capacity-kicked — a two-window test for the kick path.
 		if max_players > 0:
 			GameManager.config.max_players = max_players
+		# glidesec= is host-only: the referee reads the override live when it stamps each glide,
+		# so setting it any time before the moves fire is enough. Inert on the client.
+		if glide_override > 0.0:
+			GameManager.debug_glide_override_sec = glide_override
 		print("[Debug] autostart: hosting on port %d" % NetworkManager.DEFAULT_PORT)
 		if NetworkManager.host_game() != OK:
 			push_error("[Debug] autostart host failed")
@@ -101,6 +135,10 @@ func _ready() -> void:
 		# Host waits a fixed span for a client to join before saying anything.
 		if _has_say:
 			_schedule_say(_say_text, say_delay_sec)
+		# Scripted moves share the say anchor (after the scene change). movewait= overrides the
+		# delay; unset, it falls back to say_delay_sec so a client has time to join first.
+		if _has_move:
+			_schedule_moves(_move_wait_sec if _move_wait_sec >= 0.0 else say_delay_sec)
 	elif is_client:
 		DisplayServer.window_set_title("CLIENT")
 		# name= overrides the default BEFORE join_game(), so peer_ready ships the injected name.
@@ -140,6 +178,10 @@ func _on_autostart_connected() -> void:
 	get_tree().change_scene_to_packed(load(GameManager.MAIN_SCENE))
 	if _has_say:
 		_schedule_say(_say_text, client_say_settle_sec)
+	# Scripted moves anchor to the connection event (like the client's say), not a blind timer, so
+	# the host is guaranteed present. movewait= overrides; unset, it uses the say settle default.
+	if _has_move:
+		_schedule_moves(_move_wait_sec if _move_wait_sec >= 0.0 else client_say_settle_sec)
 
 
 ## Fire one chat intent through the real pipe after a settle delay. Works identically on host
@@ -148,6 +190,30 @@ func _on_autostart_connected() -> void:
 func _schedule_say(text: String, delay_sec: float) -> void:
 	await get_tree().create_timer(delay_sec).timeout
 	NetEvents.submit_intent("chat", {"text": text})
+
+
+## Fire the scripted move list through the REAL pipe (submit_intent) after an initial delay, one
+## step every _move_delay_sec. It deliberately bypasses MoveInput so it exercises the SERVER's
+## enforcement — the referee stamps duration and adjudicates from ITS origin, so a tight delay
+## surfaces "already moving" and a wall/corner/occupied target surfaces the matching reject.
+func _schedule_moves(delay_sec: float) -> void:
+	await get_tree().create_timer(delay_sec).timeout
+	for i in _move_dirs.size():
+		if i > 0:
+			await get_tree().create_timer(_move_delay_sec).timeout
+		NetEvents.submit_intent("glide_to", { "dir": _move_dirs[i] })
+
+
+## Parse a comma-separated compass list (e.g. "e,ne,sw") into _move_dirs. Unknown tokens are
+## skipped with a warning rather than aborting the run — a typo shouldn't silently drop the test.
+func _parse_move_list(spec: String) -> void:
+	for token in spec.split(",", false):
+		var key := token.strip_edges().to_lower()
+		if _MOVE_DIRS.has(key):
+			_move_dirs.append(_MOVE_DIRS[key])
+			_has_move = true
+		elif not key.is_empty():
+			push_warning("[Debug] move=: unknown direction '%s' (skipped)" % key)
 
 
 func _schedule_screenshot(path: String) -> void:
