@@ -22,9 +22,12 @@ layout_mode = 2
 [node name="Log" type="RichTextLabel" parent="Panel/VBox"]
 layout_mode = 2
 size_flags_vertical = 3
+theme_override_font_sizes/normal_font_size = 8
+theme_override_font_sizes/bold_font_size = 8
 bbcode_enabled = true
 scroll_following = true
 
 [node name="Input" type="LineEdit" parent="Panel/VBox"]
 layout_mode = 2
+theme_override_font_sizes/font_size = 8
 placeholder_text = "Press Enter to chat"

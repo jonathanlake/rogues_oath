@@ -114,8 +114,9 @@ func _process(delta: float) -> void:
 			return
 		State.COOLDOWN:
 			# Post-reject throttle. A fresh press bypasses it immediately (a key sampling site, so
-			# chat-gated); otherwise wait out the cooldown, then fall through and resample.
-			if _fresh_press() and not _chat_focused():
+			# chat- and window-focus-gated, same as (1) below); otherwise wait out the cooldown,
+			# then fall through and resample.
+			if _fresh_press() and not _chat_focused() and _window_focused():
 				_state = State.IDLE
 			else:
 				_cooldown_elapsed += delta
@@ -125,13 +126,24 @@ func _process(delta: float) -> void:
 				_cooldown_elapsed = 0.0
 
 	# IDLE (or a just-elapsed cooldown), in priority order:
-	# (1) Keys. The chat gate lives ONLY on the key sampling sites — while a text field owns
-	#     focus the player is typing, not steering (the focused control IS the source of truth;
-	#     game_log.gd documents this seam). An auto-walk (2) deliberately continues while typing.
-	#     A non-zero key sample cancels any standing target: keys always win.
+	# (1) Keys. The chat gate AND the window-focus gate live ONLY on the key sampling sites —
+	#     while a text field owns focus the player is typing, not steering (the focused control
+	#     IS the source of truth; game_log.gd documents this seam). Window focus matters because
+	#     gamepad state isn't OS-routed like keyboard/mouse: Input polls the raw device with no
+	#     per-window exclusivity, so two instances on one machine would both see the same stick
+	#     (the two-window dev-testing symptom). Real single-window play is unaffected — the one
+	#     game window normally holds focus while its player is controlling it. An auto-walk (2)
+	#     deliberately continues regardless — it's click-driven, not device-driven, so an
+	#     unfocused window can still finish an in-progress walk. A non-zero key sample cancels
+	#     any standing target: keys always win.
 	var dir := Vector2i.ZERO
 	if not _chat_focused():
-		dir = _sample_dir()
+		if _window_focused():
+			dir = _sample_dir()
+		elif _fresh_press():
+			# One-shot per press (is_action_just_pressed only fires the one frame) — tells a
+			# confused player/tester why their key/pad input is doing nothing.
+			print("[MoveInput] input ignored: window not focused")
 	if dir != Vector2i.ZERO:
 		if _has_target:
 			_clear_target()
@@ -280,6 +292,14 @@ func _clear_target() -> void:
 func _chat_focused() -> bool:
 	var focus := get_viewport().gui_get_focus_owner()
 	return focus is LineEdit or focus is TextEdit
+
+
+## True while THIS OS window is the focused one. Used ONLY at the key sampling sites, same as
+## the chat gate above — see the (1) comment in _process for why (gamepad state isn't
+## per-window like keyboard/mouse, so two unfocused-aware instances on one machine stop
+## fighting over one physical stick).
+func _window_focused() -> bool:
+	return get_window().has_focus()
 
 
 ## Sample the four actions into an 8-way Vector2i (diagonals when two axes are held together).
