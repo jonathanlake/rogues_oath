@@ -13,7 +13,11 @@ extends Control
 @onready var join_button: Button = $VBoxContainer/HBoxContainer/JoinButton
 @onready var error_label: Label = $VBoxContainer/ErrorLabel
 
-const JOIN_TIMEOUT_SEC := 5.0
+## Was 5.0, tuned against same-machine testing. Bumped for real cross-internet joins (relay
+## handshake + ENet handshake add real round-trip latency a local test never sees) — 2026-07-18,
+## after Jeff's first real-internet attempt timed out on a since-diagnosed missing host, but the
+## margin itself was already thin regardless.
+const JOIN_TIMEOUT_SEC := 12.0
 const NAME_HINT := "Enter a name to play"
 
 var _connecting: bool = false
