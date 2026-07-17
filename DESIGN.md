@@ -69,6 +69,15 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    the server. The client never predicts the outcome, in either direction; there is no
    client-side authority anywhere. A rejected move must never be confusable with dropped
    input, and a locally-guessed rejection must never contradict a server accept.
+9. **Click-to-move pathing (added M2.1, 2026-07-17).** Click-to-move is CLIENT-SIDE
+   convenience only: the client turns a clicked destination into ordinary one-step commits,
+   submitted one at a time through the same intent pipe as a key press. The server never
+   sees a path or a target, and never queues steps — 2.2.5 stands untouched. A standing
+   target is NOT a commitment: it may be replaced or dropped freely between steps (new
+   click, key press, arrival, blocked route); only each submitted step commits, and each
+   obeys the Commitment Rule in full once verdicted. (This guards against future
+   misreading in either direction — no "the server should path for us," and no "a click
+   locks you in.")
 
 ### 2.3 Combat Resolution
 
@@ -239,6 +248,9 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.3.2 (2026-07-17)** — M2.1 (Input Methods): new §2.2.9 — click-to-move pathing defined
+  as client-side convenience only (server never sees a path or target, never queues — §2.2.5
+  stands; a standing target is not a commitment, only each submitted step is).
 - **v0.3.1 (2026-07-17)** — M2 (Grid & Glide) design calls, both provisional pending playtest:
   §2.2.7 diagonal **corner rule** defined (walls block the squeeze, bodies don't by default;
   `bodies_block_corners` GameConfig toggle flips it); Part 4 Q4 **origin-tile timing** given a

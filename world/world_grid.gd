@@ -71,3 +71,64 @@ static func tile_to_world(tile: Vector2i) -> Vector2:
 ## tile_to_world for any point inside a tile's cell.
 static func world_to_tile(pos: Vector2) -> Vector2i:
 	return Vector2i(int(floor(pos.x / TILE_PX)), int(floor(pos.y / TILE_PX)))
+
+
+# ── Pathfinding ───────────────────────────────────────────────────────────────
+
+# Lazily-built A* over the room, shared by every caller (static, like everything here). Solids
+# come from is_wall only — OCCUPANCY IS DELIBERATELY NOT IN THIS GRID: bodies are volatile
+# (they move every step, and per the corner rule bodies don't block diagonal squeezes), so
+# callers route around them per-query via find_path's `avoid` parameter instead of mutating
+# shared state. NOTE for M4a: dungeon regeneration must drop this cache (rebuild from the new
+# layout) — a stale grid would path through the old room's walls.
+static var _astar: AStarGrid2D = null
+
+
+## 8-way path from `from` to `to` over the walkable grid, as tile coords with path[0] == from.
+## Empty array = unreachable (or an endpoint is a wall/out of bounds). `avoid` tiles are made
+## temporarily solid for THIS query only (transient obstacles — other bodies), restored after.
+## Diagonals follow the corner rule's wall half exactly (DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES):
+## a squeeze between two corner-touching walls is never in a returned path.
+static func find_path(from: Vector2i, to: Vector2i, avoid: Array[Vector2i] = []) -> Array[Vector2i]:
+	if not in_bounds(from) or not in_bounds(to):
+		return []
+	if _astar == null:
+		_build_astar()
+	# A solid origin can't happen today (players only ever stand on floor), so it means a spawn
+	# or bookkeeping bug upstream — warn loudly instead of letting walks silently do nothing.
+	if _astar.is_point_solid(from):
+		push_warning("[WorldGrid] find_path from solid tile %s — no path (upstream bug?)" % from)
+		return []
+	# Temp-solid the avoid tiles; track only the ones we actually flipped so restore is exact
+	# (walls are already solid, and `from` is never flipped — a solid start yields no path).
+	var flipped: Array[Vector2i] = []
+	for tile in avoid:
+		if in_bounds(tile) and tile != from and not _astar.is_point_solid(tile):
+			_astar.set_point_solid(tile, true)
+			flipped.append(tile)
+	var packed := _astar.get_id_path(from, to)
+	for tile in flipped:
+		_astar.set_point_solid(tile, false)
+	var path: Array[Vector2i] = []
+	for point in packed:
+		path.append(point)
+	return path
+
+
+## Build the shared grid once from ROOM_LAYOUT: region = the room rectangle, solids = walls,
+## octile heuristics (the natural 8-way distance), and ONLY_IF_NO_OBSTACLES diagonals — which
+## is precisely the corner rule's wall half, so client paths never propose a step the referee's
+## corner check would refuse for walls. (Body occupancy is per-query `avoid`, never baked in.)
+static func _build_astar() -> void:
+	_astar = AStarGrid2D.new()
+	_astar.region = Rect2i(Vector2i.ZERO, size())
+	_astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+	_astar.default_compute_heuristic = AStarGrid2D.HEURISTIC_OCTILE
+	_astar.default_estimate_heuristic = AStarGrid2D.HEURISTIC_OCTILE
+	_astar.update()
+	var grid_size := size()
+	for y in grid_size.y:
+		for x in grid_size.x:
+			var tile := Vector2i(x, y)
+			if is_wall(tile):
+				_astar.set_point_solid(tile, true)

@@ -31,6 +31,10 @@ func _ready() -> void:
 	# The referee's refusals surface HERE (DESIGN §2.3.4: a rejection must never be silent —
 	# the sender sees why their message vanished). Only the sender's instance receives these.
 	NetEvents.intent_rejected.connect(_on_intent_rejected)
+	# Local click-to-move UX from the bus (§2.2.9 — client-side only, nothing crossed the wire):
+	# an unreachable click and a dropped walk both get a line, so neither is ever a silent no-op.
+	GameEvents.unreachable_tile_clicked.connect(func(_tile: Vector2i): add_line("Can't reach that."))
+	GameEvents.target_walk_stopped.connect(func(): add_line("Stopped walking."))
 
 
 # Focus flow lives here, not on the LineEdit, so the log owns "am I typing?" end-to-end.

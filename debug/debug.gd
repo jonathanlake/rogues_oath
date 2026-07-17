@@ -54,6 +54,21 @@ var _hold_dir: Vector2i = Vector2i.ZERO
 var _has_hold: bool = false
 # How long the synthetic key(s) stay held (seconds) before release.
 var _hold_sec: float = 3.0
+# holdwait=: hold='s OWN first-fire delay, so click-then-key runs can stagger the two sources
+# (e.g. click=3,7 hold=e holdwait=2 — the walk starts, then keys take over and cancel it).
+# -1 = unset: hold falls back to the shared movewait= timing like every other knob.
+var _hold_wait_sec: float = -1.0
+
+# Click harness (click=/clickdelay=): synthesizes left-mouse press+release pairs at tile centers
+# via Input.parse_input_event(), driving MoveInput's real _unhandled_input click capture — the
+# whole click-to-move path (reachability check, target store, per-step recompute) runs exactly
+# as under a physical mouse. Tile coords, converted at fire time through the live canvas
+# transform. Anchored at the movewait= timing per role, like the other input knobs.
+var _click_tiles: Array[Vector2i] = []
+var _has_click: bool = false
+# Interval between successive scripted clicks (seconds) — long enough by default for a short
+# walk to visibly bend before the next target replaces it.
+var _click_delay_sec: float = 1.5
 
 # Tap harness (tap=/tapsec=): synthesizes press/release EVENTS via Input.parse_input_event(),
 # which routes through the REAL InputMap bindings — one layer deeper than hold=, which presses
@@ -155,6 +170,12 @@ func _ready() -> void:
 			_parse_tap_list(arg.trim_prefix("tap="))
 		elif arg.begins_with("tapsec="):
 			_tap_sec = arg.trim_prefix("tapsec=").to_float()
+		elif arg.begins_with("holdwait="):
+			_hold_wait_sec = arg.trim_prefix("holdwait=").to_float()
+		elif arg.begins_with("click="):
+			_parse_click_list(arg.trim_prefix("click="))
+		elif arg.begins_with("clickdelay="):
+			_click_delay_sec = arg.trim_prefix("clickdelay=").to_float()
 		elif arg.begins_with("hostile="):
 			all_hostile = arg.trim_prefix("hostile=").to_int() != 0
 
@@ -201,12 +222,17 @@ func _ready() -> void:
 		# delay; unset, it falls back to say_delay_sec so a client has time to join first.
 		if _has_move:
 			_schedule_moves(_move_wait_sec if _move_wait_sec >= 0.0 else say_delay_sec)
-		# Held-key harness, same anchor + movewait= timing as the scripted moves.
+		# Held-key harness: holdwait= is its own first-fire delay (so click-then-key runs can
+		# stagger); unset, it shares the movewait= timing like the other knobs.
 		if _has_hold:
-			_schedule_hold(_move_wait_sec if _move_wait_sec >= 0.0 else say_delay_sec)
+			_schedule_hold(_hold_wait_sec if _hold_wait_sec >= 0.0 \
+					else (_move_wait_sec if _move_wait_sec >= 0.0 else say_delay_sec))
 		# Tap harness, same anchor + movewait= timing.
 		if _has_tap:
 			_schedule_taps(_move_wait_sec if _move_wait_sec >= 0.0 else say_delay_sec)
+		# Click harness, same anchor + movewait= timing.
+		if _has_click:
+			_schedule_clicks(_move_wait_sec if _move_wait_sec >= 0.0 else say_delay_sec)
 	elif is_client:
 		DisplayServer.window_set_title("CLIENT")
 		# name= overrides the default BEFORE join_game(), so peer_ready ships the injected name.
@@ -250,12 +276,17 @@ func _on_autostart_connected() -> void:
 	# the host is guaranteed present. movewait= overrides; unset, it uses the say settle default.
 	if _has_move:
 		_schedule_moves(_move_wait_sec if _move_wait_sec >= 0.0 else client_say_settle_sec)
-	# Held-key harness, same anchor + movewait= timing as the scripted moves.
+	# Held-key harness: holdwait= is its own first-fire delay (see the host branch); unset,
+	# it shares the movewait= timing like the other knobs.
 	if _has_hold:
-		_schedule_hold(_move_wait_sec if _move_wait_sec >= 0.0 else client_say_settle_sec)
+		_schedule_hold(_hold_wait_sec if _hold_wait_sec >= 0.0 \
+				else (_move_wait_sec if _move_wait_sec >= 0.0 else client_say_settle_sec))
 	# Tap harness, same anchor + movewait= timing.
 	if _has_tap:
 		_schedule_taps(_move_wait_sec if _move_wait_sec >= 0.0 else client_say_settle_sec)
+	# Click harness, same anchor + movewait= timing.
+	if _has_click:
+		_schedule_clicks(_move_wait_sec if _move_wait_sec >= 0.0 else client_say_settle_sec)
 
 
 ## Fire one chat intent through the real pipe after a settle delay. Works identically on host
@@ -379,6 +410,51 @@ func _tap_events(token: String, pressed: bool) -> Array[InputEvent]:
 			motion.axis_value = axis_pair[1] if pressed else 0.0
 			events.append(motion)
 	return events
+
+
+## Parse click='s semicolon-separated tile list ("x,y;x,y;...") into _click_tiles. Malformed
+## entries are skipped with a warning rather than aborting the run. Tiles are NOT validated
+## against the grid here — an unreachable tile is a legitimate test value ("Can't reach that.").
+func _parse_click_list(spec: String) -> void:
+	for entry in spec.split(";", false):
+		var parts := entry.strip_edges().split(",", false)
+		if parts.size() == 2 and parts[0].strip_edges().is_valid_int() and parts[1].strip_edges().is_valid_int():
+			_click_tiles.append(Vector2i(parts[0].strip_edges().to_int(), parts[1].strip_edges().to_int()))
+			_has_click = true
+		elif not entry.strip_edges().is_empty():
+			push_warning("[Debug] click=: malformed entry '%s' (skipped)" % entry)
+
+
+## Fire the click list: for each tile, inject a left-mouse press then (0.1s later) its release at
+## the tile's center, spaced _click_delay_sec apart. The events traverse the real input pipeline
+## into MoveInput._unhandled_input — the genuine click-to-move path, not a shortcut around it.
+## Position must be in WINDOW coordinates: parse_input_event treats the event as if it came from
+## the OS, so the engine applies the canvas_items stretch transform (2× here) window → viewport
+## INBOUND before delivery. Design-pixel coords would land at half scale (tile (3,7) → (1,3)).
+## get_screen_transform() maps design pixels → window at fire time, staying correct under
+## maximized/letterboxed windows rather than hardcoding the 2× override scale.
+func _schedule_clicks(delay_sec: float) -> void:
+	await get_tree().create_timer(delay_sec).timeout
+	for i in _click_tiles.size():
+		if i > 0:
+			await get_tree().create_timer(_click_delay_sec).timeout
+		var tile := _click_tiles[i]
+		var window_pos: Vector2 = get_viewport().get_screen_transform() * WorldGrid.tile_to_world(tile)
+		print("[Debug] click: pressing at tile %s" % tile)
+		Input.parse_input_event(_click_event(window_pos, true))
+		await get_tree().create_timer(0.1).timeout
+		Input.parse_input_event(_click_event(window_pos, false))
+		print("[Debug] click: released at tile %s" % tile)
+
+
+## Build one synthetic left-mouse event at a viewport position.
+func _click_event(screen_pos: Vector2, pressed: bool) -> InputEventMouseButton:
+	var event := InputEventMouseButton.new()
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = pressed
+	event.position = screen_pos
+	event.global_position = screen_pos
+	return event
 
 
 func _schedule_screenshot(path: String) -> void:

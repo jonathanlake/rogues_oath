@@ -65,6 +65,19 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   **Done =** two players glide around one room; commitment is *felt* — no canceling
   mid-glide.
 
+- [x] **M2.1 — Input Methods** *(2026-07-17)* **[size S]**
+  Numpad with dual-bound diagonals + gamepad d-pad/left-stick, via InputMap alone (action
+  deadzones 0.2 → 0.35); click-to-move with client-side pathing — lazy `AStarGrid2D` over
+  WorldGrid (`DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES` = the corner rule's wall half, octile
+  heuristics) feeding the SAME one-step intent pipe, so the server never sees a path or a
+  target (DESIGN §2.2.9). Per-step recompute detours around bodies via a transient avoid
+  tile; two consecutive rejects drop the walk ("Stopped walking."); unreachable clicks get
+  "Can't reach that."; commit-sent cue fires on fresh input only (one click = one cue); a
+  faint target marker shows the standing destination. Harness knobs: `tap=`/`tapsec=`
+  (through the real InputMap), `click=`/`clickdelay=`, `holdwait=`.
+  **Done =** scripted numpad diagonal, stick steps, and a click-path bending around a
+  pillar — all two-instance.
+
 - [ ] **M3 — First Blood** *(soft-blocked: Q1 death handling)* **[size M]**
   One monster type as a `.tres` resource; telegraphed wind-up attack; two-step hit/miss
   resolution with distinct per-outcome feedback + combat log (DESIGN §2.3); HP; death.
@@ -120,6 +133,13 @@ Not scheduled — pulled in when their moment comes:
 - Shared-beat coordination mechanic (DESIGN §2.4.2) — only if a concrete need appears
 - Resource-editing GUI tool for designers (CLAUDE.md ground rule: design resources as if it
   already exists)
+- Stick deadzone tuning — shipped at 0.35 in M2.1; per-axis thresholding means lower values
+  widen the stick's diagonal arcs vs cardinals (~0.45 would equalize them) — retune on real
+  controller feel
+- Octile pathing vs the duration multiplier — click-to-move paths weight a diagonal √2 but
+  the server charges `diagonal_step_multiplier` (2.0 default, where diagonal and L-shape tie);
+  if the multiplier moves off 2.0, paths become mildly time-suboptimal — revisit A* weights
+  then (M2.1)
 - Chat polish: speech bubbles overhead (WoW-style), name colors (escape-then-wrap the
   already-escaped name), timestamps, chat sounds
 - Distinct "Server is full." message for capacity-kicked clients — needs flush-before-

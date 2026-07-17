@@ -6,8 +6,9 @@ extends Node2D
 ## §2.2.8 feedback cues. It never adjudicates: the host's MoveReferee owns occupancy and outcomes.
 ##
 ## Movement flow, per peer:
-##  - The LOCAL player's MoveInput samples input and emits move_requested(dir); this node reacts
-##    with play_commit_sent() (the outcome-neutral input ack) and submits a "glide_to" intent.
+##  - The LOCAL player's MoveInput (keys/stick, or its click-to-move target driver) emits
+##    move_requested(dir, fresh); this node reacts with play_commit_sent() on FRESH input only
+##    (the outcome-neutral ack) and submits a "glide_to" intent either way.
 ##  - When the server broadcasts the accepted event, Main calls glide_to() on THIS node — on
 ##    every peer, including the mover's own — and the glide begins. There is no client prediction
 ##    and, per the Commitment Rule, no cancel path: glide_to only ever kills a tween to catch up
@@ -44,6 +45,7 @@ signal glide_finished
 @onready var _sprite: Sprite2D = $Sprite2D
 @onready var _name_label: Label = $NameLabel
 @onready var _move_input := $MoveInput
+@onready var _path_marker: Node2D = $PathMarker
 @onready var _commit_audio: AudioStreamPlayer = $CommitSent
 @onready var _bonk_audio: AudioStreamPlayer = $Bonk
 
@@ -77,9 +79,17 @@ func _ready() -> void:
 	# node graph) but only ours is enabled.
 	_move_input.enabled = (peer_id == multiplayer.get_unique_id())
 	_move_input.move_requested.connect(_on_move_requested)
+	# Seed the sampler's planning tile with the server-derived spawn tile (set by main.gd's
+	# spawn_function before this node entered the tree); on_accepted advances it thereafter.
+	_move_input.set_current_tile(tile)
 	# The node owns the glide<->input handshake: it blocks its own sampler for the whole glide.
 	glide_started.connect(func(): _move_input.set_blocked(true))
 	glide_finished.connect(func(): _move_input.set_blocked(false))
+	# Path-marker wiring, local player only — only the local sampler ever emits target signals,
+	# and only the clicker should see their own marker.
+	if _move_input.enabled:
+		_move_input.path_target_set.connect(_on_path_target_set)
+		_move_input.path_target_cleared.connect(func(): _path_marker.visible = false)
 
 
 # ── Public methods ────────────────────────────────────────────────────────────
@@ -108,9 +118,10 @@ func glide_to(to_tile: Vector2i, duration_sec: float) -> void:
 	# tile updates at glide START (presentation metadata; the referee's occupancy is the truth).
 	tile = to_tile
 	glide_started.emit()
-	# Relay the accept to our own sampler (local player only) so it leaves the AWAITING latch.
+	# Relay the accept — with the destination — to our own sampler (local player only) so it
+	# leaves the AWAITING latch and advances its planning tile for the next path recompute.
 	if _move_input.enabled:
-		_move_input.on_accepted()
+		_move_input.on_accepted(to_tile)
 
 	var target := WorldGrid.tile_to_world(to_tile)
 	_glide_tween = create_tween()
@@ -121,7 +132,12 @@ func glide_to(to_tile: Vector2i, duration_sec: float) -> void:
 ## Outcome-neutral input ack (§2.2.8): a brief bright flash + tick the instant we SUBMIT, before
 ## any verdict. Local player only in practice (only our MoveInput emits move_requested). It must
 ## never be confusable with the glide starting or with a reject — it says only "input received".
+## Fired for FRESH input only (a key/stick sample or a click) — auto-walk continuation steps are
+## not new input, so they get no cue (one click, one cue, however many steps).
 func play_commit_sent() -> void:
+	# Debug-only trace so the cue policy is stdout-assertable by the harness (count the prints).
+	if OS.is_debug_build():
+		print("[peer %d] commit-sent cue" % multiplayer.get_unique_id())
 	_flash(Color(1.6, 1.6, 1.6))
 	_commit_audio.play()
 
@@ -142,11 +158,21 @@ func play_bonk() -> void:
 
 # ── Private methods ───────────────────────────────────────────────────────────
 
-func _on_move_requested(dir: Vector2i) -> void:
+func _on_move_requested(dir: Vector2i, fresh: bool) -> void:
 	# Instant local cue, THEN the request — the cue acknowledges input receipt, not the outcome.
-	play_commit_sent()
+	# Auto-walk continuation steps (fresh=false) skip the cue: no new input happened (§2.2.8).
+	if fresh:
+		play_commit_sent()
 	# Vector2i survives RPC natively; the host re-derives everything from ITS origin + this dir.
 	NetEvents.submit_intent("glide_to", { "dir": dir })
+
+
+## A click set/replaced the walk target: cue it (a click IS fresh input — the walk's steps then
+## stay silent) and plant the marker on the tile. top_level marker → global_position exclusively.
+func _on_path_target_set(target_tile: Vector2i) -> void:
+	play_commit_sent()
+	_path_marker.global_position = WorldGrid.tile_to_world(target_tile)
+	_path_marker.visible = true
 
 
 func _on_glide_finished() -> void:
