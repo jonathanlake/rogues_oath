@@ -85,12 +85,17 @@ func _process(delta: float) -> void:
 				_state = State.IDLE
 				_cooldown_elapsed = 0.0
 
-	# IDLE (or a just-elapsed cooldown): sample and, on a non-zero direction, submit and latch.
+	# IDLE (or a just-elapsed cooldown): sample and, on a non-zero direction, latch THEN submit.
+	# Order matters: on the HOST the verdict returns synchronously inside the emit (submit_intent
+	# adjudicates inline and the call_local event/reject fire in the same stack), so on_accepted /
+	# on_rejected run before the emit returns. The latch must already be armed when they do —
+	# arming it after would overwrite their state transition and wedge input until the safety
+	# timeout. Clients get the verdict a frame later, so either order works for them.
 	var dir := _sample_dir()
 	if dir != Vector2i.ZERO:
-		move_requested.emit(dir)
 		_state = State.AWAITING
 		_await_elapsed = 0.0
+		move_requested.emit(dir)
 
 
 # ── Public methods ────────────────────────────────────────────────────────────

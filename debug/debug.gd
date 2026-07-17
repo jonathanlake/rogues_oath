@@ -44,6 +44,17 @@ var _move_delay_sec: float = 0.8
 # to the say anchor default for that role (host say_delay_sec, client client_say_settle_sec).
 var _move_wait_sec: float = -1.0
 
+# Held-key harness (hold=/holdsec=): synthesizes a HELD move key via Input.action_press/release,
+# driving the GENUINE MoveInput sampler — key-held cadence, host/client symmetric — unlike move=,
+# which bypasses MoveInput by design and so can't catch input-layer bugs (e.g. a latch that only
+# wedges when the host's verdict returns synchronously). Anchored like the scripted moves
+# (movewait= timing, per role). Don't combine with move= in one instance: the interleaved cadence
+# counts become meaningless (dev tool — no guard, just don't).
+var _hold_dir: Vector2i = Vector2i.ZERO
+var _has_hold: bool = false
+# How long the synthetic key(s) stay held (seconds) before release.
+var _hold_sec: float = 3.0
+
 # Compass token -> 8-way step. n/s use screen-space y (down is +y), matching Vector2i grid coords.
 const _MOVE_DIRS := {
 	"n": Vector2i(0, -1), "s": Vector2i(0, 1), "e": Vector2i(1, 0), "w": Vector2i(-1, 0),
@@ -103,6 +114,10 @@ func _ready() -> void:
 			_move_wait_sec = arg.trim_prefix("movewait=").to_float()
 		elif arg.begins_with("glidesec="):
 			glide_override = arg.trim_prefix("glidesec=").to_float()
+		elif arg.begins_with("hold="):
+			_parse_hold(arg.trim_prefix("hold="))
+		elif arg.begins_with("holdsec="):
+			_hold_sec = arg.trim_prefix("holdsec=").to_float()
 		elif arg.begins_with("hostile="):
 			all_hostile = arg.trim_prefix("hostile=").to_int() != 0
 
@@ -149,6 +164,9 @@ func _ready() -> void:
 		# delay; unset, it falls back to say_delay_sec so a client has time to join first.
 		if _has_move:
 			_schedule_moves(_move_wait_sec if _move_wait_sec >= 0.0 else say_delay_sec)
+		# Held-key harness, same anchor + movewait= timing as the scripted moves.
+		if _has_hold:
+			_schedule_hold(_move_wait_sec if _move_wait_sec >= 0.0 else say_delay_sec)
 	elif is_client:
 		DisplayServer.window_set_title("CLIENT")
 		# name= overrides the default BEFORE join_game(), so peer_ready ships the injected name.
@@ -192,6 +210,9 @@ func _on_autostart_connected() -> void:
 	# the host is guaranteed present. movewait= overrides; unset, it uses the say settle default.
 	if _has_move:
 		_schedule_moves(_move_wait_sec if _move_wait_sec >= 0.0 else client_say_settle_sec)
+	# Held-key harness, same anchor + movewait= timing as the scripted moves.
+	if _has_hold:
+		_schedule_hold(_move_wait_sec if _move_wait_sec >= 0.0 else client_say_settle_sec)
 
 
 ## Fire one chat intent through the real pipe after a settle delay. Works identically on host
@@ -224,6 +245,41 @@ func _parse_move_list(spec: String) -> void:
 			_has_move = true
 		elif not key.is_empty():
 			push_warning("[Debug] move=: unknown direction '%s' (skipped)" % key)
+
+
+## Parse hold='s single compass token into _hold_dir. Unknown → warn and stay inert.
+func _parse_hold(spec: String) -> void:
+	var key := spec.strip_edges().to_lower()
+	if _MOVE_DIRS.has(key):
+		_hold_dir = _MOVE_DIRS[key]
+		_has_hold = true
+	elif not key.is_empty():
+		push_warning("[Debug] hold=: unknown direction '%s' (ignored)" % key)
+
+
+## Press the mapped move action(s) — two for a diagonal — after the initial delay, hold them for
+## _hold_sec, then release. Input.action_press makes MoveInput's is_action_pressed sampling see a
+## genuinely held key, so the whole real input path (chat gate, latch, glide block, cooldown) runs
+## exactly as it does under a physical key — this is the harness that catches input-layer bugs
+## move= (which submits intents directly) structurally cannot.
+func _schedule_hold(delay_sec: float) -> void:
+	await get_tree().create_timer(delay_sec).timeout
+	var actions: Array[String] = []
+	if _hold_dir.x > 0:
+		actions.append("move_right")
+	elif _hold_dir.x < 0:
+		actions.append("move_left")
+	if _hold_dir.y > 0:
+		actions.append("move_down")
+	elif _hold_dir.y < 0:
+		actions.append("move_up")
+	print("[Debug] hold: pressing %s for %.1fs" % [str(actions), _hold_sec])
+	for action in actions:
+		Input.action_press(action)
+	await get_tree().create_timer(_hold_sec).timeout
+	for action in actions:
+		Input.action_release(action)
+	print("[Debug] hold: released %s" % str(actions))
 
 
 func _schedule_screenshot(path: String) -> void:
