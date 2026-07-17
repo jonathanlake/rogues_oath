@@ -55,10 +55,43 @@ var _has_hold: bool = false
 # How long the synthetic key(s) stay held (seconds) before release.
 var _hold_sec: float = 3.0
 
+# Tap harness (tap=/tapsec=): synthesizes press/release EVENTS via Input.parse_input_event(),
+# which routes through the REAL InputMap bindings — one layer deeper than hold=, which presses
+# actions directly and therefore cannot test the bindings themselves (numpad dual-bound
+# diagonals, d-pad buttons, analog stick thresholds). Anchored like the scripted moves
+# (movewait= timing, per role); successive taps are spaced movedelay= apart.
+var _tap_tokens: Array[String] = []
+var _has_tap: bool = false
+# How long each tap's press event(s) stay down (seconds) before the matching release. A long
+# value (≥2) shows repeated stepping from one held binding.
+var _tap_sec: float = 0.4
+
 # Compass token -> 8-way step. n/s use screen-space y (down is +y), matching Vector2i grid coords.
 const _MOVE_DIRS := {
 	"n": Vector2i(0, -1), "s": Vector2i(0, 1), "e": Vector2i(1, 0), "w": Vector2i(-1, 0),
 	"ne": Vector2i(1, -1), "nw": Vector2i(-1, -1), "se": Vector2i(1, 1), "sw": Vector2i(-1, 1),
+}
+
+# tap= token tables, one per event type. Keys are PHYSICAL keycodes (matching the project.godot
+# bindings); one key event per tap — the InputMap fans a dual-bound diagonal (KP7/KP9/KP1/KP3)
+# out to both actions itself, which is exactly what the harness verifies. No KP5 (no wait action).
+const _TAP_KEYS := {
+	"kp1": KEY_KP_1, "kp2": KEY_KP_2, "kp3": KEY_KP_3, "kp4": KEY_KP_4,
+	"kp6": KEY_KP_6, "kp7": KEY_KP_7, "kp8": KEY_KP_8, "kp9": KEY_KP_9,
+}
+const _TAP_BUTTONS := {
+	"dpup": JOY_BUTTON_DPAD_UP, "dpdown": JOY_BUTTON_DPAD_DOWN,
+	"dpleft": JOY_BUTTON_DPAD_LEFT, "dpright": JOY_BUTTON_DPAD_RIGHT,
+}
+# Stick token -> list of [axis, press value]. ±0.9 clears the 0.35 deadzone decisively; release
+# re-sends the same axes at 0.0 (sticks report positions, not press/release pairs).
+const _TAP_STICKS := {
+	"stickn": [[JOY_AXIS_LEFT_Y, -0.9]], "sticks": [[JOY_AXIS_LEFT_Y, 0.9]],
+	"sticke": [[JOY_AXIS_LEFT_X, 0.9]], "stickw": [[JOY_AXIS_LEFT_X, -0.9]],
+	"stickne": [[JOY_AXIS_LEFT_X, 0.9], [JOY_AXIS_LEFT_Y, -0.9]],
+	"sticknw": [[JOY_AXIS_LEFT_X, -0.9], [JOY_AXIS_LEFT_Y, -0.9]],
+	"stickse": [[JOY_AXIS_LEFT_X, 0.9], [JOY_AXIS_LEFT_Y, 0.9]],
+	"sticksw": [[JOY_AXIS_LEFT_X, -0.9], [JOY_AXIS_LEFT_Y, 0.9]],
 }
 
 
@@ -118,6 +151,10 @@ func _ready() -> void:
 			_parse_hold(arg.trim_prefix("hold="))
 		elif arg.begins_with("holdsec="):
 			_hold_sec = arg.trim_prefix("holdsec=").to_float()
+		elif arg.begins_with("tap="):
+			_parse_tap_list(arg.trim_prefix("tap="))
+		elif arg.begins_with("tapsec="):
+			_tap_sec = arg.trim_prefix("tapsec=").to_float()
 		elif arg.begins_with("hostile="):
 			all_hostile = arg.trim_prefix("hostile=").to_int() != 0
 
@@ -167,6 +204,9 @@ func _ready() -> void:
 		# Held-key harness, same anchor + movewait= timing as the scripted moves.
 		if _has_hold:
 			_schedule_hold(_move_wait_sec if _move_wait_sec >= 0.0 else say_delay_sec)
+		# Tap harness, same anchor + movewait= timing.
+		if _has_tap:
+			_schedule_taps(_move_wait_sec if _move_wait_sec >= 0.0 else say_delay_sec)
 	elif is_client:
 		DisplayServer.window_set_title("CLIENT")
 		# name= overrides the default BEFORE join_game(), so peer_ready ships the injected name.
@@ -213,6 +253,9 @@ func _on_autostart_connected() -> void:
 	# Held-key harness, same anchor + movewait= timing as the scripted moves.
 	if _has_hold:
 		_schedule_hold(_move_wait_sec if _move_wait_sec >= 0.0 else client_say_settle_sec)
+	# Tap harness, same anchor + movewait= timing.
+	if _has_tap:
+		_schedule_taps(_move_wait_sec if _move_wait_sec >= 0.0 else client_say_settle_sec)
 
 
 ## Fire one chat intent through the real pipe after a settle delay. Works identically on host
@@ -280,6 +323,62 @@ func _schedule_hold(delay_sec: float) -> void:
 	for action in actions:
 		Input.action_release(action)
 	print("[Debug] hold: released %s" % str(actions))
+
+
+## Parse tap='s comma-separated token list into _tap_tokens. Unknown tokens are skipped with a
+## warning rather than aborting the run — a typo shouldn't silently drop the test.
+func _parse_tap_list(spec: String) -> void:
+	for token in spec.split(",", false):
+		var key := token.strip_edges().to_lower()
+		if _TAP_KEYS.has(key) or _TAP_BUTTONS.has(key) or _TAP_STICKS.has(key):
+			_tap_tokens.append(key)
+			_has_tap = true
+		elif not key.is_empty():
+			push_warning("[Debug] tap=: unknown token '%s' (skipped)" % key)
+
+
+## Fire the tap list: for each token, inject its press event(s) via Input.parse_input_event(),
+## hold for _tap_sec, then inject the matching release event(s); successive taps are spaced
+## _move_delay_sec apart. Unlike hold= (which presses ACTIONS directly), these synthetic events
+## traverse the real InputMap, so the bindings themselves — numpad dual-bound diagonals, d-pad
+## buttons, stick axes vs the action deadzone — are what's under test.
+func _schedule_taps(delay_sec: float) -> void:
+	await get_tree().create_timer(delay_sec).timeout
+	for i in _tap_tokens.size():
+		if i > 0:
+			await get_tree().create_timer(_move_delay_sec).timeout
+		var token := _tap_tokens[i]
+		print("[Debug] tap: pressing %s" % token)
+		for event in _tap_events(token, true):
+			Input.parse_input_event(event)
+		await get_tree().create_timer(_tap_sec).timeout
+		for event in _tap_events(token, false):
+			Input.parse_input_event(event)
+		print("[Debug] tap: released %s" % token)
+
+
+## Build the InputEvent(s) for one tap token. Keys are ONE event even for a dual-bound diagonal
+## (the InputMap fans it out to both actions); sticks are one event per involved axis, with
+## release re-sending the axis at 0.0 (a stick reports positions, not press/release pairs).
+func _tap_events(token: String, pressed: bool) -> Array[InputEvent]:
+	var events: Array[InputEvent] = []
+	if _TAP_KEYS.has(token):
+		var key := InputEventKey.new()
+		key.physical_keycode = _TAP_KEYS[token]
+		key.pressed = pressed
+		events.append(key)
+	elif _TAP_BUTTONS.has(token):
+		var button := InputEventJoypadButton.new()
+		button.button_index = _TAP_BUTTONS[token]
+		button.pressed = pressed
+		events.append(button)
+	elif _TAP_STICKS.has(token):
+		for axis_pair in _TAP_STICKS[token]:
+			var motion := InputEventJoypadMotion.new()
+			motion.axis = axis_pair[0]
+			motion.axis_value = axis_pair[1] if pressed else 0.0
+			events.append(motion)
+	return events
 
 
 func _schedule_screenshot(path: String) -> void:
