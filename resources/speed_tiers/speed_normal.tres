@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="GlideSpeed" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://resources/glide_speed.gd" id="1_glide"]
+
+[resource]
+script = ExtResource("1_glide")
+tier_name = "normal"
+glide_duration_sec = 0.35

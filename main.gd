@@ -13,6 +13,13 @@ extends Node2D
 const PLAYER_SCENE: PackedScene = preload("res://entities/player/player.tscn")
 const GAME_LOG_SCENE: PackedScene = preload("res://ui/game_log/game_log.tscn")
 
+# Room presentation. The $Room TileMapLayer is painted at runtime FROM WorldGrid (the logical
+# truth) — no authored TileSet .tres, since the room is a disposable prototype fixture. Atlas
+# coords are 0-indexed (col, row) into tiles.png; the legend in tiles.txt is 1-indexed by row.
+const ROOM_TILES: Texture2D = preload("res://assets/32rogues/tiles.png")
+const FLOOR_ATLAS := Vector2i(0, 6)  # tiles.txt row 7a — "blank floor (dark grey)"
+const WALL_ATLAS := Vector2i(0, 1)   # tiles.txt row 2a — "rough stone wall (top)"
+
 # Client-side join-handshake retry. peer_ready is fire-and-forget over RPC; if the host's
 # main.tscn hasn't finished loading when it arrives (same-frame localhost joins), Godot drops
 # it silently — no node at the target path. So the client resends until its own player node
@@ -24,20 +31,15 @@ const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN
 ## client's LineEdit does no length limiting, so the host is the only guard.
 @export var chat_max_chars: int = 200
 
-## Server-assigned spawn slots. The host hands each player a spawn_index; every peer derives
-## the same position from it, so no single shared hardcoded point and no client authority.
-## Coordinates are DESIGN pixels (the 640x360 base viewport), never window pixels: a 3x2 grid
-## centered on (320,180), 96px (3 tiles) apart.
-@export var spawn_positions: Array[Vector2] = [
-	Vector2(224, 132),
-	Vector2(320, 132),
-	Vector2(416, 132),
-	Vector2(224, 228),
-	Vector2(320, 228),
-	Vector2(416, 228),
+## Server-assigned spawn slots, in TILE coordinates. The host hands each player a spawn_index;
+## every peer derives the same tile — and thus the same tile-center pixel position — from it, so
+## there's no shared hardcoded point and no client authority. A 3x2 cluster near room center:
+## six floor tiles, each ≥2 tiles from the others (none are 8-neighbours) and none 8-adjacent to
+## the diagonal-gate feature, so chunk 2's corner-rule demo begins from clean ground.
+@export var spawn_tiles: Array[Vector2i] = [
+	Vector2i(7, 5), Vector2i(9, 5), Vector2i(11, 5),
+	Vector2i(7, 8), Vector2i(9, 8), Vector2i(11, 8),
 ]
-## Grid step (px) used to spread overflow players past the explicit slot list.
-@export var overflow_offset: Vector2 = Vector2(0, 96)
 
 @onready var _spawner: MultiplayerSpawner = $MultiplayerSpawner
 @onready var _players: Node2D = $Players
@@ -59,6 +61,10 @@ var _peer_ready_attempts: int = 0
 
 
 func _ready() -> void:
+	# Paint the room first, on EVERY peer, so players spawn onto a visible floor. Deterministic
+	# presentation of the logical grid — same input (WorldGrid) everywhere, so it can't diverge.
+	_build_room()
+
 	# Add the log first, on EVERY peer, so the very first spawn's "joined." line has somewhere
 	# to go (the host spawns its own player later in this same _ready).
 	_game_log = GAME_LOG_SCENE.instantiate()
@@ -80,7 +86,11 @@ func _ready() -> void:
 		player.peer_id = data.peer_id
 		player.player_name = data.player_name
 		player.spawn_index = int(data.spawn_index)
-		player.position = _slot_position(int(data.spawn_index))
+		# Derive the slot's tile once, then set both the logical tile and the pixel position from
+		# it (position is the tile's center) — never reverse-convert pixels back to a tile.
+		var slot_tile := _slot_tile(int(data.spawn_index))
+		player.tile = slot_tile
+		player.position = WorldGrid.tile_to_world(slot_tile)
 		# get_child_count() here is deliberate: this logs the PEER-LOCAL render count (the
 		# spawn_function runs on every peer; clients don't have _slots — that's the host's
 		# authority bookkeeping, used by the capacity gate in peer_ready).
@@ -212,13 +222,54 @@ func _assign_slot(peer_id: int) -> int:
 	return slot
 
 
-func _slot_position(index: int) -> Vector2:
-	if index < spawn_positions.size():
-		return spawn_positions[index]
-	# Overflow past the explicit slots: spread from the last known slot.
-	var over := index - spawn_positions.size() + 1
-	var base: Vector2 = spawn_positions.back() if not spawn_positions.is_empty() else Vector2.ZERO
-	return base + overflow_offset * float(over)
+## The tile for a spawn slot — the single slot->tile accessor; the spawn path derives both
+## player.tile and the pixel position (tile center) from it, so every peer computes the same
+## spot with no position ever crossing the wire. Explicit slots come from spawn_tiles; anything
+## past the list overflows deterministically: the N-th overflow slot is the N-th walkable tile
+## in row-major scan order that isn't an explicit spawn tile — guaranteed walkable and distinct
+## while any free floor remains. max_players (6) matches the slot count, so overflow is a
+## belt-and-braces guard, not a normal path.
+func _slot_tile(index: int) -> Vector2i:
+	if index < spawn_tiles.size():
+		return spawn_tiles[index]
+	var over := index - spawn_tiles.size() + 1  # 1-based overflow index
+	var grid_size := WorldGrid.size()
+	var seen := 0
+	for y in grid_size.y:
+		for x in grid_size.x:
+			var t := Vector2i(x, y)
+			if not WorldGrid.is_walkable(t) or t in spawn_tiles:
+				continue
+			seen += 1
+			if seen == over:
+				return t
+	# The room ran out of free floor — should be unreachable at any sane player count.
+	push_warning("No free floor tile for overflow spawn slot %d — reusing the last explicit slot" % index)
+	return spawn_tiles.back() if not spawn_tiles.is_empty() else Vector2i(1, 1)
+
+
+## Build the room's TileSet in code and paint $Room from WorldGrid. Runs on every peer with the
+## same input, so the picture is a deterministic function of the logical grid and can't diverge.
+## Presentation only — nothing here is adjudication state; WorldGrid stays the single truth.
+func _build_room() -> void:
+	var atlas := TileSetAtlasSource.new()
+	atlas.texture = ROOM_TILES
+	atlas.texture_region_size = Vector2i(WorldGrid.TILE_PX, WorldGrid.TILE_PX)
+	# One floor tile, one wall tile — the only two glyphs ROOM_LAYOUT uses.
+	atlas.create_tile(FLOOR_ATLAS)
+	atlas.create_tile(WALL_ATLAS)
+
+	var tile_set := TileSet.new()
+	tile_set.tile_size = Vector2i(WorldGrid.TILE_PX, WorldGrid.TILE_PX)
+	var source_id := tile_set.add_source(atlas)
+	$Room.tile_set = tile_set
+
+	var grid_size := WorldGrid.size()
+	for y in grid_size.y:
+		for x in grid_size.x:
+			var cell := Vector2i(x, y)
+			var atlas_coords := WALL_ATLAS if WorldGrid.is_wall(cell) else FLOOR_ATLAS
+			$Room.set_cell(cell, source_id, atlas_coords)
 
 
 ## Host-only chat referee, registered with NetEvents in _ready. Sanitizes the wire text (strip,
