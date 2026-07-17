@@ -14,3 +14,7 @@ var config: GameConfig = GameConfig.new()
 ## Set from the main menu before host_game() / join_game(). Flows into the spawn
 ## dict so all peers know each player's display name independently of peer ID.
 var player_name: String = ""
+
+## Transient "why did the last session end" message. Written by main.gd's teardown paths;
+## the main menu shows it in its error label on _ready and clears it. Empty = none.
+var last_disconnect_reason: String = ""

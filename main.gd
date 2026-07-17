@@ -13,6 +13,13 @@ extends Node2D
 const PLAYER_SCENE: PackedScene = preload("res://entities/player/player.tscn")
 const GAME_LOG_SCENE: PackedScene = preload("res://ui/game_log/game_log.tscn")
 
+# Client-side join-handshake retry. peer_ready is fire-and-forget over RPC; if the host's
+# main.tscn hasn't finished loading when it arrives (same-frame localhost joins), Godot drops
+# it silently — no node at the target path. So the client resends until its own player node
+# replicates in (implicit ack) or the budget runs out.
+const PEER_READY_RETRY_INTERVAL_SEC := 0.5
+const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN_TIMEOUT_SEC
+
 ## Server-side clamp on chat body length (chars). The referee never trusts the wire; the
 ## client's LineEdit does no length limiting, so the host is the only guard.
 @export var chat_max_chars: int = 200
@@ -46,6 +53,9 @@ var _slots: Dictionary = {}
 # INVARIANT: any deliberate session-teardown path added later (host quit-to-menu, etc.) MUST
 # set _leaving = true before it tears anything down. Also the client's one-shot host-left guard.
 var _leaving: bool = false
+
+# Client-only: how many peer_ready sends we've made this session (see _send_peer_ready).
+var _peer_ready_attempts: int = 0
 
 
 func _ready() -> void:
@@ -93,11 +103,12 @@ func _ready() -> void:
 		NetworkManager.peer_disconnected.connect(_on_peer_disconnected)
 	else:
 		print("[CLIENT] connected (peer %d) — requesting spawn from host" % multiplayer.get_unique_id())
-		# Tell the host we're ready. call_remote fires only on the host, so
-		# get_remote_sender_id() there is always a real peer ID, never 0.
-		peer_ready.rpc_id(1, GameManager.player_name)
 		# Only clients can lose the host. NetworkManager re-emits and nulls the peer.
 		NetworkManager.server_disconnected.connect(_on_server_disconnected)
+		# Tell the host we're ready — retried until our player node replicates in (implicit ack)
+		# or the budget runs out. call_remote fires only on the host, so get_remote_sender_id()
+		# there is always a real peer ID, never 0.
+		_send_peer_ready()
 
 
 ## The session root owns session lifetime, so it clears the shared pipe when it leaves the
@@ -129,15 +140,50 @@ func _on_peer_disconnected(peer_id: int) -> void:
 		print("[HOST] peer %d disconnected — freed its player" % peer_id)
 
 
-# Client-side: the host left. Disconnect the transport BEFORE changing scene so a fresh
-# host/join works in the same app run, then return to the menu.
-func _on_server_disconnected() -> void:
+# Client-only. Resends peer_ready until the host acknowledges by replicating our player node in,
+# or we exhaust the budget and give up. No stale-token bookkeeping (unlike main_menu.gd's join
+# timer): this SceneTreeTimer's timeout targets a method of THIS node, so the connection
+# auto-disconnects when Main is freed on scene change — a pending retry can't outlive the session.
+func _send_peer_ready() -> void:
+	if _leaving:
+		return
+	# Implicit ack: our player node (named str(peer_id)) replicated into $Players via the spawner.
+	# Checked BEFORE the attempts cap so a spawn that arrived on the final tick still wins — the
+	# handshake is complete and we must not fall through to the timeout give-up.
+	if _players.get_node_or_null(str(multiplayer.get_unique_id())) != null:
+		return
+	if _peer_ready_attempts >= PEER_READY_MAX_ATTEMPTS:
+		_end_session("No response from host.")
+		return
+	_peer_ready_attempts += 1
+	# The host handler is idempotent via _slots, so a retry racing an in-flight spawn is harmless
+	# (duplicate guard early-returns). The one narrow race — a spawn in flight during the final
+	# 500ms — loses cleanly: the client returns to menu and the host frees the orphan player on
+	# the resulting disconnect.
+	peer_ready.rpc_id(1, GameManager.player_name)
+	get_tree().create_timer(PEER_READY_RETRY_INTERVAL_SEC).timeout.connect(_send_peer_ready)
+
+
+## Client-side teardown funnel. Every "session over, back to menu" path — host left, kicked,
+## handshake timeout — routes through here so they share one reason surface (stashed in
+## GameManager for the menu to show once). Disconnect the transport BEFORE changing scene so a
+## fresh host/join works in the same app run. First-writer-wins: a nested/second call is swallowed
+## by the _leaving guard, so the first known cause survives.
+func _end_session(reason: String) -> void:
 	if _leaving:
 		return
 	_leaving = true
-	print("[CLIENT] server disconnected — returning to menu")
+	GameManager.last_disconnect_reason = reason
+	print("[CLIENT] session ended (%s) — returning to menu" % reason)
 	NetworkManager.disconnect_game()
 	get_tree().change_scene_to_packed(load(GameManager.MENU_SCENE))
+
+
+# Client-side: the host left — or kicked us (capacity), which arrives the same way and shares
+# this generic message. A distinct "Server is full." needs transport-level flush-before-disconnect
+# support (a same-frame kick drops the reliable reason packet) and is parked.
+func _on_server_disconnected() -> void:
+	_end_session("Disconnected from host.")
 
 
 ## Host-only. Builds the replicated spawn config. spawn_index is the server-assigned slot;

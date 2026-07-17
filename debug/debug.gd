@@ -44,6 +44,10 @@ func _ready() -> void:
 	# autostart player name so hostile-name injection (e.g. `name=[color=red]x`) is testable E2E.
 	var name_text := ""
 	var has_name := false
+	# host-only harness knobs (inert on the client): hostdelay= reproduces the peer_ready
+	# silent-drop race; maxplayers= forces the capacity-kick path with two windows.
+	var host_delay_sec := 0.0
+	var max_players := 0
 	for arg in args:
 		if arg.begins_with("screenshot="):
 			_schedule_screenshot(arg.trim_prefix("screenshot="))
@@ -53,6 +57,10 @@ func _ready() -> void:
 		elif arg.begins_with("name="):
 			name_text = arg.trim_prefix("name=")
 			has_name = true
+		elif arg.begins_with("hostdelay="):
+			host_delay_sec = arg.trim_prefix("hostdelay=").to_float()
+		elif arg.begins_with("maxplayers="):
+			max_players = arg.trim_prefix("maxplayers=").to_int()
 
 	if not (is_host or is_client):
 		return
@@ -66,10 +74,21 @@ func _ready() -> void:
 		# name= overrides the default BEFORE host_game(), so the host's own player carries the
 		# injected name through the real spawn/sanitize path.
 		GameManager.player_name = name_text if has_name else "HOST"
+		# maxplayers= overrides the capacity gate BEFORE hosting so the host reads it when it
+		# adjudicates peer_ready. maxplayers=1 fills the only slot with the host, so any client
+		# is capacity-kicked — a two-window test for the kick path.
+		if max_players > 0:
+			GameManager.config.max_players = max_players
 		print("[Debug] autostart: hosting on port %d" % NetworkManager.DEFAULT_PORT)
 		if NetworkManager.host_game() != OK:
 			push_error("[Debug] autostart host failed")
 			return
+		# hostdelay= holds the host on the menu scene after the transport is up but before
+		# /root/Main exists, so an early client's peer_ready targets a node that isn't there yet
+		# — reproducing the silent-drop race on demand. Only the say anchor is pushed back by the
+		# same span (scheduled after this await); the screenshot timer starts at _ready.
+		if host_delay_sec > 0.0:
+			await get_tree().create_timer(host_delay_sec).timeout
 		get_tree().change_scene_to_packed(load(GameManager.MAIN_SCENE))
 		# Host waits a fixed span for a client to join before saying anything.
 		if _has_say:

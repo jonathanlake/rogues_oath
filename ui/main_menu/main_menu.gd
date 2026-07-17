@@ -26,7 +26,14 @@ func _ready() -> void:
 	name_input.text_changed.connect(_on_name_changed)
 	NetworkManager.connection_succeeded.connect(_on_connection_succeeded)
 	NetworkManager.connection_failed.connect(_on_connection_failed)
-	_update_button_gate()
+	name_input.text = GameManager.player_name  # returning player keeps their name
+	_update_button_gate()                      # re-run: the prefill may enable the buttons
+	# A prior session's teardown reason (host left, kicked, handshake timeout), shown once. Set
+	# AFTER the gate so it wins over NAME_HINT; the gate only clears the label when it equals
+	# NAME_HINT, so the reason survives later name edits.
+	if not GameManager.last_disconnect_reason.is_empty():
+		error_label.text = GameManager.last_disconnect_reason
+		GameManager.last_disconnect_reason = ""  # transient: shown once
 
 
 # Host/Join require a non-empty name. The hint keeps disabled buttons reading as

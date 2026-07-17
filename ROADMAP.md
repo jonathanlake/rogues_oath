@@ -25,10 +25,13 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   **Done =** two windows, one hosts one joins, each shows both players' sprites; the
   basic disconnect paths work.
 
-- [ ] **M1.2 — Session Hardening** **[size S]**
-  Host-left overlay polish. Join handshake: `peer_ready` can theoretically arrive before
-  the host's main scene finishes loading (same-frame localhost joins) and be silently
-  dropped — add a retry/ack so a client can't wait forever (GLM sweep finding, 2026-07-15).
+- [x] **M1.2 — Session Hardening** *(2026-07-17)* **[size S]**
+  Join handshake: client resends `peer_ready` (0.5s interval, 5s budget) until its own
+  player node replicates in (implicit ack) or it gives up — closes the silent-drop race
+  when the host's main scene isn't loaded yet (GLM sweep finding, 2026-07-15; reproduced
+  and verified via the harness's `hostdelay=` knob). Host-left polish: every session-end
+  path (host left, kicked, handshake timeout) funnels through `_end_session(reason)` and
+  surfaces its reason on the menu's error label; name field prefilled on return.
   (Capacity kick, dedup guard, NetworkManager reset, and server-side name clamping shipped
   early — M1 + the code-smell pass already cover them.)
 
@@ -106,6 +109,10 @@ Not scheduled — pulled in when their moment comes:
   already exists)
 - Chat polish: speech bubbles overhead (WoW-style), name colors (escape-then-wrap the
   already-escaped name), timestamps, chat sounds
+- Distinct "Server is full." message for capacity-kicked clients — needs flush-before-
+  disconnect in the transport (ENet `peer_disconnect_later` inside NetworkManager's
+  contract); a same-frame kick drops the reliable reason packet (verified 2026-07-17),
+  so kicked clients currently share the generic "Disconnected from host."
 
 ---
 
