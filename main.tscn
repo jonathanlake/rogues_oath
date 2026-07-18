@@ -1,7 +1,8 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://main.gd" id="1_main"]
 [ext_resource type="Script" path="res://world/move_referee.gd" id="2_referee"]
+[ext_resource type="PackedScene" path="res://ui/debug_overlay/debug_overlay.tscn" id="3_overlay"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
@@ -24,3 +25,5 @@ script = ExtResource("2_referee")
 
 [node name="MultiplayerSpawner" type="MultiplayerSpawner" parent="."]
 spawn_path = NodePath("../Players")
+
+[node name="DebugOverlay" parent="." instance=ExtResource("3_overlay")]

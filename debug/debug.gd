@@ -90,9 +90,12 @@ const _MOVE_DIRS := {
 # tap= token tables, one per event type. Keys are PHYSICAL keycodes (matching the project.godot
 # bindings); one key event per tap — the InputMap fans a dual-bound diagonal (KP7/KP9/KP1/KP3)
 # out to both actions itself, which is exactly what the harness verifies. No KP5 (no wait action).
+# "enter" scripts the chat-focus flow (game_log grabs focus on Enter) — the focus-release
+# regression test needs it, and it's generally useful.
 const _TAP_KEYS := {
 	"kp1": KEY_KP_1, "kp2": KEY_KP_2, "kp3": KEY_KP_3, "kp4": KEY_KP_4,
 	"kp6": KEY_KP_6, "kp7": KEY_KP_7, "kp8": KEY_KP_8, "kp9": KEY_KP_9,
+	"enter": KEY_ENTER,
 }
 const _TAP_BUTTONS := {
 	"dpup": JOY_BUTTON_DPAD_UP, "dpdown": JOY_BUTTON_DPAD_DOWN,
@@ -176,6 +179,11 @@ func _ready() -> void:
 			_parse_click_list(arg.trim_prefix("click="))
 		elif arg.begins_with("clickdelay="):
 			_click_delay_sec = arg.trim_prefix("clickdelay=").to_float()
+		elif arg.begins_with("overlay="):
+			# Both roles: show the F3 overlay from startup (scripted screenshots). Applied via a
+			# GameManager flag the overlay reads in its _ready — set here at parse time, before
+			# any scene change, so it is role-symmetric with no node hunting.
+			GameManager.debug_overlay_start_visible = arg.trim_prefix("overlay=").to_int() != 0
 		elif arg.begins_with("hostile="):
 			all_hostile = arg.trim_prefix("hostile=").to_int() != 0
 
@@ -395,7 +403,11 @@ func _tap_events(token: String, pressed: bool) -> Array[InputEvent]:
 	var events: Array[InputEvent] = []
 	if _TAP_KEYS.has(token):
 		var key := InputEventKey.new()
+		# Set BOTH keycodes, like a real OS event carries: InputMap bindings here match on
+		# physical_keycode, but keycode-checking consumers exist too (game_log's Enter grab reads
+		# event.keycode) — a physical-only event would silently fail those.
 		key.physical_keycode = _TAP_KEYS[token]
+		key.keycode = _TAP_KEYS[token]
 		key.pressed = pressed
 		events.append(key)
 	elif _TAP_BUTTONS.has(token):

@@ -1,0 +1,20 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://ui/debug_overlay/debug_overlay.gd" id="1_overlay"]
+
+[node name="DebugOverlay" type="CanvasLayer"]
+layer = 10
+visible = false
+script = ExtResource("1_overlay")
+
+[node name="StatsLabel" type="Label" parent="."]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -300.0
+offset_top = 4.0
+offset_right = -4.0
+offset_bottom = 40.0
+grow_horizontal = 0
+theme_override_font_sizes/font_size = 8
+horizontal_alignment = 2

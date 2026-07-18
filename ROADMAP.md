@@ -52,6 +52,11 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   `udp channel requires auth` while the tunnel showed In>0/Out=0 B; it settled on its
   own. If it recurs: restart the agent and retest with the raw-IP form (the two-address
   discriminator). Harness knob for Jeff's session: `-- join join=<addr[:port]>`.
+  *Update (2026-07-18):* **reachability validated for real** — Jon+Jeff full session over the
+  tunnel: join, chat, and every movement method worked. Root cause of the earlier "Could not
+  connect": no host was running — the tunnel forwards, it doesn't listen. Remaining for
+  **Done =**: the latency baseline — run the F3 debug overlay next session and log its
+  median/p95 move-verdict numbers. Checkbox stays open until those are recorded.
 
 - [x] **M2 — Grid & Glide** *(2026-07-17)* **[size M]**
   Logical tile grid (WorldGrid is truth, TileMapLayer is paint); commit/glide movement with
@@ -133,6 +138,9 @@ Not scheduled — pulled in when their moment comes:
 - Shared-beat coordination mechanic (DESIGN §2.4.2) — only if a concrete need appears
 - Resource-editing GUI tool for designers (CLAUDE.md ground rule: design resources as if it
   already exists)
+- Client stop-and-go travel (RTT gap between steps, wire-test finding 2026-07-18) — the
+  pipelined next-step proposal (one server-held, committed-on-accept slot) lives in DESIGN
+  Part 4 Q7; awaiting F3-overlay latency data + Jeff
 - Stick deadzone tuning — shipped at 0.35 in M2.1; per-axis thresholding means lower values
   widen the stick's diagonal arcs vs cardinals (~0.45 would equalize them) — retune on real
   controller feel

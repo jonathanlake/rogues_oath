@@ -11,9 +11,11 @@ extends Node
 ## The target driver lives HERE (not a sibling) because it feeds the same latch/state — a
 ## sibling would have to share three pieces of state through the parent. Click-to-move is
 ## CLIENT-SIDE convenience only (DESIGN §2.2.9): the server never sees a path or a target and
-## never queues; a standing target is NOT a commitment — it may be replaced or dropped freely
-## between steps; only each submitted step commits. Walk-stop and unreachable-click UX cross to
-## the game log via GameEvents (the bus) — they are local-only and never touch the wire.
+## never queues; each submitted step is the only wire commitment. A standing walk is NOT
+## cancelable by other input (§2.2.9 amendment, Jon 2026-07-18 — "decisions carry risk"): keys
+## are not sampled while it stands; only a new CLICK redirects it (at the next step boundary),
+## and it ends on arrival or when the world refuses. Walk-stop and unreachable-click UX cross
+## to the game log via GameEvents (the bus) — they are local-only and never touch the wire.
 ##
 ## It is a conservative state machine (host is truth): after submitting it awaits the verdict
 ## before sampling again, and it never submits while its player is gliding. It can therefore
@@ -29,8 +31,8 @@ extends Node
 signal move_requested(dir: Vector2i, fresh: bool)
 ## A click set (or replaced) the walk target. The parent shows/moves the path marker + cues.
 signal path_target_set(tile: Vector2i)
-## The walk target is gone — arrived, unreachable, cancelled by keys, or dropped after rejects.
-## The parent hides the path marker.
+## The walk target is gone — arrived, unreachable, or dropped after rejects (keys cannot
+## cancel a walk: §2.2.9 amendment). The parent hides the path marker.
 signal path_target_cleared
 
 # ── Exports ───────────────────────────────────────────────────────────────────
@@ -114,9 +116,11 @@ func _process(delta: float) -> void:
 			return
 		State.COOLDOWN:
 			# Post-reject throttle. A fresh press bypasses it immediately (a key sampling site, so
-			# chat- and window-focus-gated, same as (1) below); otherwise wait out the cooldown,
-			# then fall through and resample.
-			if _fresh_press() and not _chat_focused() and _window_focused():
+			# chat- and window-focus-gated, same as the key branch below) — but NEVER while a walk
+			# stands: the walk owns the submit path (§2.2.9 amendment), so a walk-reject's cooldown
+			# just runs out normally (0.25s) before the next recompute. Otherwise wait out the
+			# cooldown, then fall through and resample.
+			if not _has_target and _fresh_press() and not _chat_focused() and _window_focused():
 				_state = State.IDLE
 			else:
 				_cooldown_elapsed += delta
@@ -125,17 +129,25 @@ func _process(delta: float) -> void:
 				_state = State.IDLE
 				_cooldown_elapsed = 0.0
 
-	# IDLE (or a just-elapsed cooldown), in priority order:
-	# (1) Keys. The chat gate AND the window-focus gate live ONLY on the key sampling sites —
-	#     while a text field owns focus the player is typing, not steering (the focused control
-	#     IS the source of truth; game_log.gd documents this seam). Window focus matters because
-	#     gamepad state isn't OS-routed like keyboard/mouse: Input polls the raw device with no
-	#     per-window exclusivity, so two instances on one machine would both see the same stick
-	#     (the two-window dev-testing symptom). Real single-window play is unaffected — the one
-	#     game window normally holds focus while its player is controlling it. An auto-walk (2)
-	#     deliberately continues regardless — it's click-driven, not device-driven, so an
-	#     unfocused window can still finish an in-progress walk. A non-zero key sample cancels
-	#     any standing target: keys always win.
+	# IDLE (or a just-elapsed cooldown):
+	# A standing walk OWNS the submit path (§2.2.9 amendment, Jon 2026-07-18 — "decisions carry
+	# risk"): keys are not sampled at all while it stands — only a new CLICK redirects it, and it
+	# ends on arrival or when the world refuses. When the walk ends, a still-held key is honored
+	# on the NEXT idle frame (held sampling below, no press-edge required): you can still act at
+	# arrival. The recompute each step picks up moved bodies and replaced targets for free —
+	# redirect falls out of per-step recompute; the server never sees the path (§2.2.9). The walk
+	# also continues regardless of chat/window focus — it's click-driven, not device-driven, so
+	# typing (or an unfocused window) doesn't stall a walk in progress.
+	if _has_target:
+		_step_toward_target()
+		return
+	# Keys (no standing walk). The chat gate AND the window-focus gate live ONLY on the key
+	# sampling sites — while a text field owns focus the player is typing, not steering (the
+	# focused control IS the source of truth; game_log.gd documents this seam). Window focus
+	# matters because gamepad state isn't OS-routed like keyboard/mouse: Input polls the raw
+	# device with no per-window exclusivity, so two instances on one machine would both see the
+	# same stick (the two-window dev-testing symptom). Real single-window play is unaffected —
+	# the one game window normally holds focus while its player is controlling it.
 	var dir := Vector2i.ZERO
 	if not _chat_focused():
 		if _window_focused():
@@ -145,27 +157,20 @@ func _process(delta: float) -> void:
 			# confused player/tester why their key/pad input is doing nothing.
 			print("[MoveInput] input ignored: window not focused")
 	if dir != Vector2i.ZERO:
-		if _has_target:
-			_clear_target()
 		_last_dir = dir
 		# A key step is not a target step: clear the pending-step stamp so its reject can never
 		# count toward a walk (e.g. one clicked into existence before the verdict lands).
 		_has_pending_step = false
 		_submit(dir, true)
-		return
-	# (2) Standing target: recompute the path THIS step (cheap on a room; picks up moved bodies
-	#     and replaced targets for free — redirect falls out of per-step recompute) and submit
-	#     only the next adjacent step. The server never sees the path (§2.2.9).
-	if _has_target:
-		_step_toward_target()
 
 
 ## Click capture. _unhandled_input, so clicks the UI consumed (chat panel, menus) never reach
-## it. Deliberately NO chat-focus gate here: a world click while typing ALSO unfocuses the chat
-## box (game_log's editing_toggled click-away path), so gating would eat the click that just
-## closed the chat — the click is unambiguous intent either way. Clicks are legal in ANY state
-## (mid-glide, awaiting, cooldown): they only store/replace the target; the actual step submits
-## through the normal IDLE machinery, so no committed glide is ever touched (§2.2.4).
+## it. No chat-focus GATE here — instead a world click RELEASES a focused text control (below):
+## a world click on its own moves GUI focus nowhere (no other Control takes it), so without the
+## explicit release the chat gate would wedge key input after typing (wire-test bug, 2026-07-18).
+## Clicks are legal in ANY state (mid-glide, awaiting, cooldown): they only store/replace the
+## target; the actual step submits through the normal IDLE machinery, so no committed glide is
+## ever touched (§2.2.4).
 func _unhandled_input(event: InputEvent) -> void:
 	if not enabled:
 		return
@@ -174,6 +179,13 @@ func _unhandled_input(event: InputEvent) -> void:
 	var mouse := event as InputEventMouseButton
 	if mouse.button_index != MOUSE_BUTTON_LEFT or not mouse.pressed:
 		return
+	# ANY world click means "done typing" — release a focused text control BEFORE the target
+	# logic, so even a click on a wall/unreachable tile ends editing. Clicks ON the chat panel
+	# are consumed by the GUI and never get here, so they keep focus. This release lands in
+	# game_log as editing_toggled(false), which keeps the draft (nothing is sent, nothing is
+	# lost — refocus with Enter and it's still there; send is the only clear).
+	if _chat_focused():
+		get_viewport().gui_release_focus()
 	# Viewport coords → world via the canvas transform inverse (camera/stretch-safe), → tile.
 	var world_pos: Vector2 = get_viewport().get_canvas_transform().affine_inverse() * mouse.position
 	var tile := WorldGrid.world_to_tile(world_pos)
@@ -215,6 +227,9 @@ func on_accepted(to_tile: Vector2i) -> void:
 	_has_avoid = false
 	_has_pending_step = false
 	if _state == State.AWAITING:
+		# The AWAITING accumulator IS the submit→verdict time — publish it for the debug
+		# overlay before clearing (local-only; ≈0 on the host, whose verdict is synchronous).
+		GameEvents.verdict_latency_measured.emit(_await_elapsed)
 		_state = State.IDLE
 	_await_elapsed = 0.0
 
@@ -225,6 +240,10 @@ func on_accepted(to_tile: Vector2i) -> void:
 ## streak: at target_reject_cap consecutive rejects the way is shut, so drop the target and
 ## tell the player via the bus ("Stopped walking." — a stopped walk must never be silent).
 func on_rejected() -> void:
+	# A reject is a verdict too: same submit→verdict sample as the accept path (the overlay
+	# measures the pipe, not success). Emitted before the state leaves AWAITING.
+	if _state == State.AWAITING:
+		GameEvents.verdict_latency_measured.emit(_await_elapsed)
 	_state = State.COOLDOWN
 	_cooldown_elapsed = 0.0
 	# Count only a reject of a step computed for the CURRENT target — a click replacing the

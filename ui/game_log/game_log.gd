@@ -20,12 +20,16 @@ extends CanvasLayer
 
 func _ready() -> void:
 	_input.text_submitted.connect(_on_input_submitted)
-	# Focus release lives on editing_toggled, not an Esc key branch: a focused LineEdit
-	# consumes ui_cancel in its own gui_input before _unhandled_input ever sees it (verified in
-	# engine source), and unedit() does NOT release focus in 4.x. editing_toggled(false) fires
-	# for BOTH Esc and click-away, so this one hook covers every way editing ends. Releasing
-	# focus matters for M2: the movement gate reads gui_get_focus_owner(), so a lingering focus
-	# would silently swallow movement input. (The send path clears too — double clear is harmless.)
+	# Cleanup lives on editing_toggled, not an Esc key branch: a focused LineEdit consumes
+	# ui_cancel in its own gui_input before _unhandled_input ever sees it (verified in engine
+	# source), and unedit() does NOT release focus in 4.x. editing_toggled(false) fires for Esc
+	# and send — NOT for a world click: a world click moves GUI focus nowhere on its own (no
+	# other Control takes it), which used to wedge the movement gate (gui_get_focus_owner) after
+	# typing. The world-click release lives in MoveInput._unhandled_input (gui_release_focus,
+	# wire-test fix 2026-07-18); that external release ends editing and lands HERE as
+	# editing_toggled(false). Editing-end KEEPS the draft (deliberate — a click that stops or
+	# redirects a walk, or an accidental Esc, must never eat a half-written message; refocus with
+	# Enter and it's still there). SEND is the only path that clears the text.
 	_input.editing_toggled.connect(_on_editing_toggled)
 	NetEvents.event_received.connect(_on_event_received)
 	# The referee's refusals surface HERE (DESIGN §2.3.4: a rejection must never be silent —
@@ -83,12 +87,13 @@ func _on_input_submitted(text: String) -> void:
 	_input.release_focus()
 
 
-# Editing ended (Esc, click-away, or focus loss). Clear the pending text and release focus so
-# the M2 movement gate (gui_get_focus_owner) sees no focused LineEdit. See _ready for why this
-# lives here rather than on an Esc key branch.
+# Editing ended (Esc, or the external world-click release from MoveInput). Release focus so the
+# movement gate (gui_get_focus_owner) sees no focused LineEdit — but KEEP the draft: the only
+# way to stop/redirect a standing walk is a click, and that click must never destroy a
+# mid-composition message (GLM review, 2026-07-18). Send (_on_input_submitted) is the only
+# clear. See _ready for why this lives here rather than on an Esc key branch.
 func _on_editing_toggled(toggled_on: bool) -> void:
 	if not toggled_on:
-		_input.clear()
 		_input.release_focus()
 
 

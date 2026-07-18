@@ -30,3 +30,8 @@ var all_hostile: bool = false
 ## stretch glides long enough to script/observe conga timing. The diagonal multiplier still
 ## applies on top. 0 = off (normal tier-driven pacing). Never touched by gameplay code.
 var debug_glide_override_sec: float = 0.0
+
+## DEBUG ONLY. When true, the F3 diagnostics overlay starts VISIBLE — set by debug.gd's
+## `overlay=1` arg (either role, before the main scene loads) for scripted screenshots. The
+## in-session toggle is always F3 regardless; gameplay code never reads this.
+var debug_overlay_start_visible: bool = false

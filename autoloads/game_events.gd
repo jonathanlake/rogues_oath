@@ -21,3 +21,9 @@ signal unreachable_tile_clicked(tile: Vector2i)
 ## Emitted by the local player's MoveInput; the game log listens ("Stopped walking.").
 ## LOCAL-ONLY — the server never knew a walk existed (DESIGN §2.2.9).
 signal target_walk_stopped
+
+## One movement intent's submit→verdict time (seconds), measured on the local MoveInput's
+## AWAITING accumulator — accepts AND rejects both sample (it measures the pipe, not success).
+## Includes server processing, so it is NOT pure network RTT. Emitted by the local player's
+## MoveInput; the debug overlay listens. LOCAL-ONLY — never crosses the wire.
+signal verdict_latency_measured(latency_sec: float)
