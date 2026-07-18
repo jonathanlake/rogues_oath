@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.5.2)
+# Rogue's Oath — Design Doc (v0.5.3)
 
 ## Part 1 — The Game
 
@@ -331,6 +331,18 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.5.3 (2026-07-18)** — Code-review fix pass on the v0.5.2 series (5-angle review,
+  GLM red-teamed the review itself; 8 fixes, 6 declines recorded in the commit). The
+  Entity contract completed: `max_hp` and `display_name` are now Entity-level and
+  assigned PRE-TREE by the spawn configs (uniform with entity_id/tile — correct at any
+  read time, closing the empty-name window and the duck-typed HP seed); wind-up default
+  gets ONE authoring site (MonsterType.DEFAULT_WINDUP_SEC — the referee's shadow copy
+  removed); redundant entity_id re-assignment, triple-site HP formatting, an AoO double
+  node-resolve, and a duplicated flash color cleaned; a whiff from a non-Monster attacker
+  now warns instead of silently dropping feedback (§2.3.4). GLM's review-of-the-review
+  caught a null-deref in one proposed fix (nulled monster_type) before it shipped —
+  fixed in spec. Verified two-instance (combat regression, zero empty names, zero
+  errors) + screenshot (labels/nameplates render identically).
 - **v0.5.2 (2026-07-18)** — Full docs+code review pass (no bugs found; every ground rule
   verified in code) + the Entity refactor it motivated. **Architecture boundary decided
   (now a CLAUDE.md convention):** universal entity contract → `Entity` base class;

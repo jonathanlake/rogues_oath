@@ -422,11 +422,11 @@ func _trigger_attacks_of_opportunity(from: Vector2i, mover_peer_id: int, mover) 
 	# in this same scan could in principle have killed a later attacker), and stop once the mover
 	# dies — a corpse takes no further free hits, and apply_damage already tore its state down.
 	for occupant_id in attackers:
-		if not is_instance_valid(_node_of_id(occupant_id)) or not _combat.is_alive(occupant_id):
+		var occupant := _node_of_id(occupant_id)
+		if not is_instance_valid(occupant) or not _combat.is_alive(occupant_id):
 			continue
 		if not _combat.is_alive(mover_peer_id):
 			return true
-		var occupant := _node_of_id(occupant_id)
 		var mover_died: bool = _combat.apply_damage(occupant_id, mover_peer_id, _combat.damage_of(occupant), "free", 0.0)
 		if mover_died:
 			return true

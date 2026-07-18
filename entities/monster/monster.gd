@@ -24,12 +24,6 @@ extends Entity
 ## from the replicated type PATH (each peer loads the same .tres); never streamed as a resource.
 var monster_type: MonsterType = null
 
-## Authored maximum hit points, mirrored from monster_type so the Entity max_hp surface is uniform
-## across both kinds. Set PRE-tree by Main's spawn_function (alongside monster_type/tile — the
-## combat referee's enter hook seeds HP from it BEFORE _ready runs); 0 when the type is missing,
-## so a misconfigured monster is never alive.
-var max_hp: int = 0
-
 @onready var _brain := $MonsterBrain
 # Wind-up/whiff feedback (§2.3.4). Placeholder assets: pitch-shifted reuses of the two existing
 # wavs (windup = bonk mid, whiff = commit_sent very low) — flagged placeholder, real SFX later.
@@ -40,25 +34,23 @@ var max_hp: int = 0
 func _ready() -> void:
 	super()
 	# monster_type is set at spawn before the node enters the tree, so it's readable here on
-	# every peer. A missing type is a spawn-config bug; warn rather than crash on null access —
-	# but still give the entity a sane name surface (display_name is first read at attack time).
+	# every peer. A missing type is a spawn-config bug; warn rather than crash on null access. The
+	# name surface arrives pre-tree ("Monster" from the spawn config for a broken type), so this
+	# early return just seeds the label from it and leaves it intact — never overwrites it.
 	if monster_type == null:
 		push_warning("[Monster] entity %d spawned with no MonsterType — using bare defaults" % entity_id)
-		display_name = "Monster"
 		_name_label.text = display_name
 		return
-	# Display name is a plain assigned var (no getter tricks): the one name surface the referees
-	# read when composing combat events/log lines, first read at attack time — after _ready.
-	display_name = monster_type.display_name
 	glide_speed = monster_type.glide_speed
 	var cell := monster_type.atlas_coords
 	_sprite.region_enabled = true
 	_sprite.region_rect = Rect2(cell.x * WorldGrid.TILE_PX, cell.y * WorldGrid.TILE_PX, WorldGrid.TILE_PX, WorldGrid.TILE_PX)
-	# Nameplate is name-only; the HP readout rides its own label under the feet, seeded from the
-	# authored max locally (max_hp is known everywhere). The combat referee drives updates
-	# from attack events. Full HP at spawn.
+	# Nameplate is name-only, seeded from the pre-tree display_name; the HP readout rides its own
+	# label under the feet, seeded from the authored max locally (max_hp is known everywhere) via
+	# set_hp_display, the single formatting site. The combat referee drives updates from attack
+	# events. Full HP at spawn.
 	_name_label.text = display_name
-	_hp_label.text = "%d/%d" % [monster_type.max_hp, monster_type.max_hp]
+	set_hp_display(max_hp, max_hp)
 
 
 # ── Public methods ────────────────────────────────────────────────────────────

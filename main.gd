@@ -138,6 +138,10 @@ func _ready() -> void:
 		# fact here (player._ready re-assigns the same value — harmless).
 		player.entity_id = data.peer_id
 		player.player_name = data.player_name
+		# display_name is the one name surface the referees read at attack time — assigned PRE-tree
+		# here (like entity_id/max_hp) so it's correct on every peer at ANY read time, never a
+		# _ready-timed field. data.player_name is server-sanitized, never empty.
+		player.display_name = data.player_name
 		player.spawn_index = int(data.spawn_index)
 		# Derive the slot's tile once, then set both the logical tile and the pixel position from
 		# it (position is the tile's center) — never reverse-convert pixels back to a tile.
@@ -170,6 +174,11 @@ func _ready() -> void:
 		# node.max_hp BEFORE _ready runs. A missing type reads 0 — never alive; monster._ready
 		# still fires its spawn-config warning.
 		monster.max_hp = monster.monster_type.max_hp if monster.monster_type != null else 0
+		# display_name mirrored from the type PRE-tree (alongside max_hp) so it's a uniform pre-tree
+		# Entity fact for both kinds, correct at any read time. The explicit null-check ternary is
+		# required: monster_type CAN be null on a broken type_path, so "Monster" is the fallback and
+		# monster._ready's null-type early return then just leaves this pre-set value intact.
+		monster.display_name = monster.monster_type.display_name if monster.monster_type != null else "Monster"
 		var tile: Vector2i = data.tile
 		monster.tile = tile
 		monster.position = WorldGrid.tile_to_world(tile)
@@ -303,6 +312,11 @@ func _handle_attack_event(event: Dictionary) -> void:
 		var whiffer := attacker as Monster
 		if whiffer != null:
 			whiffer.play_whiff(dir)
+		else:
+			# Whiffs are structurally monster-only today (only _resolve_windup emits them, only
+			# brains wind up), so a non-Monster whiffer is a future-shape break — §2.3.4 forbids an
+			# outcome being silently swallowed, so name the unhandled attacker instead of dropping it.
+			push_warning("[Main] whiff attack from non-Monster attacker %d — no feedback rendered" % attacker_id)
 	else:
 		if attacker != null:
 			attacker.play_attack(dir)

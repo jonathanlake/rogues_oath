@@ -19,6 +19,12 @@ extends Node2D
 ## which both existing scenes provide. A future entity kind without them (decorations etc.)
 ## generalizes then, not preemptively.
 
+# The red used for both taking a hit (Entity.play_hurt) and a rejected commit (Player.play_bonk).
+# Deliberately the SAME red for two distinct outcomes: the SOUND + context distinguish them
+# (§2.3.4 — hurt plays the impact wav on the target, a bonk plays the thud on the sender), so the
+# colour need not, and sharing one const keeps the two flashes visually identical on purpose.
+const _HURT_FLASH_COLOR := Color(1.0, 0.3, 0.3)
+
 # ── Signals ──────────────────────────────────────────────────────────────────
 
 ## Emitted the instant a glide begins (before the tween runs). Player wires it to block its own
@@ -37,6 +43,14 @@ signal glide_finished
 ## _ready, overwriting the null export (before the brain can ever submit a step).
 @export var glide_speed: GlideSpeed = null
 
+## The authored starting / maximum HP surface the combat referee seeds from ONCE at spawn (its
+## container enter hook reads node.max_hp pre-tree; the referee owns the live value thereafter).
+## Players author theirs in player.tscn — 20 is the player default. Monsters are OVERWRITTEN
+## pre-tree by Main's spawn_function from MonsterType.max_hp, so the Monster inspector value is
+## inert — the same documented quirk as glide_speed above it (the null/default export is a
+## placeholder the spawn config always writes over before the brain or referee reads it).
+@export var max_hp: int = 20
+
 # ── Public state ──────────────────────────────────────────────────────────────
 
 ## Entity id in the referees' ONE occupancy/HP space (plan decision 5): positive = a player's
@@ -45,10 +59,11 @@ signal glide_finished
 var entity_id: int = 0
 
 ## The one name surface per entity, read HOST-side by the referees when they compose combat
-## events/log lines. TIMING INVARIANT: assigned by each subclass at _ready (Player from
-## player_name, Monster from monster_type with a "Monster" fallback) and first legitimately
-## read at attack time — pre-_ready referee code (the container enter hooks) must key on
-## entity_id / monster_type, NEVER on this name.
+## events/log lines. TIMING INVARIANT: assigned PRE-tree by the spawn config on every peer
+## (Player from data.player_name, Monster from monster_type.display_name with a "Monster"
+## fallback), so it is correct at ANY read time — including the referees' container enter hooks,
+## which fire only after the spawn function has returned the fully-configured node. The
+## subclasses' _ready merely SEEDS the name label from it, never assigns it.
 var display_name: String = ""
 
 ## Logical grid position. Presentation metadata mirrored on every peer (set at spawn, then at
@@ -134,7 +149,7 @@ func play_attack(dir: Vector2i) -> void:
 ## event: a distinct red flash + the impact sound. Never confusable with the attacker's swing or a
 ## rejected commit — this is "I got hit."
 func play_hurt() -> void:
-	_flash(Color(1.0, 0.3, 0.3))
+	_flash(_HURT_FLASH_COLOR)
 	_hit_audio.play()
 
 

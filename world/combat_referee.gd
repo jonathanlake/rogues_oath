@@ -29,10 +29,6 @@ extends Node
 # entity id (peer ids are > 0, monster ids < 0).
 const _NO_ENTITY := 0
 
-# Wind-up fallback (seconds) for a non-monster / missing-type node in _windup_duration_of. Mirrors
-# MonsterType.windup_sec's own default so the accessor stays total without inventing a new number.
-const _FALLBACK_WINDUP_SEC := 0.8
-
 # Authoritative HIT POINTS: entity id -> current HP. THE combat truth; a node's nameplate is only
 # presentation. Seeded from each entity's authored max as it enters its container (players from the
 # Player.max_hp export, monsters from MonsterType.max_hp) and erased on exit. Entity id is a peer id
@@ -266,8 +262,9 @@ func _max_hp_of(node: Node) -> int:
 
 
 ## The wind-up telegraph duration for a node (seconds), from its MonsterType. A non-monster / missing
-## type falls back to a sane default so the accessor is total.
+## type falls back to MonsterType.DEFAULT_WINDUP_SEC — the value's single authoring site — so the
+## accessor is total without a shadow copy of the number here.
 func _windup_duration_of(node: Node) -> float:
 	if node is Monster and node.monster_type != null:
 		return node.monster_type.windup_sec
-	return _FALLBACK_WINDUP_SEC
+	return MonsterType.DEFAULT_WINDUP_SEC

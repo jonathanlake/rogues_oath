@@ -26,11 +26,6 @@ const _SPRITE_TILES: Array[Vector2i] = [
 	Vector2i(2, 0),  # ranger
 ]
 
-## Starting / maximum hit points (RF3-scaled "warrior" placeholder — DESIGN §2.3 amendment).
-## Seeds this player's HP in the host's CombatReferee on spawn (read host-side from the node) and
-## the nameplate readout; the referee owns the live value thereafter.
-@export var max_hp: int = 20
-
 ## Damage (HP) this player deals per landed melee attack — a bump (move into a hostile) or an
 ## attack of opportunity. Deterministic (no to-hit roll, DESIGN §2.3 amendment). Read HOST-side by
 ## the referees when they stamp this attacker's damage; never trusted from the wire.
@@ -55,19 +50,15 @@ var spawn_index: int = 0
 
 func _ready() -> void:
 	super()
-	# Entity identity: a player's entity id IS its peer id (positive — plan decision 5), and its
-	# one name surface is the player name. spawn_function also sets entity_id pre-tree (the
-	# referees' enter hooks read it before _ready); this re-assignment is the same value.
-	entity_id = peer_id
-	display_name = player_name
 	var sprite_tile := _SPRITE_TILES[spawn_index % _SPRITE_TILES.size()]
 	_sprite.region_enabled = true
 	_sprite.region_rect = Rect2(sprite_tile.x * WorldGrid.TILE_PX, sprite_tile.y * WorldGrid.TILE_PX, WorldGrid.TILE_PX, WorldGrid.TILE_PX)
-	# Nameplate is name-only; the HP readout rides its own label under the feet. max_hp is locally
-	# known everywhere (an @export), so the seed is correct on every peer with no query; the combat
-	# referee's attack events drive live updates via set_hp_display. Full HP at spawn.
-	_name_label.text = player_name
-	_hp_label.text = "%d/%d" % [max_hp, max_hp]
+	# Nameplate is name-only, seeded from the pre-tree display_name; the HP readout rides its own
+	# label under the feet. max_hp is locally known everywhere (an Entity export), so the seed is
+	# correct on every peer with no query; the combat referee's attack events drive live updates via
+	# set_hp_display, the single formatting site. Full HP at spawn.
+	_name_label.text = display_name
+	set_hp_display(max_hp, max_hp)
 
 	# MoveInput samples only on the local player's node. Every peer instantiates the child (uniform
 	# node graph) but only ours is enabled.
@@ -135,7 +126,7 @@ func commit_in_place(duration_sec: float) -> void:
 ## the sender's own player. A bonk only ever fires when NOT gliding (you were refused), but we
 ## still guard the shake against an active glide tween so the two can't fight over position.
 func play_bonk() -> void:
-	_flash(Color(1.0, 0.3, 0.3))
+	_flash(_HURT_FLASH_COLOR)
 	if not (_glide_tween != null and _glide_tween.is_valid()):
 		_shake()
 	_bonk_audio.play()

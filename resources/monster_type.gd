@@ -13,6 +13,11 @@ extends Resource
 ## defaults below are therefore part of the authored surface: changing one retunes every monster
 ## that doesn't override it. Change them as deliberately as you would a .tres value.
 
+## The single authoring site for the wind-up default (seconds): the windup_sec export below seeds
+## from it, and CombatReferee's total-accessor fallback returns it for a non-monster / missing-type
+## node — so the "slow telegraph" default has ONE home, not a shadow copy in the referee.
+const DEFAULT_WINDUP_SEC := 0.8
+
 ## Log / nameplate name for this monster ("Goblin").
 @export var display_name: String = ""
 
@@ -29,7 +34,7 @@ extends Resource
 
 ## Telegraph duration (seconds) between a monster committing its attack and the damage resolving
 ## against the target TILE (DESIGN §2.1 "slow telegraphs, hard commits").
-@export var windup_sec: float = 0.8
+@export var windup_sec: float = DEFAULT_WINDUP_SEC
 
 ## Movement speed tier — a shared GlideSpeed resource, same mechanism players use. The referee
 ## reads glide_duration_sec from here when it stamps each monster step's duration.
