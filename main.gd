@@ -132,6 +132,10 @@ func _ready() -> void:
 		var player := PLAYER_SCENE.instantiate() as Player
 		player.name = str(data.peer_id)
 		player.peer_id = data.peer_id
+		# Entity id = peer id (plan decision 5), assigned PRE-tree like tile: the referees' unified
+		# container enter hooks read node.entity_id BEFORE _ready runs, so it must be a pre-tree
+		# fact here (player._ready re-assigns the same value — harmless).
+		player.entity_id = data.peer_id
 		player.player_name = data.player_name
 		player.spawn_index = int(data.spawn_index)
 		# Derive the slot's tile once, then set both the logical tile and the pixel position from
@@ -160,6 +164,11 @@ func _ready() -> void:
 		monster.name = str(data.entity_id)
 		monster.entity_id = int(data.entity_id)
 		monster.monster_type = load(data.type_path) as MonsterType
+		# max_hp mirrored from the type PRE-tree (alongside entity_id/tile) so it's a uniform
+		# pre-tree Entity fact for both kinds: the combat referee's enter hook seeds HP from
+		# node.max_hp BEFORE _ready runs. A missing type reads 0 — never alive; monster._ready
+		# still fires its spawn-config warning.
+		monster.max_hp = monster.monster_type.max_hp if monster.monster_type != null else 0
 		var tile: Vector2i = data.tile
 		monster.tile = tile
 		monster.position = WorldGrid.tile_to_world(tile)
@@ -260,7 +269,7 @@ func _on_net_event(event: Dictionary) -> void:
 ## monster (its glide rides the same event path, posted by the referee with as_peer = the negative
 ## id). Both nodes expose glide_to(to, duration_sec), so one call animates either.
 func _handle_glide_event(event: Dictionary) -> void:
-	var mover = _node_for_peer(int(event.get("peer", 0)))
+	var mover := _node_for_peer(int(event.get("peer", 0)))
 	if mover == null:
 		return
 	var data: Dictionary = event.get("data", {})
@@ -278,8 +287,8 @@ func _handle_attack_event(event: Dictionary) -> void:
 	var target_id := int(data.get("target_id", 0))
 	var kind := str(data.get("kind", ""))
 	var whiff := bool(data.get("whiff", false))
-	var attacker = _node_for_peer(attacker_id)
-	var target = _node_for_peer(target_id)
+	var attacker := _node_for_peer(attacker_id)
+	var target := _node_for_peer(target_id)
 	# Direction of the strike, for the attacker's directional lunge. Prefer the two nodes' tiles; on
 	# a whiff (no target node) fall back to the event's committed target_tile.
 	var dir := Vector2i.ZERO
@@ -289,17 +298,22 @@ func _handle_attack_event(event: Dictionary) -> void:
 		elif data.has("target_tile"):
 			dir = _step_sign((data.get("target_tile") as Vector2i) - attacker.tile)
 	if whiff:
-		if attacker != null:
-			attacker.play_whiff(dir)
+		# Whiff cues are Monster surface (only a wind-up whiffs in M3) — deliberate narrow cast.
+		var whiffer := attacker as Monster
+		if whiffer != null:
+			whiffer.play_whiff(dir)
 	else:
 		if attacker != null:
 			attacker.play_attack(dir)
 		if target != null:
 			target.play_hurt()
 			target.set_hp_display(int(data.get("hp_after", 0)), int(data.get("target_max", 0)))
-	# Local attacker's swing-busy mirror for a bump (decision 2) — players only (positive id).
-	if kind == "bump" and attacker_id == multiplayer.get_unique_id() and attacker != null:
-		attacker.commit_in_place(float(data.get("duration_sec", 0.0)))
+	# Local attacker's swing-busy mirror for a bump (decision 2) — players only (positive id), so
+	# commit_in_place is Player surface: deliberate narrow cast, not cruft.
+	if kind == "bump" and attacker_id == multiplayer.get_unique_id():
+		var local_attacker := attacker as Player
+		if local_attacker != null:
+			local_attacker.commit_in_place(float(data.get("duration_sec", 0.0)))
 
 
 ## Play back a monster wind-up telegraph (§2.3.4): the monster yellow-flashes + a telegraph sound on
@@ -307,7 +321,8 @@ func _handle_attack_event(event: Dictionary) -> void:
 ## tell from the authoritative event, never locally-inferred facing.
 func _handle_windup_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
-	var monster = _node_for_peer(int(data.get("entity_id", 0)))
+	# Wind-up cues are Monster surface — deliberate narrow cast off the Entity resolver.
+	var monster := _node_for_peer(int(data.get("entity_id", 0))) as Monster
 	if monster != null:
 		monster.play_windup()
 
@@ -354,11 +369,13 @@ func _step_sign(delta: Vector2i) -> Vector2i:
 ## All peers: resolve an entity id to its avatar node — players in $Players, monsters (negative id)
 ## in $Monsters. Both containers are plain scene nodes present on every peer, so this works on the
 ## client (where the referee is inert) too. The referee has its own id->node helper for host-side
-## adjudication; this is the presentation-side mirror.
-func _node_for_peer(entity_id: int) -> Node:
+## adjudication; this is the presentation-side mirror. Entity-typed: playback drives only the
+## shared surface (glide_to, tile, play_* cues, set_hp_display); call sites that need a subclass
+## surface cast explicitly (the bump path's Player.commit_in_place).
+func _node_for_peer(entity_id: int) -> Entity:
 	if entity_id < 0:
-		return _monsters.get_node_or_null(str(entity_id))
-	return _players.get_node_or_null(str(entity_id))
+		return _monsters.get_node_or_null(str(entity_id)) as Entity
+	return _players.get_node_or_null(str(entity_id)) as Entity
 
 
 ## Sender only: the host refused our glide. Bonk our OWN player (§2.3.4 — the sound+visual half;

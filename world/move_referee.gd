@@ -87,10 +87,11 @@ var _warned_null_speed: bool = false
 func activate(players: Node2D) -> void:
 	_players = players
 	NetEvents.register_handler("glide_to", _validate_glide)
-	# Seed occupancy as each Player enters (spawn sets player.tile before it enters the tree, so
-	# it's readable here) and forget a peer wholesale as its node leaves (disconnect/teardown).
-	_players.child_entered_tree.connect(_on_player_entered)
-	_players.child_exiting_tree.connect(_on_player_exiting)
+	# Seed occupancy as each Player enters (spawn sets tile + entity_id before it enters the tree,
+	# so both are readable here) and forget a peer wholesale as its node leaves (disconnect/teardown).
+	# Players and monsters share the one Entity enter/exit contract — one id space.
+	_players.child_entered_tree.connect(_on_entity_entered)
+	_players.child_exiting_tree.connect(_on_entity_exiting)
 
 
 ## Host-only, called by Main right after activate() and BEFORE the host spawns any monster — so the
@@ -99,8 +100,8 @@ func activate(players: Node2D) -> void:
 ## referee is inert), so _monsters stays null there.
 func set_monsters(monsters: Node2D) -> void:
 	_monsters = monsters
-	_monsters.child_entered_tree.connect(_on_monster_entered)
-	_monsters.child_exiting_tree.connect(_on_monster_exiting)
+	_monsters.child_entered_tree.connect(_on_entity_entered)
+	_monsters.child_exiting_tree.connect(_on_entity_exiting)
 
 
 ## Host-only, called by Main right after the CombatReferee is activated and BEFORE any spawn — so
@@ -503,44 +504,27 @@ func _tile_of_peer(peer_id: int) -> Vector2i:
 	return _NO_TILE
 
 
-## Seed occupancy as a Player enters the tree. player.tile is set by Main's spawn_function before
-## the node enters, so it's the server-derived spawn tile here — not a client-supplied value.
-func _on_player_entered(node: Node) -> void:
-	if node is Player:
-		_occupied[node.tile] = node.peer_id
-
-
-## Forget a peer wholesale as its node leaves (disconnect or session teardown): drop its resting
-## tile, any in-flight glide, and any reservation, so a stale timer or a rejoin finds clean state.
-func _on_player_exiting(node: Node) -> void:
-	if not (node is Player):
-		return
-	var peer_id: int = node.peer_id
-	_gliding.erase(peer_id)
-	# Disconnect is the SOLE pipeline-slot cancel path (§2.2.5 amendment). Dropping the slot here
-	# discards the held step; _erase_by_value(_occupied) below already reverts its pre-claimed
-	# destination — a pipelined mover's single _occupied entry IS that dest (swapped at accept).
-	_pending.erase(peer_id)
-	_erase_by_value(_occupied, peer_id)
-	_erase_by_value(_reserved, peer_id)
-
-
-## Seed occupancy as a Monster enters the tree. monster.tile is set by Main's spawn_function before
-## the node enters, so it's the server-derived spawn tile here — the mirror of _on_player_entered,
-## keyed on the monster's negative entity id.
-func _on_monster_entered(node: Node) -> void:
-	if node is Monster:
+## Seed occupancy as an Entity enters its container — players AND monsters, one hook, one id space
+## (positive peer ids, negative monster ids). tile and entity_id are set by Main's spawn_function
+## BEFORE the node enters the tree, so both read the server-derived values here — never a
+## client-supplied value, and never a _ready-time field (this hook fires pre-_ready).
+func _on_entity_entered(node: Node) -> void:
+	if node is Entity:
 		_occupied[node.tile] = node.entity_id
 
 
-## Forget a monster wholesale as its node leaves (despawn / teardown): drop its resting tile and any
-## in-flight glide. Monsters never enter _pending (guarded above) or _reserved under conga, but the
-## erases are harmless no-ops there, keeping this symmetric with _on_player_exiting.
-func _on_monster_exiting(node: Node) -> void:
-	if not (node is Monster):
+## Forget an entity wholesale as its node leaves (disconnect / despawn / teardown): drop its resting
+## tile, any in-flight glide, any pending slot, and any reservation, so a stale timer or a rejoin
+## finds clean state. Shared by players and monsters: monsters never enter _pending (guarded in the
+## validator) or _reserved under conga, but those erases are harmless no-ops there.
+func _on_entity_exiting(node: Node) -> void:
+	if not (node is Entity):
 		return
 	var entity_id: int = node.entity_id
 	_gliding.erase(entity_id)
+	# Disconnect is the SOLE pipeline-slot cancel path (§2.2.5 amendment). Dropping the slot here
+	# discards the held step; _erase_by_value(_occupied) below already reverts its pre-claimed
+	# destination — a pipelined mover's single _occupied entry IS that dest (swapped at accept).
 	_pending.erase(entity_id)
 	_erase_by_value(_occupied, entity_id)
 	_erase_by_value(_reserved, entity_id)

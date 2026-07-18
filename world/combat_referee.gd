@@ -149,7 +149,9 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 ## Host-side stat accessors, read by MoveReferee for a bump/AoO so combat numbers live in ONE place
 ## (this referee). Damage is per-entity (player melee_damage / monster attack_damage); the bump's
 ## swing duration is the player's attack_duration_sec. Duck-typed across the two entity kinds; an
-## unknown node reads harmless defaults.
+## unknown node reads harmless defaults. DELIBERATELY not collapsed to one Entity read: Player's
+## export keeps its tuned name melee_damage (pinned in player.tscn), so the two stats keep their
+## own names and this accessor stays the one translation point.
 func damage_of(node: Node) -> int:
 	if node is Player:
 		return node.melee_damage
@@ -216,50 +218,50 @@ func _kill_entity(entity_id: int, ent_name: String) -> void:
 		node.queue_free()
 
 
-## Seed HP as an entity enters its container (players + monsters share this hook). node.max is set at
-## spawn before the node enters the tree, so it reads the authored server-side value here on the host.
+## Seed HP as an Entity enters its container (players + monsters share this hook, branch-free).
+## entity_id and max_hp are BOTH set by Main's spawn_function BEFORE the node enters the tree
+## (players: max_hp is a scene export, entity_id assigned pre-tree; monsters: both assigned
+## pre-tree alongside monster_type), so this reads authored server-side values here on the host —
+## this hook fires pre-_ready, so it must never rely on a _ready-time field. A monster spawned
+## with no MonsterType carries max_hp 0 and thus is never alive (its _ready warning fires).
 func _on_entity_entered(node: Node) -> void:
-	if node is Player:
-		_hp[node.peer_id] = node.max_hp
-	elif node is Monster and node.monster_type != null:
-		_hp[node.entity_id] = node.monster_type.max_hp
+	if node is Entity:
+		_hp[node.entity_id] = node.max_hp
 
 
 ## Forget an entity's HP as its node leaves (disconnect / despawn / teardown). Idempotent with the
 ## synchronous death erase above — a natural despawn just clears whatever remains.
 func _on_entity_exiting(node: Node) -> void:
-	if node is Player:
-		_hp.erase(node.peer_id)
-	elif node is Monster:
+	if node is Entity:
 		_hp.erase(node.entity_id)
 
 
 ## The id -> node resolver over this referee's own containers (mirror of MoveReferee's). Positive is
-## a player, negative a monster; null if absent. Node-typed — callers read concrete fields duck-typed.
-func _node_of_id(entity_id: int) -> Node:
+## a player, negative a monster; null if absent. Entity-typed: everything this referee reads off a
+## resolved node (display_name, max_hp, is_hostile_to, the play_* cues via events) is Entity surface.
+func _node_of_id(entity_id: int) -> Entity:
 	if entity_id > 0:
-		return _players.get_node_or_null(str(entity_id))
+		return _players.get_node_or_null(str(entity_id)) as Entity
 	if _monsters != null:
-		return _monsters.get_node_or_null(str(entity_id))
+		return _monsters.get_node_or_null(str(entity_id)) as Entity
 	return null
 
 
 ## The one name surface per entity, read host-side for events/log (never trusted from the wire):
-## Player.player_name / Monster.display_name. A missing node reads "?".
+## Entity.display_name (Player sets it from player_name, Monster from its type, both at _ready —
+## safe here: _name_of is only called at attack/death time, long after _ready). Missing node → "?".
 func _name_of(node: Node) -> String:
-	if node is Player:
-		return node.player_name
-	if node is Monster:
+	if node is Entity:
 		return node.display_name
 	return "?"
 
 
-## The authored maximum HP for an entity's node, carried in each attack event so peers render "hp/max".
+## The authored maximum HP for an entity's node, carried in each attack event so peers render
+## "hp/max". Uniform Entity surface: Player's is a scene export; Monster's is mirrored from its
+## type pre-tree by Main's spawn_function.
 func _max_hp_of(node: Node) -> int:
-	if node is Player:
+	if node is Entity:
 		return node.max_hp
-	if node is Monster and node.monster_type != null:
-		return node.monster_type.max_hp
 	return 0
 
 
