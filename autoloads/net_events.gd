@@ -85,16 +85,24 @@ func submit_intent(action: String, data: Dictionary) -> void:
 ## validated events, so host-authored and client-driven events stay totally ordered together, and
 ## broadcasts via the same call_local RPC (the host receives its own event too). Used for events
 ## the world decides on its own (M2: attack-of-opportunity; M3+: monster acts, roll outcomes).
-func post_event(action: String, data: Dictionary) -> void:
+##
+## `as_peer != 0` marks a DEFERRED, already-validated verdict being broadcast on behalf of that
+## peer: the validator DID run — at accept time — and the step was committed then (occupancy
+## swapped, duration stamped); only the broadcast was held to the current glide's completion
+## boundary (move_referee's pending slot). It is NOT a bypass of the peer-0 sentinel — peer-0
+## still means "server authored, no validator ran"; a non-zero as_peer means "the peer's own
+## validated commit, broadcast late."
+func post_event(action: String, data: Dictionary, as_peer: int = 0) -> void:
 	if not multiplayer.is_server():
 		push_error("[NetEvents] post_event('%s') called off-server — ignored" % action)
 		return
 	_seq += 1
-	# Same stamped shape as an accepted intent (see _handle_intent), but peer=0: no sender, no
-	# validator — the host authored it. server_time is display/telemetry only; seq is the order.
+	# Same stamped shape as an accepted intent (see _handle_intent); peer is 0 for a server-authored
+	# event or the committing peer for a deferred verdict broadcast. server_time is display/telemetry
+	# only; seq is the order.
 	var event := {
 		"seq": _seq,
-		"peer": 0,
+		"peer": as_peer,
 		"action": action,
 		"data": data,
 		"server_time": Time.get_unix_time_from_system(),
@@ -139,6 +147,12 @@ func _handle_intent(sender: int, action: String, data: Dictionary) -> void:
 		return
 	if not verdict.get("ok", false):
 		_reject(sender, action, str(verdict.get("reason", "rejected")))
+		return
+	# Deferred accept: the validator committed the step (occupancy/duration) but is holding the
+	# broadcast to a later boundary (move_referee's pending slot, broadcast via post_event at the
+	# current glide's completion). No broadcast, no reject, and NO seq consumed here — seq is
+	# assigned only at broadcast time so the wire stays in strict broadcast order.
+	if verdict.get("deferred", false):
 		return
 	_seq += 1
 	# server_time is wall-clock for display/telemetry ONLY (e.g. log timestamps). seq is THE

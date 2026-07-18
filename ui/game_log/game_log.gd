@@ -124,8 +124,10 @@ func _on_intent_rejected(action: String, reason: String) -> void:
 
 # A refused move must never be silent when the cause is the world (§2.3.4): a wall/corner/occupied
 # bonk gets a plain-language line here to sit alongside the sound + flash. "already moving" is the
-# ONE suppressed case — it's the player mashing during their own committed glide, not a world
-# refusal; the bonk sound/flash (fired via main.gd) already says "not now" without log spam.
+# ONE suppressed case — it now covers BOTH mashing during a committed glide AND a third intent
+# while one glides + one is held in the pipeline slot (§2.2.5 amendment): same semantic ("not
+# now, you're already committed"), not a world refusal; the bonk sound/flash (fired via main.gd)
+# already says so without log spam.
 func _log_glide_reject(reason: String) -> void:
 	match reason:
 		"blocked":

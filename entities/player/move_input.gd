@@ -18,10 +18,13 @@ extends Node
 ## to the game log via GameEvents (the bus) — they are local-only and never touch the wire.
 ##
 ## It is a conservative state machine (host is truth): after submitting it awaits the verdict
-## before sampling again, and it never submits while its player is gliding. It can therefore
-## never submit a second step mid-glide — the referee's "already moving" reject is a backstop,
-## not the primary guard. This upholds the Commitment Rule at the input layer: no input path
-## cancels, interrupts, or redirects a glide in flight.
+## before sampling again. It may submit exactly ONE next step while its own player is gliding —
+## the pipelined step (§2.2.5 amendment, v0.3.4), sent at glide start so the client's steps arrive
+## back-to-back instead of one-per-round-trip. AWAITING is the one-in-flight guard (the latch
+## clears only at the held step's boundary verdict); the referee's slot-full "already moving"
+## reject is the backstop for a third intent. The Commitment Rule stands at the input layer: no
+## input path cancels, interrupts, or redirects the in-flight OR the held step — a mid-glide click
+## only replaces the target the NEXT submission will path toward.
 
 # ── Signals ──────────────────────────────────────────────────────────────────
 
@@ -64,10 +67,18 @@ const _ACTIONS := ["move_right", "move_left", "move_down", "move_up"]
 
 enum State { IDLE, AWAITING, COOLDOWN }
 var _state: State = State.IDLE
-# True while the parent's player is gliding (set from glide_started/glide_finished). Submitting is
-# suppressed until the OWN tween finishes — this is the "GLIDING" state, tracked as a flag so the
-# host may consider the peer idle ~RTT before the client stops animating without desyncing input.
+# True while the parent's player is gliding (set from glide_started/glide_finished). NO LONGER a
+# submit gate — the pipeline (§2.2.5 amendment) lets exactly ONE next step submit while gliding,
+# at glide start; AWAITING is the one-in-flight guard and the referee slot-full reject the
+# backstop. _blocked survives only as a modifier for two things: it pauses the AWAITING safety
+# timer (a pipelined verdict is scheduled for our glide's own finite boundary, not lost), and it
+# marks a submit as pipelined so its verdict is excluded from the M1.5 idle-submit latency metric.
 var _blocked: bool = false
+# Set by _submit from _blocked at emit time: true if that submission was pipelined (fired mid-
+# glide). Read by on_accepted/on_rejected to SKIP the verdict-latency sample — a pipelined
+# verdict's timing includes the whole held-until-boundary wait, which would wreck the
+# "idle-submit→verdict" baseline. One flag, one rule; both accept and reject honor it.
+var _submitted_while_blocked: bool = false
 # Time accumulators for the two timed states.
 var _await_elapsed: float = 0.0
 var _cooldown_elapsed: float = 0.0
@@ -102,17 +113,19 @@ func _process(delta: float) -> void:
 	# Not the local player: never sample.
 	if not enabled:
 		return
-	# Gliding: the Commitment Rule guard — no submitting until our own glide finishes.
-	if _blocked:
-		return
 
 	match _state:
 		State.AWAITING:
-			# Waiting on the host's verdict; don't submit. Safety-clear only.
-			_await_elapsed += delta
-			if _await_elapsed >= verdict_timeout_sec:
-				_state = State.IDLE
-				_await_elapsed = 0.0
+			# Waiting on the host's verdict; don't submit. Safety-clear only — and ONLY while not
+			# gliding: a pipelined verdict is scheduled for our own glide's completion boundary (a
+			# known, finite wait that a stretched glidesec can push past 2.0s), so accruing while
+			# _blocked would false-clear the latch mid-glide. Once the tween ends (_blocked drops)
+			# the window resumes guarding a genuinely lost verdict.
+			if not _blocked:
+				_await_elapsed += delta
+				if _await_elapsed >= verdict_timeout_sec:
+					_state = State.IDLE
+					_await_elapsed = 0.0
 			return
 		State.COOLDOWN:
 			# Post-reject throttle. A fresh press bypasses it immediately (a key sampling site, so
@@ -227,10 +240,14 @@ func on_accepted(to_tile: Vector2i) -> void:
 	_has_avoid = false
 	_has_pending_step = false
 	if _state == State.AWAITING:
-		# The AWAITING accumulator IS the submit→verdict time — publish it for the debug
-		# overlay before clearing (local-only; ≈0 on the host, whose verdict is synchronous).
-		GameEvents.verdict_latency_measured.emit(_await_elapsed)
+		# The AWAITING accumulator IS the submit→verdict time — publish it for the debug overlay
+		# before clearing (local-only; ≈0 on the host, whose idle verdict is synchronous). SKIP the
+		# sample for a pipelined submit: its measured time includes the whole held-until-boundary
+		# wait, which is not the idle-submit→verdict the M1.5 metric wants. Flag cleared regardless.
+		if not _submitted_while_blocked:
+			GameEvents.verdict_latency_measured.emit(_await_elapsed)
 		_state = State.IDLE
+	_submitted_while_blocked = false
 	_await_elapsed = 0.0
 
 
@@ -241,9 +258,12 @@ func on_accepted(to_tile: Vector2i) -> void:
 ## tell the player via the bus ("Stopped walking." — a stopped walk must never be silent).
 func on_rejected() -> void:
 	# A reject is a verdict too: same submit→verdict sample as the accept path (the overlay
-	# measures the pipe, not success). Emitted before the state leaves AWAITING.
-	if _state == State.AWAITING:
+	# measures the pipe, not success). Emitted before the state leaves AWAITING — and skipped for a
+	# pipelined submit for the same reason as on_accepted (a pipelined reject's timing carries the
+	# held wait). Flag cleared regardless of whether the sample was emitted.
+	if _state == State.AWAITING and not _submitted_while_blocked:
 		GameEvents.verdict_latency_measured.emit(_await_elapsed)
+	_submitted_while_blocked = false
 	_state = State.COOLDOWN
 	_cooldown_elapsed = 0.0
 	# Count only a reject of a step computed for the CURRENT target — a click replacing the
@@ -261,12 +281,17 @@ func on_rejected() -> void:
 # ── Private methods ───────────────────────────────────────────────────────────
 
 ## The one submit path both input sources share: arm the latch FIRST, then emit. Order matters:
-## on the HOST the verdict returns synchronously inside the emit (submit_intent adjudicates
-## inline and the call_local event/reject fire in the same stack), so on_accepted / on_rejected
-## run before the emit returns. The latch must already be armed when they do — arming it after
-## would overwrite their state transition and wedge input until the safety timeout. Clients get
-## the verdict a frame later, so either order works for them.
+## on the HOST the verdict returns synchronously inside the emit ONLY for an idle submit
+## (submit_intent adjudicates inline and the call_local event/reject fire in the same stack), so
+## on_accepted / on_rejected run before the emit returns. The latch must already be armed when
+## they do — arming it after would overwrite their state transition and wedge input until the
+## safety timeout. A PIPELINED submit (mid-glide) is different even on the host: its accept is
+## deferred to the current glide's boundary, so the verdict arrives later, like a client's — the
+## _submitted_while_blocked stamp (captured here) tells on_accepted/on_rejected to skip its
+## latency sample so the M1.5 baseline stays idle-submit-only. Clients get every verdict a frame
+## later, so either order works for them.
 func _submit(dir: Vector2i, fresh: bool) -> void:
+	_submitted_while_blocked = _blocked
 	_state = State.AWAITING
 	_await_elapsed = 0.0
 	move_requested.emit(dir, fresh)

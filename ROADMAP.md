@@ -148,9 +148,11 @@ Not scheduled — pulled in when their moment comes:
   already exists)
 - Dedicated host-port UI field — only if the local-address heuristic (main_menu.host_port,
   currently loopback-only + a visible ignore notice in the log) ever needs to grow
-- Client stop-and-go travel (RTT gap between steps, wire-test finding 2026-07-18) — the
-  pipelined next-step proposal (one server-held, committed-on-accept slot) lives in DESIGN
-  Part 4 Q7; awaiting F3-overlay latency data + Jeff
+- Client stop-and-go travel (RTT gap between steps, wire-test finding 2026-07-18) — FIXED
+  v0.3.4: pipelined next step per DESIGN Part 4 Q7 (Jeff approved 2026-07-18; one
+  server-held, committed-on-accept slot, broadcast at the mover's glide boundary).
+  Real-RTT smoothness confirmation rides the next wire session's F3 numbers (with M1.5's
+  baseline)
 - Stick deadzone tuning — shipped at 0.35 in M2.1; per-axis thresholding means lower values
   widen the stick's diagonal arcs vs cardinals (~0.45 would equalize them) — retune on real
   controller feel

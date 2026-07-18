@@ -17,6 +17,10 @@ extends Node
 ##    (conga-line); false = the origin stays held until the glide finishes.
 ##  - bodies_block_corners: walls ALWAYS block a diagonal squeeze; this only governs whether an
 ##    occupied flank tile also blocks it.
+##
+## Pipelined next step (§2.2.5 amendment, v0.3.4): under origin_frees_at_glide_start, the referee
+## holds at most ONE accepted-but-unbroadcast step per mover — adjudicated at accept, broadcast
+## only when the mover's current glide completes. See `_pending` for the full invariant.
 
 # Sentinel returned by _tile_of_peer when a peer has no occupancy. (0,0) is a wall in every room
 # (full border), so it can never be a real resting tile — an unambiguous "not found".
@@ -41,6 +45,20 @@ var _gliding: Dictionary = {}
 # origin_frees_at_glide_start=false branch, where the origin is held until arrival, so the
 # destination must be reserved separately for the duration of the glide. Empty in the true branch.
 var _reserved: Dictionary = {}
+# Pending pipelined step: peer_id -> {from, to, duration}. At most ONE per mover — the next step,
+# adjudicated AT ACCEPT (origin = the current glide's destination) but its broadcast HELD until
+# that glide's completion boundary (_finish_glide promotes it).
+#
+# Adjudicate-at-accept is NOT a prediction under origin_frees_at_glide_start=true: occupancy
+# mutates ONLY at sequential accepts (the pending slot swaps _occupied immediately, one step
+# deeper), while the completion timers touch only _gliding/broadcast — so every later accept
+# reads authoritative referee truth, never a guessed future. M3 CAUTION: forced movement that
+# bypasses the intent pipe (knockback, teleport, etc.) breaks this — any such mechanic MUST
+# clear or re-adjudicate a mover's pending slot, or it will broadcast a step from a tile the
+# mover no longer occupies. The false branch (origin_frees_at_glide_start off) never accepts
+# into this slot: the pipeline is simply off and the stop-and-go RTT gap returns until that
+# branch's mechanics are designed. Disconnect is the SOLE cancel path (_on_player_exiting).
+var _pending: Dictionary = {}
 
 # Monotonic per-glide id, stamped into each _gliding record so a completion timer can tell "my"
 # glide from a later one for the same peer (disconnect+rejoin, or any superseding glide).
@@ -92,10 +110,17 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	if dir == Vector2i.ZERO or absi(dir.x) > 1 or absi(dir.y) > 1:
 		return { "ok": false, "reason": "bad direction" }
 
-	# The Commitment Rule backstop: a peer already gliding cannot start another step. No queue
-	# (DESIGN §2.2.5) — the second intent is simply rejected, felt as a bonk.
+	# The Commitment Rule backstop and the pipeline gate. A mover already gliding may commit ONE
+	# next step into the pending slot (§2.2.5 amendment) — but only under the conga toggle, and
+	# only if the slot is free. A third intent (one gliding + one held) is the same "already
+	# moving" bonk as before. When pipelined, the check chain below runs UNCHANGED: _tile_of_peer
+	# already returns the current glide's destination (its single _occupied entry), which IS this
+	# step's origin, so walkable/corner/dest-free/duration all adjudicate against the right tile.
+	var is_pipelined := false
 	if _gliding.has(sender_peer_id):
-		return { "ok": false, "reason": "already moving" }
+		if not GameManager.config.origin_frees_at_glide_start or _pending.has(sender_peer_id):
+			return { "ok": false, "reason": "already moving" }
+		is_pipelined = true
 
 	# Origin is read from referee truth, never the node's position. A non-gliding member always
 	# has exactly one _occupied entry (seeded at spawn); its absence is a bug, not a legal state.
@@ -129,6 +154,19 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# Duration is stamped ONCE here (base × diagonal multiplier) and drives BOTH the host's
 	# completion timer and every client's tween, so the two can never disagree.
 	var duration := _step_duration(mover, dir)
+
+	# Pipelined accept: the mover is mid-glide, so this step is committed NOW (occupancy swaps one
+	# step deeper, exactly as the conga branch below) but its broadcast — and its AoO scan — are
+	# held to the completion boundary (_finish_glide promotes the slot). No _gliding write and no
+	# timer here: the current glide's timer owns the boundary. The debug print is the only stdout
+	# trace of a deferred accept (the broadcast that would otherwise log it fires a step later).
+	if is_pipelined:
+		_occupied.erase(from)
+		_occupied[to] = sender_peer_id
+		_pending[sender_peer_id] = { "from": from, "to": to, "duration": duration }
+		if OS.is_debug_build():
+			print("[MoveReferee] pipelined accept peer=%d %s→%s" % [sender_peer_id, from, to])
+		return { "ok": true, "deferred": true }
 
 	# Attack of opportunity (DESIGN §2.2.6): starting a glide OUT of a tile grants a free attack to
 	# each hostile adjacent to the origin. Fired at verdict time, BEFORE the occupancy mutation below
@@ -211,12 +249,52 @@ func _finish_glide(peer_id: int, token: int) -> void:
 	var rec = _gliding.get(peer_id)
 	if rec == null or int(rec.get("token", -1)) != token:
 		return
-	if not GameManager.config.origin_frees_at_glide_start:
+	# The pending guard covers a mid-session true->false toggle flip: a pipelined accept already
+	# swapped this mover's occupancy one step deeper, so running the hold-origin swap here would
+	# write a SECOND _occupied entry at the finished glide's dest. With a pending slot, occupancy
+	# is already authoritative — skip. (Pure false-branch sessions never populate the slot.)
+	if not GameManager.config.origin_frees_at_glide_start and not _pending.has(peer_id):
 		var from: Vector2i = rec["from"]
 		var to: Vector2i = rec["to"]
 		_occupied.erase(from)
 		_reserved.erase(to)
 		_occupied[to] = peer_id
+	# Boundary of the just-finished glide. A held next step (pipelined accept) is promoted to a
+	# live glide and broadcast HERE — keyed on _pending.has alone, never a config re-check, so a
+	# mid-session toggle flip can't strand a held slot. Occupancy was already swapped at accept;
+	# only the AoO scan, the _gliding record, the completion timer, and the broadcast run now.
+	if _pending.has(peer_id):
+		var slot: Dictionary = _pending[peer_id]
+		_pending.erase(peer_id)
+		var from: Vector2i = slot["from"]
+		var to: Vector2i = slot["to"]
+		var duration: float = slot["duration"]
+		# Re-resolve the mover: exit cleanup erases the slot, so a live pending slot should always
+		# have a live node — a miss is a real invariant break, worth a log line, never a silent
+		# no-op. Erase the stale _gliding record and bail defensively.
+		var mover := _players.get_node_or_null(str(peer_id)) as Player
+		if mover == null:
+			push_warning("[MoveReferee] pending slot for peer %d has no node — dropping" % peer_id)
+			_gliding.erase(peer_id)
+			# Self-contained cleanup: if this fired, exit cleanup did NOT run — drop the ghost's
+			# occupancy too (its single entry is the pre-claimed dest) so no tile stays claimed.
+			_erase_by_value(_occupied, peer_id)
+			return
+		# AoO fires at the moment the step actually STARTS (boundary-time adjacency — the honest
+		# §2.2.6 read for a deferred step). This INVERTS the fire-before-mutation note on the idle
+		# path (there the swap has not happened yet); here occupancy swapped at accept, so `from`
+		# is the tile the mover is leaving right now.
+		_trigger_attacks_of_opportunity(from, peer_id, mover)
+		# Promote to a live glide with a FRESH token + timer. The full _gliding record must be in
+		# place BEFORE the broadcast: post_event is call_local, so on the host it re-enters the
+		# event path synchronously and any handler that reads referee state must see consistent
+		# truth. AoO's free_attack sits at the lower seq, same relative order as the idle path.
+		var next_token := _next_token
+		_next_token += 1
+		_gliding[peer_id] = { "from": from, "to": to, "token": next_token }
+		get_tree().create_timer(duration).timeout.connect(_finish_glide.bind(peer_id, next_token))
+		NetEvents.post_event("glide_to", { "from": from, "to": to, "duration_sec": duration }, peer_id)
+		return
 	_gliding.erase(peer_id)
 
 
@@ -244,6 +322,10 @@ func _on_player_exiting(node: Node) -> void:
 		return
 	var peer_id: int = node.peer_id
 	_gliding.erase(peer_id)
+	# Disconnect is the SOLE pipeline-slot cancel path (§2.2.5 amendment). Dropping the slot here
+	# discards the held step; _erase_by_value(_occupied) below already reverts its pre-claimed
+	# destination — a pipelined mover's single _occupied entry IS that dest (swapped at accept).
+	_pending.erase(peer_id)
 	_erase_by_value(_occupied, peer_id)
 	_erase_by_value(_reserved, peer_id)
 

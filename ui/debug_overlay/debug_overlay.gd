@@ -11,6 +11,11 @@ extends CanvasLayer
 ## Samples arrive over GameEvents.verdict_latency_measured (local player only) and are
 ## collected even while hidden, so toggling the overlay mid-session shows history, and the
 ## _exit_tree stdout summary — the M1.5 latency-baseline record — exists either way.
+##
+## By design the metric is idle-submit→verdict ONLY: pipelined steps (§2.2.5 amendment — the
+## next step sent mid-glide) contribute NO samples, since their verdict is held to the glide
+## boundary and would swamp the baseline with the wait time. The first step of each run (submitted
+## idle) still samples, so steady pipelined travel is silent here but every run is still measured.
 
 ## Ring cap on retained latency samples: the stats window. A multi-hour session stays bounded,
 ## and median/p95 sorts stay trivial at this size.

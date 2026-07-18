@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.3.1)
+# Rogue's Oath — Design Doc (v0.3.4)
 
 ## Part 1 — The Game
 
@@ -49,7 +49,14 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
 4. A glide obeys the Commitment Rule: once started, it finishes. Being hit does not interrupt
    it.
 5. Tile reservation: on commit, the destination tile is reserved for the glide's duration. A
-   second entity committing into a reserved tile fails (input rejected; no queuing for v1).
+   second entity committing into a reserved tile fails (input rejected; no queuing beyond the
+   one pipelined slot below). **Pipelined next step (decided 2026-07-18, Jeff — see Part 4
+   Q7):** the server holds AT MOST ONE accepted next step per mover — adjudicated and
+   COMMITTED at accept (occupancy swaps at accept: the frees-at-start rule of Q4 applied one
+   step deeper), broadcast and started only when that mover's current glide completes. A
+   pipelined mover's next tile is therefore spoken for up to one step early — intended
+   gameplay, not an artifact ("decisions carry risk": conga semantics one step sooner). No
+   cancel path exists; disconnect is the sole slot-clear.
 6. Attack of opportunity: starting a glide out of a tile adjacent to a hostile that is alive and
    able to act grants that hostile one free attack.
 7. **Diagonal movement (decided 2026-07-15, Jeff — see Part 4 Q3):** 8-way movement;
@@ -135,7 +142,9 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
 3. All gameplay sync is event-based, not position-streamed: replicate discrete commits
    (`glide_to(tile)`, `attack(target)`, `use_item(id)`), each stamped with
    duration/outcome by the server. The commitment model makes this natural — entities
-   are always either idle or inside a known, finite action.
+   are always either idle, inside a known finite action, or (since v0.3.4) inside one
+   executing action with exactly one scheduled committed action behind it (§2.2.5's
+   pipelined slot — still a known, finite, server-stamped set).
 4. No client-side prediction needed for v1 — round-trip latency is absorbed by the slow,
    telegraphed pacing by design.
 5. Target scale: small friend groups (2–6 players). No matchmaking/lobby service for v1.
@@ -264,14 +273,37 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    review together.
    **ANSWERED (Jeff via Jon, 2026-07-18): pipelined next step approved** — one server-held
    slot, committed on accept, started (and broadcast) only when the current glide
-   completes. Amends 2.2.5 by exactly one slot; no cancel path is created. The 2.2.5 text
-   amendment (plus 2.5.3's "idle or inside a known, finite action" wording) and the full
-   write-up land with the implementation — see HANDOFF.md until then.
+   completes. Amends 2.2.5 by exactly one slot; no cancel path is created.
+   **Implemented v0.3.4, with these invariants:** adjudicate-at-accept is NOT prediction —
+   under `origin_frees_at_glide_start=true`, occupancy mutates only at sequential accepts
+   (completion timers touch only the glide record and the broadcast), so every later accept
+   reads authoritative state; the boundary is per-MOVER (each mover's own completion timer
+   releases its held step — never a global tick); disconnect is the SOLE slot-cancel path;
+   a redirect click mid-glide replaces only the walk target — the held step stands and
+   executes, and the NEXT submission paths toward the new target (§2.2.9 unchanged);
+   "already moving" now also covers a full slot (a third intent), still suppressed in the
+   log as player mashing; the attack-of-opportunity trigger (§2.2.6) fires when the held
+   step actually STARTS (boundary-time adjacency — a pure trigger, it can never gate or
+   invalidate the committed step). Travel is smooth for any RTT below the step duration —
+   a fixed bound, not a tunable; RTT ≥ step duration is the one regime where the gap
+   returns. Smoothness is design intent pending measurement: F3 move-verdict numbers at
+   the next wire session (M1.5 baseline). In the false toggle branch the referee never
+   accepts into the slot — pipeline off, stop-and-go returns — until that branch's
+   mechanics are designed. M3-era forced movement (knockback etc.) outside the intent pipe
+   would break adjudicate-at-accept; any such mechanic must clear/re-adjudicate the slot
+   (named in the referee's code comment).
 
 ---
 
 ### Changelog
 
+- **v0.3.4 (2026-07-18)** — Q7 shipped: pipelined next step (one server-held slot per mover,
+  adjudicated + committed at accept, broadcast at that mover's own glide boundary). §2.2.5
+  amended (no queuing beyond the one slot; occupancy swaps at accept — frees-at-start one
+  step deeper, next tile spoken for early is intended gameplay); §2.5.3 wording (one
+  executing + one scheduled committed action); AoO fires at held-step start (boundary-time
+  adjacency); false toggle branch = pipeline off. Smoothness bound fixed at RTT < step
+  duration; F3 confirmation pending (M1.5 baseline, next wire session).
 - **v0.3.3 (2026-07-18)** — Post-wire-test: §2.2.9 walk rule tightened (a standing walk is not
   cancelable by other input; a new click redirects at the next step boundary; ends on arrival
   or world refusal — Jon's call, "decisions carry risk", flagged for Jeff review). New Part 4
