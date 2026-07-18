@@ -42,7 +42,7 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   panel (join/leave system lines included; the §2.3.4 combat-log surface). Dev console
   (MWF lift) deferred to when it's needed.
 
-- [ ] **M1.5 — Wire Check** **[size S — needs Jeff ~20 min, schedule opportunistically]**
+- [x] **M1.5 — Wire Check** *(2026-07-18)* **[size S]**
   Event round-trips between Jon's and Jeff's machines over the real internet; log median
   RTT/jitter as a latency baseline. Validates NAT/reachability. Does not block M2.
   *Pre-check (2026-07-17, same-PC through the playit.gg tunnel):* full join + chat
@@ -63,8 +63,10 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   hosting honors the field's :port only for loopback-style addresses (main_menu.host_port)
   and the log's first line prints "Hosting on port N." (+ an ignore notice). Runbook: FIRST
   check that line; the agent-restart recipe is the fallback if the port checks out.
-  Remaining for **Done =**: the latency baseline — run the F3 debug overlay next session and
-  log its median/p95 move-verdict numbers. Checkbox stays open until those are recorded.
+  **Done (2026-07-18): latency baseline recorded** — first wire session on the pipelined
+  build (v0.3.4). Client (Jeff) F3 move verdict: **median 66.7ms / p95 83.3ms** (145
+  samples, 60fps steady); host ≈0 (synchronous idle verdicts). The pipeline's smoothness
+  bound (RTT < step duration) holds with ~4× headroom against the 350ms normal step.
 
 - [x] **M2 — Grid & Glide** *(2026-07-17)* **[size M]**
   Logical tile grid (WorldGrid is truth, TileMapLayer is paint); commit/glide movement with
@@ -151,8 +153,8 @@ Not scheduled — pulled in when their moment comes:
 - Client stop-and-go travel (RTT gap between steps, wire-test finding 2026-07-18) — FIXED
   v0.3.4: pipelined next step per DESIGN Part 4 Q7 (Jeff approved 2026-07-18; one
   server-held, committed-on-accept slot, broadcast at the mover's glide boundary).
-  Real-RTT smoothness confirmation rides the next wire session's F3 numbers (with M1.5's
-  baseline)
+  Smoothness confirmed on the wire 2026-07-18: Jeff's F3 med 66.7 / p95 83.3ms vs the
+  350ms step (M1.5's recorded baseline)
 - Stick deadzone tuning — shipped at 0.35 in M2.1; per-axis thresholding means lower values
   widen the stick's diagonal arcs vs cardinals (~0.45 would equalize them) — retune on real
   controller feel

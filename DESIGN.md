@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.3.4)
+# Rogue's Oath — Design Doc (v0.3.5)
 
 ## Part 1 — The Game
 
@@ -56,7 +56,11 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    step deeper), broadcast and started only when that mover's current glide completes. A
    pipelined mover's next tile is therefore spoken for up to one step early — intended
    gameplay, not an artifact ("decisions carry risk": conga semantics one step sooner). No
-   cancel path exists; disconnect is the sole slot-clear.
+   cancel path exists; disconnect is the sole slot-clear. **Tap/hold rule (v0.3.5):** only a
+   key held ≥ `key_repeat_min_hold_sec` (~0.18s, client-side convenience in the §2.2.9
+   spirit) feeds the pipeline; a tap is exactly one committed step. The server contract is
+   unchanged — the threshold gates whether a next-step intent is submitted, never when a
+   committed step starts.
 6. Attack of opportunity: starting a glide out of a tile adjacent to a hostile that is alive and
    able to act grants that hostile one free attack.
 7. **Diagonal movement (decided 2026-07-15, Jeff — see Part 4 Q3):** 8-way movement;
@@ -291,12 +295,20 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    accepts into the slot — pipeline off, stop-and-go returns — until that branch's
    mechanics are designed. M3-era forced movement (knockback etc.) outside the intent pipe
    would break adjudicate-at-accept; any such mechanic must clear/re-adjudicate the slot
-   (named in the referee's code comment).
+   (named in the referee's code comment). **Smoothness CONFIRMED on the wire (2026-07-18,
+   first pipelined session):** Jeff's F3 move verdict med 66.7ms / p95 83.3ms vs the 350ms
+   step — the bound holds with ~4× headroom (M1.5's recorded baseline).
 
 ---
 
 ### Changelog
 
+- **v0.3.5 (2026-07-18)** — Post-wire-session fix pass: §2.2.5 tap/hold rule (a key must be
+  held `key_repeat_min_hold_sec` ≈0.18s before it feeds the pipeline; a tap is one committed
+  step — fixes the pipeline's double-step tap and its early wall bonk); Q7 smoothness
+  confirmed with Jeff's F3 numbers (med 66.7 / p95 83.3ms vs 350ms step) and M1.5 closed on
+  that baseline; presentation: name label snugged over the head, subtle floor checkerboard
+  (alternate-tile modulate, designer-tunable).
 - **v0.3.4 (2026-07-18)** — Q7 shipped: pipelined next step (one server-held slot per mover,
   adjudicated + committed at accept, broadcast at that mover's own glide boundary). §2.2.5
   amended (no queuing beyond the one slot; occupancy swaps at accept — frees-at-start one

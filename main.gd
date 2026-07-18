@@ -41,6 +41,11 @@ const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN
 	Vector2i(7, 8), Vector2i(9, 8), Vector2i(11, 8),
 ]
 
+## Presentation only: the multiply applied to alternate floor tiles for the subtle grid
+## checkerboard. Alpha stays 1 — modulate multiplies the floor texture, so this reads as the
+## slightly darker grey squares against the same background. Tweak to taste.
+@export var floor_checker_modulate: Color = Color(0.85, 0.85, 0.9, 1.0)
+
 @onready var _spawner: MultiplayerSpawner = $MultiplayerSpawner
 @onready var _players: Node2D = $Players
 # Host-only movement brain. Present on every peer (it's in main.tscn) but activated ONLY inside
@@ -314,6 +319,11 @@ func _build_room() -> void:
 	# One floor tile, one wall tile — the only two glyphs ROOM_LAYOUT uses.
 	atlas.create_tile(FLOOR_ATLAS)
 	atlas.create_tile(WALL_ATLAS)
+	# A second FLOOR variant for the checkerboard: same texture region, tinted darker via TileData
+	# modulate. An alternative tile costs nothing per-frame (it's authored into the source) and adds
+	# no new nodes — the paint loop just picks it for the odd cells below.
+	var floor_alt_id := atlas.create_alternative_tile(FLOOR_ATLAS)
+	atlas.get_tile_data(FLOOR_ATLAS, floor_alt_id).modulate = floor_checker_modulate
 
 	var tile_set := TileSet.new()
 	tile_set.tile_size = Vector2i(WorldGrid.TILE_PX, WorldGrid.TILE_PX)
@@ -324,8 +334,13 @@ func _build_room() -> void:
 	for y in grid_size.y:
 		for x in grid_size.x:
 			var cell := Vector2i(x, y)
-			var atlas_coords := WALL_ATLAS if WorldGrid.is_wall(cell) else FLOOR_ATLAS
-			$Room.set_cell(cell, source_id, atlas_coords)
+			if WorldGrid.is_wall(cell):
+				$Room.set_cell(cell, source_id, WALL_ATLAS)
+			else:
+				# Checkerboard: odd (x+y) floor cells get the darker alternative tile, even cells
+				# the default (alt id 0). Walls are never checkered.
+				var alt := floor_alt_id if (cell.x + cell.y) % 2 == 1 else 0
+				$Room.set_cell(cell, source_id, FLOOR_ATLAS, alt)
 
 
 ## Host-only chat referee, registered with NetEvents in _ready. Sanitizes the wire text (strip,

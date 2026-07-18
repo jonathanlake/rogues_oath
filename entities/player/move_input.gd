@@ -22,9 +22,13 @@ extends Node
 ## the pipelined step (§2.2.5 amendment, v0.3.4), sent at glide start so the client's steps arrive
 ## back-to-back instead of one-per-round-trip. AWAITING is the one-in-flight guard (the latch
 ## clears only at the held step's boundary verdict); the referee's slot-full "already moving"
-## reject is the backstop for a third intent. The Commitment Rule stands at the input layer: no
-## input path cancels, interrupts, or redirects the in-flight OR the held step — a mid-glide click
-## only replaces the target the NEXT submission will path toward.
+## reject is the backstop for a third intent. Only a genuinely HELD key feeds that pipeline
+## (v0.3.5): a mid-glide key submit fires only once the key has been down key_repeat_min_hold_sec,
+## so a discrete tap commits exactly one step. A tap that lands mid-glide is deliberately dropped —
+## identical to pre-pipeline behavior, where the _blocked guard swallowed any mid-glide sample.
+## The Commitment Rule stands at the input layer: no input path cancels, interrupts, or redirects
+## the in-flight OR the held step — a mid-glide click only replaces the target the NEXT submission
+## will path toward.
 
 # ── Signals ──────────────────────────────────────────────────────────────────
 
@@ -54,6 +58,15 @@ signal path_target_cleared
 ## tile as a transient obstacle and retries around it; a second in a row means the way is shut.
 @export var target_reject_cap: int = 2
 
+## How long a move key must be continuously held (seconds) before it may auto-continue into a
+## PIPELINED (mid-glide) submit — the tap/hold gate (v0.3.5). Bounded on both sides: it must stay
+## BELOW the fastest speed tier's cardinal step (speed_fast.tres = 0.25s — the binding case; the
+## 0.2 range cap enforces it) or a held fast-mover would show travel gaps, and ABOVE a human tap
+## (~0.10-0.15s) so a discrete press commits exactly one step instead of pipelining a second. The
+## threshold gates only WHETHER a pipelined submit fires, never WHEN the step starts — the server
+## holds every pipelined accept to the current glide's boundary, so cadence is never sped up by it.
+@export_range(0.05, 0.2, 0.01) var key_repeat_min_hold_sec: float = 0.18
+
 # ── Public state ──────────────────────────────────────────────────────────────
 
 ## Set by the parent: true only on the local player's node. A remote/disabled MoveInput never
@@ -82,6 +95,11 @@ var _submitted_while_blocked: bool = false
 # Time accumulators for the two timed states.
 var _await_elapsed: float = 0.0
 var _cooldown_elapsed: float = 0.0
+# How long the current move-key hold has been continuously down (seconds), sampled every frame in
+# every state — hold time is physical time, so it accrues across AWAITING/COOLDOWN spans too. Zero
+# dir (or a gated one) resets it; a direction CHANGE while still held does NOT (turning mid-hold is
+# one continuous movement). Read only by the key-submit gate to distinguish a tap from a hold.
+var _key_held_sec: float = 0.0
 
 # What tile this player stands on, as far as input planning is concerned: seeded by the parent
 # via set_current_tile() at spawn, then advanced by on_accepted(to_tile) at each accepted step.
@@ -113,6 +131,15 @@ func _process(delta: float) -> void:
 	# Not the local player: never sample.
 	if not enabled:
 		return
+
+	# Hold-time accumulator, ticked in EVERY state (a hold spans AWAITING/COOLDOWN too). Count the
+	# key as held only under the SAME gates as the key-submit branch below (not typing, this window
+	# focused); anything else — zero dir or a gated one — resets it. A direction change while still
+	# held does NOT reset (hold-turn continuity: turning mid-hold is one continuous movement).
+	if not _chat_focused() and _window_focused() and _sample_dir() != Vector2i.ZERO:
+		_key_held_sec += delta
+	else:
+		_key_held_sec = 0.0
 
 	match _state:
 		State.AWAITING:
@@ -169,7 +196,11 @@ func _process(delta: float) -> void:
 			# One-shot per press (is_action_just_pressed only fires the one frame) — tells a
 			# confused player/tester why their key/pad input is doing nothing.
 			print("[MoveInput] input ignored: window not focused")
-	if dir != Vector2i.ZERO:
+	# The tap/hold gate applies ONLY to a pipelined (mid-glide) key submit: while _blocked, require
+	# the key to have been held key_repeat_min_hold_sec so a tap commits exactly one step. An idle
+	# submit (not _blocked) stays instant. Click-walk continuation (_step_toward_target above) is
+	# untouched — a click sets its target once, so it never buffers a phantom second step.
+	if dir != Vector2i.ZERO and (not _blocked or _key_held_sec >= key_repeat_min_hold_sec):
 		_last_dir = dir
 		# A key step is not a target step: clear the pending-step stamp so its reject can never
 		# count toward a walk (e.g. one clicked into existence before the verdict lands).
