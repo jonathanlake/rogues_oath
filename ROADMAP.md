@@ -109,7 +109,10 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
 - [ ] **M4a — Dungeon Generation** **[size M]**
   Room-and-corridor generation (its own design pass first, per DESIGN §2.7); a goal/stairs
   placeholder (hardcoded scene is fine — disposable; M5's resource pipeline doesn't
-  govern it).
+  govern it). *Spec constraints (added v0.5.2, from the review pass):* every generated map
+  keeps a full solid border — MoveReferee's `_NO_TILE` sentinel assumes (0,0) is wall —
+  and regeneration must rebuild WorldGrid's cached A* grid (a stale grid paths through the
+  old walls).
   **Done =** a generated dungeon with a start and a goal, walkable in multiplayer.
 
 - [ ] **M4b — Seeing the Dungeon** **[size M]** *(Q3 answered: 8-way — LoS must handle

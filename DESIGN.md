@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.5.1)
+# Rogue's Oath — Design Doc (v0.5.2)
 
 ## Part 1 — The Game
 
@@ -137,8 +137,10 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
 
 ### 2.5 Multiplayer Architecture
 
-1. Engine: Godot, built-in high-level multiplayer (ENet, MultiplayerSpawner/Synchronizer,
-   RPCs). Server-authoritative.
+1. Engine: Godot, built-in high-level multiplayer (ENet, MultiplayerSpawner, RPCs).
+   Server-authoritative. MultiplayerSynchronizer is deliberately NOT in this toolkit — it
+   streams continuous state, the opposite of the event model in item 3 (v0.5.2 wording fix;
+   the exclusion itself dates to v0.3's reuse boundary).
 2. **Reuse (made precise in v0.3): plumbing comes from the Magick With Friends
    `framework/` layer** (the matured successor to the Friend Slop Framework). Scope of
    reuse:
@@ -329,6 +331,23 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.5.2 (2026-07-18)** — Full docs+code review pass (no bugs found; every ground rule
+  verified in code) + the Entity refactor it motivated. **Architecture boundary decided
+  (now a CLAUDE.md convention):** universal entity contract → `Entity` base class;
+  varying/optional behavior → component child (the existing MoveInput/MonsterBrain
+  pattern); authoritative state → referees only, never on replicated nodes — MWF's
+  HealthComponent model explicitly rejected for this game. Player/Monster's ~100 mirrored
+  presentation lines now live once in `entities/entity.gd`; referees seed/read one
+  entity_id space branch-free. GameConfig is now an authored .tres (Jeff flips playtest
+  toggles without code; missing file = loud error + script defaults). Authoring-model
+  correction, learned from the editor: Godot's saver strips default-equal properties, so
+  .tres/.tscn store OVERRIDES only and script defaults are part of the authored surface
+  (monster_type.gd records it). Scene uids assigned (editor resave) and code preloads
+  switched to uid://. **Spec addition (ROADMAP M4a):** generated maps keep a full solid
+  border ((0,0)-is-wall sentinel) and regeneration rebuilds the cached A* grid. §2.5.1
+  wording: MultiplayerSynchronizer removed from the named toolkit (excluded since v0.3;
+  the listing predated the ban). Verified two-instance post-refactor: party wipe with
+  session surviving, bump chain, AoO-on-flee, dodge=whiff, version gate.
 - **v0.5.1 (2026-07-18)** — Code-review fix pass on the gate: kicks are now
   flush-before-disconnect inside the transport contract (ENet `peer_disconnect_later` —
   review proved plain disconnect RESETS queued reliable packets, so v0.5.0's delayed kick

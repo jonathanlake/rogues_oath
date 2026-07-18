@@ -87,6 +87,9 @@ Consistency, not law:
   they expose signals/methods, the parent wires them. Cross-system communication goes through
   a `GameEvents` autoload's signals. Autoloads are declared in `project.godot` — check what
   exists before adding one.
+- Architecture boundary (v0.5.2): the universal entity contract (id, tile, glide, cues, name)
+  lives in the `Entity` base class; behavior that varies or is optional is a component child;
+  authoritative state (HP, occupancy) lives in the referees, never on replicated nodes.
 - Naming: `snake_case.gd` scripts, `PascalCase` classes/nodes, past-tense `snake_case`
   signals (`glide_committed`), exported vars with units (`glide_duration_sec`).
 - Script order: `extends` → signals → `@export` → `@onready` → private vars → lifecycle
