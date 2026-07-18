@@ -57,6 +57,9 @@ var display_name: String:
 
 @onready var _sprite: Sprite2D = $Sprite2D
 @onready var _name_label: Label = $NameLabel
+# Presentation-only HP readout under the feet, fed by attack events' hp_after via set_hp_display.
+# The nameplate stays name-only; the authoritative HP lives in the host's CombatReferee.
+@onready var _hp_label: Label = $HpLabel
 @onready var _brain := $MonsterBrain
 # Combat feedback (§2.3.4). Placeholder assets: pitch-shifted reuses of the two existing wavs
 # (attack = commit_sent low, hit = bonk high, windup = bonk mid, whiff = commit_sent very low) —
@@ -84,9 +87,11 @@ func _ready() -> void:
 	var cell := monster_type.atlas_coords
 	_sprite.region_enabled = true
 	_sprite.region_rect = Rect2(cell.x * _TILE_PX, cell.y * _TILE_PX, _TILE_PX, _TILE_PX)
-	# Nameplate seeds its HP readout from the authored max locally (max_hp is known everywhere);
-	# chunk 2 (combat referee) drives updates from attack events. Full HP at spawn.
-	_name_label.text = "%s %d/%d" % [monster_type.display_name, monster_type.max_hp, monster_type.max_hp]
+	# Nameplate is name-only; the HP readout rides its own label under the feet, seeded from the
+	# authored max locally (max_hp is known everywhere). Chunk 2 (combat referee) drives updates
+	# from attack events. Full HP at spawn.
+	_name_label.text = monster_type.display_name
+	_hp_label.text = "%d/%d" % [monster_type.max_hp, monster_type.max_hp]
 
 
 # ── Public methods ────────────────────────────────────────────────────────────
@@ -160,10 +165,10 @@ func play_whiff(dir: Vector2i) -> void:
 	_whiff_audio.play()
 
 
-## Update the nameplate HP readout ("Goblin hp/max") from an `attack` event's hp_after. Presentation
+## Update the under-feet HP readout ("hp/max") from an `attack` event's hp_after. Presentation
 ## only — the host's CombatReferee owns the live value; max rides the event so no peer queries it.
 func set_hp_display(hp: int, max_value: int) -> void:
-	_name_label.text = "%s %d/%d" % [display_name, hp, max_value]
+	_hp_label.text = "%d/%d" % [hp, max_value]
 
 
 # ── Private methods ───────────────────────────────────────────────────────────

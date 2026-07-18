@@ -59,6 +59,9 @@ signal glide_finished
 
 @onready var _sprite: Sprite2D = $Sprite2D
 @onready var _name_label: Label = $NameLabel
+# Presentation-only HP readout under the feet, fed by attack events' hp_after via set_hp_display.
+# The nameplate stays name-only; the authoritative HP lives in the host's CombatReferee.
+@onready var _hp_label: Label = $HpLabel
 @onready var _move_input := $MoveInput
 @onready var _path_marker: Node2D = $PathMarker
 @onready var _commit_audio: AudioStreamPlayer = $CommitSent
@@ -92,10 +95,11 @@ func _ready() -> void:
 	var sprite_tile := _SPRITE_TILES[spawn_index % _SPRITE_TILES.size()]
 	_sprite.region_enabled = true
 	_sprite.region_rect = Rect2(sprite_tile.x * _TILE_PX, sprite_tile.y * _TILE_PX, _TILE_PX, _TILE_PX)
-	# Nameplate shows the HP readout ("NAME 20/20"). max_hp is locally known everywhere (an @export),
-	# so this seeds correctly on every peer with no query; the combat referee's attack events drive
-	# the live updates via set_hp_display. Full HP at spawn.
-	_name_label.text = "%s %d/%d" % [player_name, max_hp, max_hp]
+	# Nameplate is name-only; the HP readout rides its own label under the feet. max_hp is locally
+	# known everywhere (an @export), so the seed is correct on every peer with no query; the combat
+	# referee's attack events drive live updates via set_hp_display. Full HP at spawn.
+	_name_label.text = player_name
+	_hp_label.text = "%d/%d" % [max_hp, max_hp]
 
 	# MoveInput samples only on the local player's node. Every peer instantiates the child (uniform
 	# node graph) but only ours is enabled.
@@ -183,11 +187,11 @@ func play_hurt() -> void:
 	_hit_audio.play()
 
 
-## Update the nameplate HP readout ("NAME hp/max") from an `attack` event's hp_after. Presentation
+## Update the under-feet HP readout ("hp/max") from an `attack` event's hp_after. Presentation
 ## only — the authoritative HP lives in the host's CombatReferee; this node just renders what the
 ## event carries. max rides the event so no peer needs to query the referee.
 func set_hp_display(hp: int, max_value: int) -> void:
-	_name_label.text = "%s %d/%d" % [player_name, hp, max_value]
+	_hp_label.text = "%d/%d" % [hp, max_value]
 
 
 ## Local attacker's BUSY mirror for a bump (decision 2), driven by the attacker's own `attack`

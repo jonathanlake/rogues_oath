@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.4)
+# Rogue's Oath — Design Doc (v0.4.1)
 
 ## Part 1 — The Game
 
@@ -105,8 +105,9 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    build-system pass — if rolls ever return, they return through that design, not by
    default. Outcome variety comes from POSITION, not dice (see item 3).
 2. All combat stats are passive, build-derived numbers (v1: placeholder stat blocks scaled
-   from RF3 — player warrior 20 HP / 5 dmg, goblin 10 HP / 3 dmg — all designer-editable
-   resources).
+   from RF3, tuned live in the editor — player tuning lives in player.tscn's exports,
+   monster tuning in the MonsterType `.tres` under resources/monsters/; the values are
+   deliberately NOT quoted in this doc, so tuning never drifts it stale).
 3. **Melee input = bump attack (decided Jeff, 2026-07-17):** gliding into a hostile's tile
    commits an attack instead — the attacker stays in place with a small lunge + attack
    sound, damage resolves at accept, and the attacker is committed for its swing duration.
@@ -323,6 +324,12 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.4.1 (2026-07-18)** — Post-M3 polish: HP readout moved off the nameplate to its own
+  label under each entity's feet (Jon — readability); first combat tuning pass recorded
+  (player melee 5→2, goblin speed tier → slow — Jon: "too fast for a real time game";
+  FEEL-TEST PENDING the next wire session — recorded, not validated); §2.3.2 stops quoting
+  tunable numbers (they live in player.tscn exports / MonsterType .tres, where tuning
+  happens).
 - **v0.4 (2026-07-18)** — M3 (First Blood): §2.3 rewritten for DETERMINISTIC combat (RF3
   baseline, Jeff via Discord — accuracy/evasion rolls and roll types PARKED for the build
   pass); bump attack (Jeff: move-into-enemy, in-place lunge) and monster TILE-commit
