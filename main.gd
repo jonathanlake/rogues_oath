@@ -13,15 +13,16 @@ extends Node2D
 ##  - Clients never own nodes and never call set_multiplayer_authority; a client asks to
 ##    join with a plain client->host RPC (peer_ready) and the host decides.
 
-# Brand-new scenes: referenced by res:// path until the editor assigns them a uid. Immutable,
-# so const (consts legitimately precede @export in script order).
-const PLAYER_SCENE: PackedScene = preload("res://entities/player/player.tscn")
-const MONSTER_SCENE: PackedScene = preload("res://entities/monster/monster.tscn")
-const GAME_LOG_SCENE: PackedScene = preload("res://ui/game_log/game_log.tscn")
+# uid preloads per convention (CLAUDE.md) — rename/move-safe. Immutable, so const (consts
+# legitimately precede @export in script order).
+const PLAYER_SCENE: PackedScene = preload("uid://dvvmk452g1xhs")   # entities/player/player.tscn
+const MONSTER_SCENE: PackedScene = preload("uid://ctlrcci4jrejt")  # entities/monster/monster.tscn
+const GAME_LOG_SCENE: PackedScene = preload("uid://djd1d1pf44yi2") # ui/game_log/game_log.tscn
 
 # The one monster kind for M3, loaded per-peer from this PATH (the spawn config carries the path,
-# never a Resource over the wire — every peer loads the same authored .tres). Brand-new resource:
-# referenced by res:// path until the editor assigns it a uid.
+# never a Resource over the wire — every peer loads the same authored .tres). Deliberately a
+# res:// STRING, not a uid preload: it crosses the wire as spawn-config data, and both ends run
+# the same build (version gate), so the readable path is the stable, comparable form.
 const GOBLIN_TYPE_PATH := "res://resources/monsters/goblin.tres"
 
 # The single goblin's spawn tile (plan §Chunk 1). Map-coupled: the spawn is guarded by

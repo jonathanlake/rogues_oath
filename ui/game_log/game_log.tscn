@@ -1,12 +1,14 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://djd1d1pf44yi2"]
 
-[ext_resource type="Script" path="res://ui/game_log/game_log.gd" id="1_gamelog"]
+[ext_resource type="Script" uid="uid://4jh7wtagcpc8" path="res://ui/game_log/game_log.gd" id="1_gamelog"]
 
-[node name="GameLog" type="CanvasLayer"]
+[node name="GameLog" type="CanvasLayer" unique_id=1588632799]
 script = ExtResource("1_gamelog")
 
-[node name="Panel" type="PanelContainer" parent="."]
+[node name="Panel" type="PanelContainer" parent="." unique_id=212293670]
 self_modulate = Color(1, 1, 1, 0.6)
+custom_minimum_size = Vector2(240, 90)
+anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 8.0
@@ -14,12 +16,11 @@ offset_top = -98.0
 offset_right = 248.0
 offset_bottom = -8.0
 grow_vertical = 0
-custom_minimum_size = Vector2(240, 90)
 
-[node name="VBox" type="VBoxContainer" parent="Panel"]
+[node name="VBox" type="VBoxContainer" parent="Panel" unique_id=1743404643]
 layout_mode = 2
 
-[node name="Log" type="RichTextLabel" parent="Panel/VBox"]
+[node name="Log" type="RichTextLabel" parent="Panel/VBox" unique_id=1191652504]
 layout_mode = 2
 size_flags_vertical = 3
 theme_override_font_sizes/normal_font_size = 8
@@ -27,7 +28,7 @@ theme_override_font_sizes/bold_font_size = 8
 bbcode_enabled = true
 scroll_following = true
 
-[node name="Input" type="LineEdit" parent="Panel/VBox"]
+[node name="Input" type="LineEdit" parent="Panel/VBox" unique_id=1976000619]
 layout_mode = 2
 theme_override_font_sizes/font_size = 8
 placeholder_text = "Press Enter to chat"

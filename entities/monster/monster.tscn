@@ -1,21 +1,21 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene format=3 uid="uid://ctlrcci4jrejt"]
 
-[ext_resource type="Script" path="res://entities/monster/monster.gd" id="1_monster"]
+[ext_resource type="Script" uid="uid://dleqjqh8y4nyj" path="res://entities/monster/monster.gd" id="1_monster"]
 [ext_resource type="Texture2D" uid="uid://k8xc4gmji1nc" path="res://assets/32rogues/monsters.png" id="2_monsters"]
-[ext_resource type="Script" path="res://entities/monster/monster_brain.gd" id="3_brain"]
-[ext_resource type="AudioStream" path="res://assets/audio/commit_sent.wav" id="4_commit"]
-[ext_resource type="AudioStream" path="res://assets/audio/bonk.wav" id="5_bonk"]
+[ext_resource type="Script" uid="uid://b828qddbhkhx7" path="res://entities/monster/monster_brain.gd" id="3_brain"]
+[ext_resource type="AudioStream" uid="uid://bcfp1anfpbqw3" path="res://assets/audio/commit_sent.wav" id="4_commit"]
+[ext_resource type="AudioStream" uid="uid://bgobemuhppy00" path="res://assets/audio/bonk.wav" id="5_bonk"]
 
-[node name="Monster" type="Node2D"]
+[node name="Monster" type="Node2D" unique_id=1348309680]
 script = ExtResource("1_monster")
 
-[node name="Sprite2D" type="Sprite2D" parent="."]
+[node name="Sprite2D" type="Sprite2D" parent="." unique_id=742174548]
 texture_filter = 1
 texture = ExtResource("2_monsters")
 region_enabled = true
 region_rect = Rect2(64, 0, 32, 32)
 
-[node name="NameLabel" type="Label" parent="."]
+[node name="NameLabel" type="Label" parent="." unique_id=320001288]
 offset_left = -48.0
 offset_top = -38.0
 offset_right = 48.0
@@ -24,7 +24,7 @@ theme_override_font_sizes/font_size = 8
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="HpLabel" type="Label" parent="."]
+[node name="HpLabel" type="Label" parent="." unique_id=1424766736]
 offset_left = -24.0
 offset_top = 14.0
 offset_right = 24.0
@@ -33,21 +33,21 @@ theme_override_font_sizes/font_size = 7
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="MonsterBrain" type="Node" parent="."]
+[node name="MonsterBrain" type="Node" parent="." unique_id=755789936]
 script = ExtResource("3_brain")
 
-[node name="Attack" type="AudioStreamPlayer" parent="."]
+[node name="Attack" type="AudioStreamPlayer" parent="." unique_id=1026429460]
 stream = ExtResource("4_commit")
 pitch_scale = 0.6
 
-[node name="Hit" type="AudioStreamPlayer" parent="."]
+[node name="Hit" type="AudioStreamPlayer" parent="." unique_id=1724549287]
 stream = ExtResource("5_bonk")
 pitch_scale = 1.4
 
-[node name="Windup" type="AudioStreamPlayer" parent="."]
+[node name="Windup" type="AudioStreamPlayer" parent="." unique_id=1349622745]
 stream = ExtResource("5_bonk")
 pitch_scale = 0.7
 
-[node name="Whiff" type="AudioStreamPlayer" parent="."]
+[node name="Whiff" type="AudioStreamPlayer" parent="." unique_id=1324668704]
 stream = ExtResource("4_commit")
 pitch_scale = 0.4

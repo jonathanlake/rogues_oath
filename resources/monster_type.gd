@@ -7,8 +7,11 @@ extends Resource
 ## world spawns and adjudicates a monster — the wire only carries the resource PATH plus the
 ## host-assigned entity id and tile, so every peer loads the same authored values (never streamed).
 ##
-## Authoring convention: an authored monster .tres pins ALL stat fields explicitly (never leans on
-## a script default here), so a later default change can't silently retune a shipped monster.
+## Authoring model (Godot-canonical, learned the hard way 2026-07-18): a .tres stores ONLY values
+## that differ from the script defaults below — the editor's saver STRIPS default-equal properties
+## on every save, so "pin everything in the .tres" cannot survive an editor round-trip. The
+## defaults below are therefore part of the authored surface: changing one retunes every monster
+## that doesn't override it. Change them as deliberately as you would a .tres value.
 
 ## Log / nameplate name for this monster ("Goblin").
 @export var display_name: String = ""

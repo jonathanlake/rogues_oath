@@ -1,16 +1,15 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene format=3 uid="uid://d0f3ykqturrly"]
 
-[ext_resource type="Script" path="res://main.gd" id="1_main"]
-[ext_resource type="Script" path="res://world/move_referee.gd" id="2_referee"]
+[ext_resource type="Script" uid="uid://bmjaejpcgs6ho" path="res://main.gd" id="1_main"]
+[ext_resource type="Script" uid="uid://bnytx3u1r1cp" path="res://world/move_referee.gd" id="2_referee"]
 [ext_resource type="PackedScene" path="res://ui/debug_overlay/debug_overlay.tscn" id="3_overlay"]
-[ext_resource type="Script" path="res://world/combat_referee.gd" id="4_combat"]
-[ext_resource type="AudioStream" path="res://assets/audio/bonk.wav" id="5_bonk"]
+[ext_resource type="Script" uid="uid://bxwx82w24gbfp" path="res://world/combat_referee.gd" id="4_combat"]
+[ext_resource type="AudioStream" uid="uid://bgobemuhppy00" path="res://assets/audio/bonk.wav" id="5_bonk"]
 
-[node name="Main" type="Node2D"]
+[node name="Main" type="Node2D" unique_id=931510869]
 script = ExtResource("1_main")
 
-[node name="Background" type="ColorRect" parent="."]
-layout_mode = 3
+[node name="Background" type="ColorRect" parent="." unique_id=684701534]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
@@ -18,26 +17,26 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(0.09, 0.09, 0.12, 1)
 
-[node name="Room" type="TileMapLayer" parent="."]
+[node name="Room" type="TileMapLayer" parent="." unique_id=511016553]
 
-[node name="Players" type="Node2D" parent="."]
+[node name="Players" type="Node2D" parent="." unique_id=1339843216]
 
-[node name="Monsters" type="Node2D" parent="."]
+[node name="Monsters" type="Node2D" parent="." unique_id=312358483]
 
-[node name="MoveReferee" type="Node" parent="."]
+[node name="MoveReferee" type="Node" parent="." unique_id=1205671277]
 script = ExtResource("2_referee")
 
-[node name="CombatReferee" type="Node" parent="."]
+[node name="CombatReferee" type="Node" parent="." unique_id=424015745]
 script = ExtResource("4_combat")
 
-[node name="DeathSfx" type="AudioStreamPlayer" parent="."]
+[node name="DeathSfx" type="AudioStreamPlayer" parent="." unique_id=2085852180]
 stream = ExtResource("5_bonk")
 pitch_scale = 0.5
 
-[node name="MultiplayerSpawner" type="MultiplayerSpawner" parent="."]
+[node name="MultiplayerSpawner" type="MultiplayerSpawner" parent="." unique_id=1663269909]
 spawn_path = NodePath("../Players")
 
-[node name="MonsterSpawner" type="MultiplayerSpawner" parent="."]
+[node name="MonsterSpawner" type="MultiplayerSpawner" parent="." unique_id=483179110]
 spawn_path = NodePath("../Monsters")
 
-[node name="DebugOverlay" parent="." instance=ExtResource("3_overlay")]
+[node name="DebugOverlay" parent="." unique_id=1569819114 instance=ExtResource("3_overlay")]

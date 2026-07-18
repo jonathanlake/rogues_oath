@@ -1,10 +1,6 @@
-[gd_resource type="Resource" script_class="GameConfig" format=3]
+[gd_resource type="Resource" script_class="GameConfig" format=3 uid="uid://caodi0fnqcjpi"]
 
-[ext_resource type="Script" path="res://resources/game_config.gd" id="1_config"]
+[ext_resource type="Script" uid="uid://cdrfkh1t65l16" path="res://resources/game_config.gd" id="1_config"]
 
 [resource]
 script = ExtResource("1_config")
-max_players = 6
-diagonal_step_multiplier = 2.0
-bodies_block_corners = false
-origin_frees_at_glide_start = true
