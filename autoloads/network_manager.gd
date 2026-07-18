@@ -8,10 +8,14 @@
 ##   NetworkManager.kick_peer(id)     (host-only)
 ##   NetworkManager.current_port()    -> int (bound port while hosting, 0 otherwise)
 ##
-## All ENet (or future Steam / relay) code lives exclusively in host_game() and
-## join_game(). Every other file stays transport-agnostic. To swap transports:
+## All ENet (or future Steam / relay) code lives exclusively in host_game(), join_game(), and
+## kick_peer() (which reaches into ENetPacketPeer.peer_disconnect_later for its flush-before-
+## disconnect guarantee — see its doc for why that can't be done through the generic peer API).
+## Every other file stays transport-agnostic. To swap transports:
 ##   1. Replace the peer-creation lines inside host_game() / join_game().
-##   2. Touch nothing else.
+##   2. Give kick_peer() the new transport's flush-then-disconnect equivalent (its ENet branch is
+##      guarded by a cast with a fail-loud fallback, so a new transport announces itself there).
+##   3. Touch nothing else.
 ##
 ## Example future swap (Steam):
 ##   func host_game(...) -> Error:
@@ -104,11 +108,42 @@ func disconnect_game() -> void:
 		multiplayer.multiplayer_peer = null
 
 
-## Host-only: forcibly disconnect a peer (e.g. the spawn-gate refusing an over-capacity join).
-## The kicked client gets server_disconnected and falls back to its menu instead of hanging
-## player-less. Transport-agnostic — goes through the generic MultiplayerPeer API, never ENet.
+## Host-only: forcibly disconnect a peer (e.g. the spawn-gate refusing an over-capacity join),
+## delivering any queued reliable packet — the refusal reason — FIRST. The kicked client gets
+## server_disconnected and falls back to its menu instead of hanging player-less. This function now
+## OWNS the codebase's flush-before-disconnect guarantee: callers (main.gd's refusal path) enqueue
+## the reason RPC, then call this, and trust the packet lands before the connection closes.
+##
+## BOUNDED, never "guaranteed": ENet's peer_disconnect_later holds the connection open until every
+## queued outgoing packet is acked OR ENet's disconnect timeout elapses. So the reason is delivered
+## if the link can deliver anything at all; under total packet loss it dies with the connection.
+## (The v0.5.0 kick claimed a plain graceful disconnect DRAINS queued reliable packets — that was
+## wrong: ENet's enet_peer_disconnect calls enet_peer_reset_queues, which provably RESETS the unacked
+## reliable queue. peer_disconnect_later is the primitive that actually waits for empty queues + acks;
+## overclaiming "guaranteed" is the exact mistake this pass is fixing.)
+##
+## Residual: while it waits, disconnect_later keeps the ENet CONNECTION open until delivery/timeout,
+## so a refused peer can occupy a transport-cap slot slightly longer than a hard disconnect would
+## (the _slots ledger is unaffected — a pre-existing exposure class, acceptable at 2-6-player scale).
+##
+## Transport-swap contract: any future transport MUST preserve "kick delivers pending reliable data
+## first." The flush is ENet-specific, so it is isolated here behind the cast; a non-ENet peer takes
+## the fail-loud fallback rather than silently reintroducing the swallowed-reason bug.
 func kick_peer(peer_id: int) -> void:
-	if multiplayer.multiplayer_peer != null and multiplayer.is_server():
+	if multiplayer.multiplayer_peer == null or not multiplayer.is_server():
+		return
+	# get_peer() errors on an unknown id, so gate on the live peer list first: a peer already gone
+	# (double kick, or a self-disconnect racing the refusal) makes this a harmless no-op.
+	if not multiplayer.get_peers().has(peer_id):
+		return
+	var enet := multiplayer.multiplayer_peer as ENetMultiplayerPeer
+	if enet != null:
+		enet.get_peer(peer_id).peer_disconnect_later()
+	else:
+		# FAIL-LOUD: a hypothetical non-ENet transport reached here with no flush primitive. Dead
+		# code today (ENet is the only transport), but a silent disconnect_peer would resurrect the
+		# swallowed-reason bug this pass fixed, so name the lost guarantee instead of hiding it.
+		push_error("[NetworkManager] kick_peer: non-ENet transport lacks flush-before-disconnect — refusal reason may be lost")
 		multiplayer.multiplayer_peer.disconnect_peer(peer_id)
 
 # ── Internal signal routing ───────────────────────────────────────────────────

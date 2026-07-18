@@ -170,10 +170,11 @@ Not scheduled — pulled in when their moment comes:
   then (M2.1)
 - Chat polish: speech bubbles overhead (WoW-style), name colors (escape-then-wrap the
   already-escaped name), timestamps, chat sounds
-- Distinct "Server is full." message for capacity-kicked clients — needs flush-before-
-  disconnect in the transport (ENet `peer_disconnect_later` inside NetworkManager's
-  contract); a same-frame kick drops the reliable reason packet (verified 2026-07-17),
-  so kicked clients currently share the generic "Disconnected from host."
+- ~~Distinct "Server is full." message for capacity-kicked clients~~ — DONE: shipped
+  v0.5.0 via the `session_refused` RPC, and v0.5.1 adopted exactly this bullet's
+  prescription (`peer_disconnect_later` inside NetworkManager's contract) after the
+  code review proved the interim delay-then-kick was a race — this bullet's 2026-07-17
+  flush-before-disconnect analysis was right all along.
 
 ---
 

@@ -61,3 +61,24 @@ var debug_overlay_start_visible: bool = false
 ## basis, and the menu still shows the real version. Read client-side at peer_ready send; inert on
 ## a host (hosts never send peer_ready). Never touched by gameplay code.
 var debug_fake_version: String = ""
+
+# One-shot latch so a missing/typo'd config/version key warns exactly once (the referee's
+# _warned_null_speed pattern), not on every read.
+var _warned_missing_version: bool = false
+
+
+## The single read path for the build version string (project.godot application/config/version,
+## kept in step with the DESIGN changelog). Every version read — the menu corner, the client's
+## peer_ready send, the host's gate compare, the join-timeout hint — routes through here so they
+## can't drift on stripping or fallback (the review caught the menu reading it un-stripped). Falls
+## back to "?" when the key is missing/empty, and push_warning announces that fallback ONCE (via
+## _warned_missing_version) so a config mistake surfaces as itself instead of masquerading as a
+## network version refusal.
+func build_version() -> String:
+	var raw := str(ProjectSettings.get_setting("application/config/version", "?")).strip_edges()
+	if raw.is_empty() or raw == "?":
+		if not _warned_missing_version:
+			push_warning("[GameManager] application/config/version missing or empty — build version reads as '?'")
+			_warned_missing_version = true
+		return "?"
+	return raw

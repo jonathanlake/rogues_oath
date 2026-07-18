@@ -38,13 +38,6 @@ const WALL_ATLAS := Vector2i(0, 1)   # tiles.txt row 2a — "rough stone wall (t
 const PEER_READY_RETRY_INTERVAL_SEC := 0.5
 const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN_TIMEOUT_SEC
 
-# Grace between sending a refused peer its reason (session_refused) and kicking it. A kick is a
-# raw disconnect_peer; disconnect_peer's graceful default DRAINS queued reliable packets before
-# closing, so ≥1 frame is structurally enough for the reason to land (the same-frame kick is the
-# only case that drops it — the old parked "Server is full." caveat). The extra margin over one
-# frame just lets the refused client act on the reason (return to menu) before its socket closes.
-const REFUSAL_KICK_DELAY_SEC := 0.4
-
 ## Server-side clamp on chat body length (chars). The referee never trusts the wire; the
 ## client's LineEdit does no length limiting, so the host is the only guard.
 @export var chat_max_chars: int = 200
@@ -89,6 +82,14 @@ var _game_log: Node = null
 
 # Host-only: peer_id -> spawn slot index, so a disconnect frees the slot for reuse.
 var _slots: Dictionary = {}
+# Host-only: peer_ids we have refused (never admitted) this session — version mismatch or capacity.
+# Set in _refuse_peer, checked FIRST in peer_ready (silent early return, before the _slots duplicate
+# guard), erased in _on_peer_disconnected. Suppresses same-connection retry spam (a refused client
+# keeps resending peer_ready every 0.5s until its kick lands) AND closes the flush-window
+# re-admission race: while a kick is still flushing, a freed slot plus a fast retry could otherwise
+# re-admit the very peer being kicked. A genuinely fresh reconnection arrives on a NEW peer_id (the
+# old one was erased on its disconnect) and gets a fresh adjudication by design.
+var _refused: Dictionary = {}
 # Host-only monotonic monster id source (plan decision 5): each monster gets the next NEGATIVE int,
 # so monster ids never collide with peer ids (always positive) in the referee's one occupancy space.
 var _next_monster_id: int = -1
@@ -222,6 +223,9 @@ func _ready() -> void:
 ## counter for the next session. Safe on all peers; NetEvents outlives any one session.
 func _exit_tree() -> void:
 	NetEvents.reset_session()
+	# A debug version override (fakever=) is scoped to the session it was launched for — clear it so
+	# a manual re-join from the menu in the same app run sends the REAL build version, not a stale fake.
+	GameManager.debug_fake_version = ""
 
 
 ## Window close fires BEFORE node teardown, so we flip _leaving here to keep the departure hook
@@ -369,6 +373,10 @@ func _on_peer_connected(peer_id: int) -> void:
 
 func _on_peer_disconnected(peer_id: int) -> void:
 	_slots.erase(peer_id)
+	# Drop any refusal mark for this connection — the peer is gone, so a future peer_id (even a
+	# reconnection from the same machine) starts clean and gets its own adjudication. Session
+	# teardown frees the whole Main node, so _refused dies with it; this covers the live case.
+	_refused.erase(peer_id)
 	var player_node := _players.get_node_or_null(str(peer_id))
 	if player_node:
 		# Host-only handler (connected inside the is_server() branch of _ready). Just free the
@@ -395,7 +403,7 @@ func _send_peer_ready() -> void:
 		# meeting a gated host, whose arity-mismatched call is dropped → this timeout) names the
 		# likely cause. Uses the REAL build version, never the fakever= override — the fake is a
 		# send-path lie for testing; this message is for the human reading their own screen.
-		var real_version := str(ProjectSettings.get_setting("application/config/version", "?")).strip_edges()
+		var real_version := GameManager.build_version()
 		_end_session("No response from host. (You're on v%s — joining a different version can look like this.)" % real_version)
 		return
 	_peer_ready_attempts += 1
@@ -413,7 +421,7 @@ func _send_peer_ready() -> void:
 func _client_version() -> String:
 	if not GameManager.debug_fake_version.is_empty():
 		return GameManager.debug_fake_version
-	return str(ProjectSettings.get_setting("application/config/version", "?")).strip_edges()
+	return GameManager.build_version()
 
 
 ## Client-side teardown funnel. Every "session over, back to menu" path — host left, kicked,
@@ -575,17 +583,22 @@ func _validate_chat(sender_peer_id: int, data: Dictionary) -> Dictionary:
 
 
 ## Host-only. Refuse a peer that was NEVER admitted (version mismatch or capacity). Used by BOTH
-## refusal paths: send the reason over the transient host->client channel, then kick after a short
-## grace so the reliable reason packet actually drains before the socket closes (see
-## REFUSAL_KICK_DELAY_SEC). The timer binds an AUTOLOAD method (NetworkManager.kick_peer) — an
-## autoload can never be freed mid-window, and kick_peer's own null/is_server guards make a
-## teardown-in-the-window kick a harmless no-op. Idempotent under the client's 0.5s peer_ready
-## retry race: a refused peer has no _slots entry, so each retry re-hits the gate and calls this
-## again, but a duplicate session_refused no-ops on the client's _leaving guard and a duplicate
-## kick timer no-ops on kick_peer's guard (the peer is already gone).
+## refusal paths: mark it refused, send the reason over the transient host->client channel, then
+## kick IMMEDIATELY — no grace timer. The RPC is enqueued synchronously onto the peer's reliable
+## channel before kick_peer runs, and kick_peer now uses peer_disconnect_later, which flushes that
+## queue before closing (see NetworkManager.kick_peer). The old 0.4s SceneTreeTimer was a RACE, not
+## a guarantee: /code-review of the v0.5.0 gate found the kick's plain disconnect_peer RESETS queued
+## reliable packets (ENet's enet_peer_reset_queues), so under loss the reason could be destroyed in
+## flight — the timer merely usually won on loopback. The synchronous-enqueue assumption is a real
+## experiment, not a hope: a deferred Godot-side send buffer would lose the reason at every latency
+## (sends to a disconnect-pending peer are rejected), so a loopback mismatch test that shows the
+## reason arriving empirically proves the enqueue happens before the kick. The _refused mark swallows
+## the client's 0.5s peer_ready retries (see _refused); a duplicate session_refused would otherwise
+## no-op on the client's _leaving guard anyway.
 func _refuse_peer(peer_id: int, reason: String) -> void:
+	_refused[peer_id] = true
 	session_refused.rpc_id(peer_id, reason)
-	get_tree().create_timer(REFUSAL_KICK_DELAY_SEC).timeout.connect(NetworkManager.kick_peer.bind(peer_id))
+	NetworkManager.kick_peer(peer_id)
 
 
 # ── RPCs ──────────────────────────────────────────────────────────────────────
@@ -600,6 +613,12 @@ func _refuse_peer(peer_id: int, reason: String) -> void:
 @rpc("any_peer", "call_remote", "reliable")
 func peer_ready(p_name: String, client_version: String) -> void:
 	var peer_id := multiplayer.get_remote_sender_id()
+	# Refused-guard FIRST (before the _slots duplicate guard): a peer we already refused this
+	# connection keeps resending peer_ready every 0.5s until its kick flushes and lands. Swallow those
+	# retries silently — no log spam, no redundant refusal RPC — and, critically, don't let a slot
+	# freed in the meantime re-admit the very peer whose kick is still in flight.
+	if _refused.has(peer_id):
+		return
 	# Duplicate guard via _slots (synchronous bookkeeping), not a node lookup: a re-sent
 	# peer_ready in the same frame could race a spawn whose node isn't in the tree yet,
 	# double-spawn, and break the name-IS-peer-id contract via Godot's auto-rename.
@@ -615,15 +634,15 @@ func peer_ready(p_name: String, client_version: String) -> void:
 	# Version gate (before capacity). Sanitize the wire string first — it gets echoed into a
 	# displayed refusal message, so never trust it; the 16-char cap fits the current x.y.z scheme
 	# (revisit if 1.0-era suffixes like "-rc.1" ever join). Compare EXACT string equality against
-	# the host's own config/version, read live per join through the SAME strip_edges() the client
-	# uses, so a hand-edited trailing space can't manufacture a refusal. 0.x: everything is
-	# breaking, so any difference refuses; a looser major.minor policy can wait for 1.0.
+	# the host's own config/version, read live per join through GameManager.build_version() — the
+	# SAME single read path (and strip) the client uses — so a hand-edited trailing space can't
+	# manufacture a refusal. 0.x: everything is breaking, so any difference refuses; a looser
+	# major.minor policy can wait for 1.0.
 	var client_ver := NetEvents.sanitize_wire_text(client_version, 16)
-	var host_ver := str(ProjectSettings.get_setting("application/config/version", "?")).strip_edges()
+	var host_ver := GameManager.build_version()
 	if client_ver != host_ver:
 		print("[HOST] refused %s — version v%s (host v%s)" % [p_name, client_ver, host_ver])
-		if is_instance_valid(_game_log):
-			_game_log.add_line("Refused %s — version v%s (host v%s)." % [p_name, client_ver, host_ver])
+		_game_log.add_line("Refused %s — version v%s (host v%s)." % [p_name, client_ver, host_ver])
 		_refuse_peer(peer_id, "Version mismatch — you have v%s, host has v%s." % [client_ver, host_ver])
 		return
 	# Capacity gate (+1 for the host itself). The transport already caps clients at
@@ -635,6 +654,10 @@ func peer_ready(p_name: String, client_version: String) -> void:
 	if _slots.size() < GameManager.config.max_players:
 		_spawner.spawn(_spawn_config(peer_id, p_name))
 	else:
+		# Symmetric with the version branch: host-side visibility before the refusal, so a full-server
+		# rejection shows in the host's log/console too (not just on the refused client's menu).
+		print("[HOST] refused %s — server full (%d/%d)" % [p_name, _slots.size(), GameManager.config.max_players])
+		_game_log.add_line("Refused %s — server full." % p_name)
 		_refuse_peer(peer_id, "Server is full.")
 
 

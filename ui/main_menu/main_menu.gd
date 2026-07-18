@@ -30,10 +30,11 @@ var _attempt_token: int = 0  # invalidates stale timeout timers from earlier att
 
 
 func _ready() -> void:
-	# Build version, from the ONE source of truth (project.godot application/config/version — kept
-	# in step with the DESIGN changelog). Shown in the corner AND printed, so "which build are you
-	# actually running?" is answerable at a glance on both machines — the stale-exe footgun's fix.
-	var version := str(ProjectSettings.get_setting("application/config/version", "?"))
+	# Build version, from the ONE source of truth via GameManager.build_version() (project.godot
+	# application/config/version — kept in step with the DESIGN changelog). Shown in the corner AND
+	# printed, so "which build are you actually running?" is answerable at a glance on both machines
+	# — the stale-exe footgun's fix.
+	var version := GameManager.build_version()
 	$VersionLabel.text = "v" + version
 	print("[Menu] Rogue's Oath v%s" % version)
 	host_button.pressed.connect(_on_host_pressed)

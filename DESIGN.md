@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.5.0)
+# Rogue's Oath — Design Doc (v0.5.1)
 
 ## Part 1 — The Game
 
@@ -329,6 +329,14 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.5.1 (2026-07-18)** — Code-review fix pass on the gate: kicks are now
+  flush-before-disconnect inside the transport contract (ENet `peer_disconnect_later` —
+  review proved plain disconnect RESETS queued reliable packets, so v0.5.0's delayed kick
+  was a race, not a guarantee; delivery is bounded by ENet's disconnect timeout, never
+  claimed absolute); a refused-peer set kills retry log-spam and the flush-window
+  re-admission race; capacity refusals now logged host-side (symmetry); one
+  `GameManager.build_version()` read replaces four drifting copies; `fakever=` is scoped
+  to its session (cleared on teardown).
 - **v0.5.0 (2026-07-18)** — Version gate: the host refuses joins from a different build at
   `peer_ready` (client version rides the handshake; exact match while 0.x), with the
   reason — both versions named — delivered over a new `session_refused` RPC before the
