@@ -42,12 +42,31 @@ signal glide_finished
 ## pointing this at a different resources/speed_tiers/*.tres.
 @export var glide_speed: GlideSpeed
 
+## Starting / maximum hit points (RF3-scaled "warrior" placeholder — DESIGN §2.3 amendment).
+## Seeds this player's HP in the host's CombatReferee on spawn (read host-side from the node) and
+## the nameplate readout; the referee owns the live value thereafter.
+@export var max_hp: int = 20
+
+## Damage (HP) this player deals per landed melee attack — a bump (move into a hostile) or an
+## attack of opportunity. Deterministic (no to-hit roll, DESIGN §2.3 amendment). Read HOST-side by
+## the referees when they stamp this attacker's damage; never trusted from the wire.
+@export var melee_damage: int = 5
+
+## Swing commit duration (seconds): after a bump lands (instantly), the attacker is BUSY for this
+## long — the Commitment Rule tail (decision 2). The referee stamps it into the from==to busy
+## record; the local attacker mirrors it as a blocked-input window (commit_in_place).
+@export var attack_duration_sec: float = 0.5
+
 @onready var _sprite: Sprite2D = $Sprite2D
 @onready var _name_label: Label = $NameLabel
 @onready var _move_input := $MoveInput
 @onready var _path_marker: Node2D = $PathMarker
 @onready var _commit_audio: AudioStreamPlayer = $CommitSent
 @onready var _bonk_audio: AudioStreamPlayer = $Bonk
+# Combat feedback (§2.3.4). Placeholder assets: pitch-shifted reuses of the two existing wavs
+# (attack = commit_sent low, hit = bonk high) — flagged placeholder, real SFX arrive later.
+@onready var _attack_audio: AudioStreamPlayer = $Attack
+@onready var _hit_audio: AudioStreamPlayer = $Hit
 
 # Assigned by main.gd's spawn_function (from the replicated spawn config) before this
 # node enters the tree, so _ready can read them on every peer.
@@ -73,7 +92,10 @@ func _ready() -> void:
 	var sprite_tile := _SPRITE_TILES[spawn_index % _SPRITE_TILES.size()]
 	_sprite.region_enabled = true
 	_sprite.region_rect = Rect2(sprite_tile.x * _TILE_PX, sprite_tile.y * _TILE_PX, _TILE_PX, _TILE_PX)
-	_name_label.text = player_name
+	# Nameplate shows the HP readout ("NAME 20/20"). max_hp is locally known everywhere (an @export),
+	# so this seeds correctly on every peer with no query; the combat referee's attack events drive
+	# the live updates via set_hp_display. Full HP at spawn.
+	_name_label.text = "%s %d/%d" % [player_name, max_hp, max_hp]
 
 	# MoveInput samples only on the local player's node. Every peer instantiates the child (uniform
 	# node graph) but only ours is enabled.
@@ -94,12 +116,14 @@ func _ready() -> void:
 
 # ── Public methods ────────────────────────────────────────────────────────────
 
-## Hostility test for the attack-of-opportunity trigger (DESIGN §2.2.6), read HOST-side by the
-## MoveReferee. Players are never mutually hostile in real play; the debug-only GameManager.all_hostile
-## flag exists solely so the AoO wiring can be honestly demoed two-instance BEFORE monsters exist
-## (M3) — when it's set, every entity counts as hostile to every other, itself excepted.
+## Hostility test (DESIGN §2.2.6, plan decision 6), read HOST-side by the referee/combat. A player
+## is hostile to any monster and NEVER to another player. The debug-only GameManager.all_hostile
+## flag ORs on top (every entity hostile to every other, itself excepted) so the AoO/combat wiring
+## can be demoed two-instance with `hostile=1`. Symmetric with Monster.is_hostile_to.
 func is_hostile_to(other: Node) -> bool:
-	return GameManager.all_hostile and other != self
+	if GameManager.all_hostile and other != self:
+		return true
+	return other is Monster
 
 
 ## Play back a server-accepted glide (called on every peer by Main from the broadcast event).
@@ -140,6 +164,49 @@ func play_commit_sent() -> void:
 		print("[peer %d] commit-sent cue" % multiplayer.get_unique_id())
 	_flash(Color(1.6, 1.6, 1.6))
 	_commit_audio.play()
+
+
+## Attacker feedback for a landed melee (§2.3.4), played on every peer from the referee's `attack`
+## event: a short shake TOWARD the target + the swing sound. Distinct from the commit-sent cue
+## (that is input-received; this is a committed strike resolving). `dir` is the 8-way step toward
+## the victim so the wobble reads directional; Vector2i.ZERO falls back to the plain horizontal shake.
+func play_attack(dir: Vector2i) -> void:
+	_shake(dir)
+	_attack_audio.play()
+
+
+## Target feedback for taking a hit (§2.3.4), played on every peer from the referee's `attack`
+## event: a distinct red flash + the impact sound. Never confusable with the attacker's swing or a
+## rejected commit — this is "I got hit."
+func play_hurt() -> void:
+	_flash(Color(1.0, 0.3, 0.3))
+	_hit_audio.play()
+
+
+## Update the nameplate HP readout ("NAME hp/max") from an `attack` event's hp_after. Presentation
+## only — the authoritative HP lives in the host's CombatReferee; this node just renders what the
+## event carries. max rides the event so no peer needs to query the referee.
+func set_hp_display(hp: int, max_value: int) -> void:
+	_name_label.text = "%s %d/%d" % [player_name, hp, max_value]
+
+
+## Local attacker's BUSY mirror for a bump (decision 2), driven by the attacker's own `attack`
+## event. A bump adjudicates as a `deferred` verdict (no glide_to broadcast), so unlike a glide the
+## local player never receives a glide_to to clear its input latch — this does it: it mirrors
+## glide_to's signal/relay shape EXACTLY, minus the position tween (the attacker never leaves its
+## tile — decision 2's "no client tween"). glide_started blocks MoveInput; on_accepted clears the
+## AWAITING latch (advancing nothing — the current tile); a SceneTreeTimer ends the swing window
+## and unblocks. No cancel path: the swing plays to completion (the Commitment Rule at the input layer).
+func commit_in_place(duration_sec: float) -> void:
+	# Kill any lingering glide tween FIRST (mirrors glide_to): the previous step's visual tail can
+	# outlive the server's state by ~RTT/2, and its finished callback would emit glide_finished
+	# mid-swing — unblocking input early. Killed => no finished, so the swing window owns the end.
+	if _glide_tween != null and _glide_tween.is_valid():
+		_glide_tween.kill()
+	glide_started.emit()
+	if _move_input.enabled:
+		_move_input.on_accepted(tile)
+	get_tree().create_timer(duration_sec).timeout.connect(func(): glide_finished.emit())
 
 
 ## Rejection feedback (§2.3.4): a distinct red flash + a short 2px shake + the thud, all three, so
@@ -191,11 +258,16 @@ func _flash(color: Color) -> void:
 
 ## A quick 2px position wobble that returns exactly to where it started. If a real glide pre-empts
 ## it, glide_to kills this tween and tweens from wherever the shake left the node — self-correcting.
-func _shake() -> void:
+## `dir` (an 8-way step) makes the wobble lunge TOWARD the struck tile for an attack; the default
+## Vector2i.ZERO is the symmetric horizontal jitter used by the rejection bonk.
+func _shake(dir: Vector2i = Vector2i.ZERO) -> void:
 	if _shake_tween != null and _shake_tween.is_valid():
 		_shake_tween.kill()
 	var base := position
+	# A directional lunge for an attack (toward → back), or the two-sided jitter for a bonk.
+	var offset := Vector2(dir.x, dir.y).normalized() * 3.0 if dir != Vector2i.ZERO else Vector2(2, 0)
 	_shake_tween = create_tween()
-	_shake_tween.tween_property(self, "position", base + Vector2(2, 0), 0.03)
-	_shake_tween.tween_property(self, "position", base - Vector2(2, 0), 0.03)
+	_shake_tween.tween_property(self, "position", base + offset, 0.03)
+	if dir == Vector2i.ZERO:
+		_shake_tween.tween_property(self, "position", base - offset, 0.03)
 	_shake_tween.tween_property(self, "position", base, 0.03)

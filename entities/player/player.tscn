@@ -40,3 +40,11 @@ stream = ExtResource("5_commit")
 
 [node name="Bonk" type="AudioStreamPlayer" parent="."]
 stream = ExtResource("6_bonk")
+
+[node name="Attack" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("5_commit")
+pitch_scale = 0.6
+
+[node name="Hit" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("6_bonk")
+pitch_scale = 1.4

@@ -1,0 +1,44 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://entities/monster/monster.gd" id="1_monster"]
+[ext_resource type="Texture2D" uid="uid://k8xc4gmji1nc" path="res://assets/32rogues/monsters.png" id="2_monsters"]
+[ext_resource type="Script" path="res://entities/monster/monster_brain.gd" id="3_brain"]
+[ext_resource type="AudioStream" path="res://assets/audio/commit_sent.wav" id="4_commit"]
+[ext_resource type="AudioStream" path="res://assets/audio/bonk.wav" id="5_bonk"]
+
+[node name="Monster" type="Node2D"]
+script = ExtResource("1_monster")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+texture_filter = 1
+texture = ExtResource("2_monsters")
+region_enabled = true
+region_rect = Rect2(64, 0, 32, 32)
+
+[node name="NameLabel" type="Label" parent="."]
+offset_left = -48.0
+offset_top = -38.0
+offset_right = 48.0
+offset_bottom = -18.0
+theme_override_font_sizes/font_size = 8
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="MonsterBrain" type="Node" parent="."]
+script = ExtResource("3_brain")
+
+[node name="Attack" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("4_commit")
+pitch_scale = 0.6
+
+[node name="Hit" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("5_bonk")
+pitch_scale = 1.4
+
+[node name="Windup" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("5_bonk")
+pitch_scale = 0.7
+
+[node name="Whiff" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("4_commit")
+pitch_scale = 0.4

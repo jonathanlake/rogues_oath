@@ -1,8 +1,10 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://main.gd" id="1_main"]
 [ext_resource type="Script" path="res://world/move_referee.gd" id="2_referee"]
 [ext_resource type="PackedScene" path="res://ui/debug_overlay/debug_overlay.tscn" id="3_overlay"]
+[ext_resource type="Script" path="res://world/combat_referee.gd" id="4_combat"]
+[ext_resource type="AudioStream" path="res://assets/audio/bonk.wav" id="5_bonk"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
@@ -20,10 +22,22 @@ color = Color(0.09, 0.09, 0.12, 1)
 
 [node name="Players" type="Node2D" parent="."]
 
+[node name="Monsters" type="Node2D" parent="."]
+
 [node name="MoveReferee" type="Node" parent="."]
 script = ExtResource("2_referee")
 
+[node name="CombatReferee" type="Node" parent="."]
+script = ExtResource("4_combat")
+
+[node name="DeathSfx" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("5_bonk")
+pitch_scale = 0.5
+
 [node name="MultiplayerSpawner" type="MultiplayerSpawner" parent="."]
 spawn_path = NodePath("../Players")
+
+[node name="MonsterSpawner" type="MultiplayerSpawner" parent="."]
+spawn_path = NodePath("../Monsters")
 
 [node name="DebugOverlay" parent="." instance=ExtResource("3_overlay")]

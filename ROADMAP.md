@@ -93,12 +93,18 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   **Done =** scripted numpad diagonal, stick steps, and a click-path bending around a
   pillar — all two-instance.
 
-- [ ] **M3 — First Blood** *(soft-blocked: Q1 death handling)* **[size M]**
-  One monster type as a `.tres` resource; telegraphed wind-up attack; two-step hit/miss
-  resolution with distinct per-outcome feedback + combat log (DESIGN §2.3); HP; death.
-  Death placeholder = spectate, **explicitly disposable** — Q1's real answer replaces it;
-  build nothing on top of it.
-  **Done =** a party fights and can lose someone.
+- [x] **M3 — First Blood** *(2026-07-18)* **[size M]**
+  One monster type as a `.tres` resource (Goblin — chases via the referee, whole-room
+  aggro placeholder); telegraphed TILE-commit wind-up (vacate to whiff — §2.3.3);
+  DETERMINISTIC resolution (RF3 baseline, Jeff — the planned hit/miss roll is PARKED in
+  §2.3.1) with distinct per-outcome feedback + combat log; HP (nameplate readouts); death.
+  Death placeholder = instant despawn + spectate log, **explicitly disposable** — Q1's
+  real answer replaces it; nothing is built on top of it.
+  **Done = verified 2026-07-18, two-instance:** bump kill (2×5 vs 10 HP), chase→wind-up→
+  hit, dodge=whiff (with the goblin's free attack punishing the flee — §2.2.6 composing),
+  AoO real damage, and a full party wipe (goblin killed host then client; session
+  survived). Player bump swing interval carries 0-0.25s retry jitter (~0.5-0.75s) — Jeff
+  feel-test pending; queued-attack-slot follow-up parked if it reads as lag.
 
 - [ ] **M4a — Dungeon Generation** **[size M]**
   Room-and-corridor generation (its own design pass first, per DESIGN §2.7); a goal/stairs

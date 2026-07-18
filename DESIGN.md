@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.3.5)
+# Rogue's Oath — Design Doc (v0.4)
 
 ## Part 1 — The Game
 
@@ -98,19 +98,33 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
 
 ### 2.3 Combat Resolution
 
-1. Two-step resolution per attack: (a) accuracy vs. evasion/resist → hit or miss; (b) if hit,
-   roll damage magnitude.
-2. All hit/evade/resist chances are passive, build-derived stats. Rolled silently, no player
-   input involved.
-3. Roll types (tentative): miss, crit, block, passive dodge, spell resist.
-4. Every distinct roll outcome has a distinct, unambiguous feedback signal (sound +
-   visual + combat log line). A player must never confuse "the roll failed" with "my input
-   didn't register." *(This rule extends to movement rejection — see 2.2.8.)*
+1. **Deterministic combat (decided 2026-07-18, Jeff via Discord + Jon — Rogue Fable III
+   baseline, which has no to-hit rolls):** every attack that resolves against a body lands
+   for its fixed damage. The original accuracy/evasion two-step roll and the roll-type list
+   (miss, crit, block, passive dodge, spell resist) are **PARKED** for the future
+   build-system pass — if rolls ever return, they return through that design, not by
+   default. Outcome variety comes from POSITION, not dice (see item 3).
+2. All combat stats are passive, build-derived numbers (v1: placeholder stat blocks scaled
+   from RF3 — player warrior 20 HP / 5 dmg, goblin 10 HP / 3 dmg — all designer-editable
+   resources).
+3. **Melee input = bump attack (decided Jeff, 2026-07-17):** gliding into a hostile's tile
+   commits an attack instead — the attacker stays in place with a small lunge + attack
+   sound, damage resolves at accept, and the attacker is committed for its swing duration.
+   **Monster attacks are telegraphed TILE commits:** the wind-up targets a tile, visibly,
+   for its full wind-up duration; at resolution it hits whatever hostile body occupies that
+   tile — vacate it and the attack WHIFFS; step into it and you eat the hit. The telegraph
+   commits to ground, not to a name ("decisions carry risk"). Attacks of opportunity
+   (2.2.6) resolve instantly through the same damage path.
+4. Every distinct outcome (hit, whiff, free attack, death) has a distinct, unambiguous
+   feedback signal (sound + visual + combat log line). A player must never confuse "the
+   attack missed" with "my input didn't register." *(This rule extends to movement
+   rejection — see 2.2.8.)*
 5. Combat presentation stays abstracted (targeted commands, no implied precise physical
    contact). Do not show pre-commit hit percentages.
-6. RNG budget: keep output randomness (roll swing) low-magnitude. Replayability comes
-   from input randomness — dungeon gen, loot, encounters — not from swingy rolls. A bad
-   roll should always leave the player a real next decision, never just erase a correct one.
+6. RNG budget (stands even under deterministic damage, for any future roll): keep output
+   randomness low-magnitude. Replayability comes from input randomness — dungeon gen,
+   loot, encounters — not from swingy rolls. A bad outcome should always leave the player
+   a real next decision, never just erase a correct one.
 
 ### 2.4 Periodic Effects (DoTs / HoTs / regen / buffs)
 
@@ -226,6 +240,12 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    costly revive (softens permadeath — touches the core pillar). Related sub-question the
    Commitment Rule forces: if a player dies mid-commit (killed by an AoO mid-swing,
    glides onto a trap), does the committed action still complete post-mortem?
+   *M3 (v0.4) shipped the DISPOSABLE placeholder — question stays OPEN:* death = instant
+   despawn + "You died." log + passive watching (nothing is built on it). Mid-commit
+   placeholder semantics: a dying entity's referee state (occupancy, glide, pending slot)
+   is erased synchronously; its in-flight visual snaps out; an attacker killed mid-wind-up
+   deals nothing; a mover killed by AoO mid-adjudication has its glide aborted. All of
+   these are placeholders Q1's real answer replaces.
 
 2. **Host disconnect policy.** Server-authoritative with a friend hosting means a host crash
    can erase a 50-minute run. Accept that consciously (and add it to 2.7), or define a
@@ -303,6 +323,14 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.4 (2026-07-18)** — M3 (First Blood): §2.3 rewritten for DETERMINISTIC combat (RF3
+  baseline, Jeff via Discord — accuracy/evasion rolls and roll types PARKED for the build
+  pass); bump attack (Jeff: move-into-enemy, in-place lunge) and monster TILE-commit
+  telegraphs specced (§2.3.3 — vacate to whiff, telegraph commits to ground); §2.2.6 AoO
+  now deals real damage with the alive/able gate; entity-id space (players > 0, monsters
+  < 0) behind the one referee occupancy; Q1 death placeholder shipped (instant despawn +
+  spectate log, disposable — question stays OPEN, mid-commit semantics recorded as
+  placeholder). RF3-scaled placeholder stats in resources (warrior 20/5, goblin 10/3).
 - **v0.3.5 (2026-07-18)** — Post-wire-session fix pass: §2.2.5 tap/hold rule (a key must be
   held `key_repeat_min_hold_sec` ≈0.18s before it feeds the pipeline; a tap is one committed
   step — fixes the pipeline's double-step tap and its early wall bonk); Q7 smoothness

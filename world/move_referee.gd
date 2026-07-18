@@ -33,11 +33,23 @@ const _NO_TILE := Vector2i(0, 0)
 # The Players container, handed in by Main via activate(). We read child Player nodes from it
 # (membership, the mover's GlideSpeed) but never reach up to Main — component pattern.
 var _players: Node2D = null
+# The Monsters container, handed in by Main via set_monsters() on the HOST only (a client's
+# referee is inert and never sets it). Monsters are seeded/cleaned via the same enter/exit hooks
+# as players and resolved through _node_of_id. Null on clients and until set_monsters runs.
+var _monsters: Node2D = null
+# The CombatReferee, handed in by Main via set_combat() on the HOST only (chunk 2). The two referees
+# are peers wired by Main (component pattern) and call each other ONLY through these references: this
+# referee asks combat to resolve bump/AoO damage and to test liveness; combat asks this one to erase
+# a dead entity's occupancy and to read a wind-up's target tile. Untyped (combat's script has no
+# class_name) so its calls resolve dynamically — locals off it are typed explicitly. Null on clients.
+var _combat = null
 
-# Authoritative occupancy: tile (Vector2i) -> peer_id. THE adjudication truth; a player node's
-# `tile` is only presentation. Seeded from each Player's spawn tile on child_entered_tree.
+# Authoritative occupancy: tile (Vector2i) -> ENTITY ID. THE adjudication truth; a node's `tile`
+# is only presentation. An entity id is a peer id (> 0) for a player or a host-assigned negative
+# int for a monster (plan decision 5) — one occupancy space, no overlap. Seeded from each entity's
+# spawn tile on child_entered_tree (players and monsters alike).
 var _occupied: Dictionary = {}
-# In-flight glides: peer_id -> {from: Vector2i, to: Vector2i, token: int}. Presence here IS the
+# In-flight glides: entity_id -> {from: Vector2i, to: Vector2i, token: int}. Presence here IS the
 # "already moving" state (the Commitment Rule backstop). The token disambiguates a stale
 # completion timer from a superseded/reconnected glide.
 var _gliding: Dictionary = {}
@@ -47,7 +59,9 @@ var _gliding: Dictionary = {}
 var _reserved: Dictionary = {}
 # Pending pipelined step: peer_id -> {from, to, duration}. At most ONE per mover — the next step,
 # adjudicated AT ACCEPT (origin = the current glide's destination) but its broadcast HELD until
-# that glide's completion boundary (_finish_glide promotes it).
+# that glide's completion boundary (_finish_glide promotes it). Players ONLY: the pipeline exists
+# to hide client RTT, and monsters (negative ids) are host-local brains with no RTT that think at
+# step boundaries — the pipelined branch gates on id > 0, so a monster never enters this slot.
 #
 # Adjudicate-at-accept is NOT a prediction under origin_frees_at_glide_start=true: occupancy
 # mutates ONLY at sequential accepts (the pending slot swaps _occupied immediately, one step
@@ -79,6 +93,36 @@ func activate(players: Node2D) -> void:
 	_players.child_exiting_tree.connect(_on_player_exiting)
 
 
+## Host-only, called by Main right after activate() and BEFORE the host spawns any monster — so the
+## monster enter hook seeds occupancy for every monster. Wires the Monsters container's membership
+## signals the same way activate() wires the Players container. Never called on clients (their
+## referee is inert), so _monsters stays null there.
+func set_monsters(monsters: Node2D) -> void:
+	_monsters = monsters
+	_monsters.child_entered_tree.connect(_on_monster_entered)
+	_monsters.child_exiting_tree.connect(_on_monster_exiting)
+
+
+## Host-only, called by Main right after the CombatReferee is activated and BEFORE any spawn — so
+## the bump/AoO paths and the wind-up commit have the combat reference the moment the first intent
+## is adjudicated. Null on clients (their referee is inert and never adjudicates).
+func set_combat(combat: Node) -> void:
+	_combat = combat
+
+
+## The one id -> node resolver (plan decision 5). Positive ids are players, negatives are monsters;
+## each resolves against its own container, or null if absent/off-host. Used everywhere the referee
+## needs the node behind an occupancy value. Node-typed on purpose — callers that need a concrete
+## field (glide_speed, player_name) read it dynamically, since a player and a monster share the
+## duck-typed surface the referee touches but not a common class.
+func _node_of_id(entity_id: int) -> Node:
+	if entity_id > 0:
+		return _players.get_node_or_null(str(entity_id))
+	if _monsters != null:
+		return _monsters.get_node_or_null(str(entity_id))
+	return null
+
+
 ## True if no body rests on, is gliding onto, or has reserved this tile — the single occupancy
 ## predicate, used by the validator and by Main's spawn-slot skip. Works for both origin-timing
 ## branches: in the true branch a glider sits at its destination in _occupied (origin already
@@ -86,6 +130,90 @@ func activate(players: Node2D) -> void:
 ## destination lives in _reserved, so the union covers both resting and in-flight bodies.
 func is_tile_free(tile: Vector2i) -> bool:
 	return not _occupied.has(tile) and not _reserved.has(tile)
+
+
+## Host-only entry for a MonsterBrain's decided step. Runs the SAME validator a player intent does
+## (host-local — no RPC; monsters have no RTT) and, on a clean accept, broadcasts the glide_to on
+## the entity's behalf so every peer plays it back. Returns true on accept, false on any refusal so
+## the brain can back off and re-think. A brain-submitted intent bypasses NetEvents._handle_intent
+## (which is what broadcasts a player's accepted verdict), so the referee must post the event here.
+##
+## Monsters never pipeline, so a deferred verdict can't occur here; if one somehow did it's an
+## invariant break (a monster wrongly holding a pending slot) — treat it as a non-accept.
+func submit_monster_intent(entity_id: int, dir: Vector2i) -> bool:
+	var verdict := _validate_glide(entity_id, { "dir": dir })
+	if not verdict.get("ok", false) or verdict.get("deferred", false):
+		return false
+	var data: Dictionary = verdict["data"]
+	NetEvents.post_event("glide_to", data, entity_id)
+	return true
+
+
+## Brain accessor: is this entity mid-glide right now? The referee's _gliding is the authoritative
+## "committed and moving" state (the same predicate that yields "already moving").
+func is_entity_moving(entity_id: int) -> bool:
+	return _gliding.has(entity_id)
+
+
+## Brain accessor: the tile this entity currently occupies in authoritative truth, or a wall
+## sentinel (0,0) if it holds none (untracked / despawned). (0,0) is a wall in every room, so no
+## live body ever rests there — callers treat a wall result as "gone".
+func tile_of_entity(entity_id: int) -> Vector2i:
+	return _tile_of_peer(entity_id)
+
+
+## Brain accessor: every player's authoritative tile (occupancy values > 0). Under conga timing a
+## gliding player's entry sits at its DESTINATION, so a chaser paths toward where the player is
+## heading — the honest read of the Commitment Rule (you can't dodge to a tile you've committed off).
+func player_tiles() -> Array[Vector2i]:
+	var tiles: Array[Vector2i] = []
+	for tile in _occupied:
+		if _occupied[tile] > 0:
+			tiles.append(tile)
+	return tiles
+
+
+## The authoritative entity id resting on / claiming a tile, or 0 (never a real id) if free. Used by
+## CombatReferee to resolve a wind-up's target-tile occupant. Mirrors is_tile_free's union: a body
+## sits in _occupied (both timing branches), or _reserved while gliding onto the tile (hold-origin).
+func entity_at(tile: Vector2i) -> int:
+	if _occupied.has(tile):
+		return _occupied[tile]
+	if _reserved.has(tile):
+		return _reserved[tile]
+	return 0
+
+
+## Host-only: record a from==to BUSY commit for an entity for `duration_sec`, with NO occupancy
+## mutation of any kind (the entity never leaves its tile — decision 2). The single shared busy-record
+## path for BOTH a player's bump swing and a monster's wind-up, so the "already moving" machinery has
+## exactly one authoring site. Presence in _gliding IS the busy state (is_entity_moving reads it);
+## the existing _finish_glide runs at the timer verbatim — it promotes a pending slot (a differently-
+## directed intent committed mid-swing → swing-then-move) or, with none, erases the record. Returns
+## false if the entity is already busy or untracked (the caller declines).
+func commit_in_place(entity_id: int, duration_sec: float) -> bool:
+	if _gliding.has(entity_id):
+		return false
+	var from := _tile_of_peer(entity_id)
+	if from == _NO_TILE:
+		return false
+	var token := _next_token
+	_next_token += 1
+	_gliding[entity_id] = { "from": from, "to": from, "token": token }
+	get_tree().create_timer(duration_sec).timeout.connect(_finish_glide.bind(entity_id, token))
+	return true
+
+
+## Host-only: erase ALL of a dead entity's occupancy bookkeeping in ONE synchronous pass (decision 7)
+## — occupancy by value, any in-flight glide, any pending slot, any reservation — so the instant a
+## kill resolves no stale record blocks another mover. Called by CombatReferee from inside
+## apply_damage, BEFORE it despawns the node; the container exit hooks fire later and are idempotent
+## (this reuses the very same erases, so re-erasing already-gone keys is a no-op).
+func clear_entity(entity_id: int) -> void:
+	_gliding.erase(entity_id)
+	_pending.erase(entity_id)
+	_erase_by_value(_occupied, entity_id)
+	_erase_by_value(_reserved, entity_id)
 
 
 # ── Private methods ───────────────────────────────────────────────────────────
@@ -96,8 +224,11 @@ func is_tile_free(tile: Vector2i) -> bool:
 ## already-moving → origin (from referee truth) → dest walkable → corner rule → dest free →
 ## stamp duration → mutate + accept. Returns { ok: false, reason } or { ok: true, data }.
 func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
-	# Membership: only a peer with a live player node is in the session (no pipe-level gate yet).
-	var mover := _players.get_node_or_null(str(sender_peer_id)) as Player
+	# Membership: only an entity with a live node is adjudicable — a player (positive id) or a
+	# monster (negative id), resolved through the one id -> node helper. Untyped on purpose so the
+	# duration/AoO reads below duck-type across player and monster. (`sender_peer_id` keeps its name
+	# for minimal churn; it is an entity id, positive OR negative, throughout this validator.)
+	var mover = _node_of_id(sender_peer_id)
 	if mover == null:
 		return { "ok": false, "reason": "not in session" }
 
@@ -110,6 +241,13 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	if dir == Vector2i.ZERO or absi(dir.x) > 1 or absi(dir.y) > 1:
 		return { "ok": false, "reason": "bad direction" }
 
+	# Liveness gate: a dead entity's in-flight intent (killed by an AoO while its RPC crossed the
+	# wire — the node still exists until queue_free lands) must reject cleanly, not adjudicate from
+	# erased occupancy or reach the bump path as a dead attacker. "dead" is log-suppressed like
+	# "already moving" (the died event already told the player everything).
+	if _combat != null and not _combat.is_alive(sender_peer_id):
+		return { "ok": false, "reason": "dead" }
+
 	# The Commitment Rule backstop and the pipeline gate. A mover already gliding may commit ONE
 	# next step into the pending slot (§2.2.5 amendment) — but only under the conga toggle, and
 	# only if the slot is free. A third intent (one gliding + one held) is the same "already
@@ -118,7 +256,10 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# step's origin, so walkable/corner/dest-free/duration all adjudicate against the right tile.
 	var is_pipelined := false
 	if _gliding.has(sender_peer_id):
-		if not GameManager.config.origin_frees_at_glide_start or _pending.has(sender_peer_id):
+		# Monsters (id <= 0) never pipeline: host-local brains have no RTT and only think at step
+		# boundaries, so a mid-glide monster intent is a bug/backstop and just gets "already moving"
+		# (the slot is players-only — see _pending). Players pipeline only under the conga toggle.
+		if sender_peer_id <= 0 or not GameManager.config.origin_frees_at_glide_start or _pending.has(sender_peer_id):
 			return { "ok": false, "reason": "already moving" }
 		is_pipelined = true
 
@@ -147,8 +288,20 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 			if not is_tile_free(flank_x) or not is_tile_free(flank_y):
 				return { "ok": false, "reason": "corner" }
 
-	# Destination must not be held by another body (resting, gliding-onto, or reserved).
+	# Destination must not be held by another body (resting, gliding-onto, or reserved). From IDLE
+	# ONLY (decision 1), a dest held by a hostile LIVING entity becomes a BUMP attack instead of a
+	# reject: move-into-enemy = attack. A PIPELINED intent into a held tile keeps the plain reject —
+	# the held slot never holds an attack, so there is no dead-target-at-boundary problem (and
+	# `is_pipelined` here is exactly "mid-glide", since the third-intent case already bonked above).
 	if not is_tile_free(to):
+		# sender > 0: only PLAYERS bump (M3 monsters attack solely via the telegraphed wind-up; the
+		# brain's adjacency branch fires before any step toward a player could be chosen — this is
+		# the structural backstop that keeps a monster intent from ever dealing bump damage).
+		if not is_pipelined and sender_peer_id > 0 and _combat != null:
+			var occupant_id := entity_at(to)
+			var occupant := _node_of_id(occupant_id)
+			if occupant != null and _combat.is_alive(occupant_id) and mover.is_hostile_to(occupant):
+				return _begin_bump(sender_peer_id, mover, occupant_id, occupant)
 		return { "ok": false, "reason": "occupied" }
 
 	# Duration is stamped ONCE here (base × diagonal multiplier) and drives BOTH the host's
@@ -172,9 +325,14 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# each hostile adjacent to the origin. Fired at verdict time, BEFORE the occupancy mutation below
 	# — the mover must still be counted at `from` (§2.2.6 "starting a glide out of a tile"), and in
 	# the conga branch the swap that follows erases `from` and claims `to`, which would change the
-	# adjacency this scan reads. Names are resolved host-side from the player nodes; no wire name is
-	# ever trusted or carried through.
-	_trigger_attacks_of_opportunity(from, sender_peer_id, mover)
+	# adjacency this scan reads. Names/damage are resolved host-side; no wire value is ever trusted.
+	#
+	# Chunk 2 makes AoO REAL damage in BOTH directions (decision 4): the chunk-1 player-only guard
+	# is gone (monsters take AND deal AoO now), occupants resolve via _node_of_id, and the scan can
+	# KILL the mover. If it does, the glide is aborted here — no occupancy mutation, no broadcast,
+	# reject "dead" (Q1 placeholder: does a committed action complete post-mortem? — parked OPEN).
+	if _trigger_attacks_of_opportunity(from, sender_peer_id, mover):
+		return { "ok": false, "reason": "dead" }
 
 	# Mutate occupancy and record the glide, branching on the origin-timing toggle. Both branches
 	# live only here — clients never touch this state.
@@ -197,8 +355,9 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 
 ## Compute a step's glide time: the mover's tier (or the warned fallback if it has none), then
 ## the diagonal multiplier for a diagonal step, and the debug override — when set — replaces the
-## base BEFORE the multiplier so a diagonal debug step still stamps override × multiplier.
-func _step_duration(mover: Player, dir: Vector2i) -> float:
+## base BEFORE the multiplier so a diagonal debug step still stamps override × multiplier. `mover`
+## is untyped: a Player or a Monster, both of which expose glide_speed (the referee reads only that).
+func _step_duration(mover, dir: Vector2i) -> float:
 	var base := fallback_glide_duration_sec
 	if mover.glide_speed == null:
 		if not _warned_null_speed:
@@ -213,12 +372,34 @@ func _step_duration(mover: Player, dir: Vector2i) -> float:
 	return base
 
 
-## Attack-of-opportunity scan (host-only, DESIGN §2.2.6). For each of the origin's 8 neighbours
-## holding a body, if that occupant's player node is hostile to the mover the host AUTHORS a
-## `free_attack` event on the pipe (peer=0, via NetEvents.post_event) — the wiring only, no damage:
-## M2 proves the trigger fires; combat resolution arrives in M3. Names are read from the player
-## nodes host-side, never carried from the wire.
-func _trigger_attacks_of_opportunity(from: Vector2i, mover_peer_id: int, mover: Player) -> void:
+## Begin a BUMP attack (host-only, decision 1+2). The idle mover moves INTO a hostile living tile:
+## damage applies instantly (deterministic), then the attacker is BUSY for its swing duration via the
+## shared from==to commit — NO occupancy mutation (the attacker never leaves its tile), NO glide_to
+## broadcast (the returned `deferred` verdict suppresses it). CombatReferee.apply_damage posts the
+## `attack` event that drives all feedback. The busy record's timer runs the existing _finish_glide,
+## which promotes a differently-directed intent committed mid-swing (swing-then-move) or erases the
+## record. Damage/duration come from the combat referee (stats live in ONE place); `attacker` is
+## untyped so the reads duck-type across player (the only M3 bumper) and a future monster bumper.
+func _begin_bump(attacker_id: int, attacker, target_id: int, target) -> Dictionary:
+	var damage: int = _combat.damage_of(attacker)
+	var duration: float = _combat.bump_duration_of(attacker)
+	commit_in_place(attacker_id, duration)
+	_combat.apply_damage(attacker_id, target_id, damage, "bump", duration)
+	return { "ok": true, "deferred": true }
+
+
+## Attack-of-opportunity scan (host-only, DESIGN §2.2.6, decision 4). For each of the origin's 8
+## neighbours holding a body, an alive + hostile occupant gets a REAL free attack (instant, no
+## wind-up — an opportunity strike) via CombatReferee.apply_damage(kind "free"). Returns whether the
+## MOVER died mid-scan so the caller can abort its glide. Mid-scan death safety: SNAPSHOT the attacker
+## list before applying any damage (apply_damage mutates _occupied on a kill — never iterate + mutate),
+## then apply in order, stopping the instant the mover is dead. Occupants resolve via _node_of_id, so
+## a monster deals AoO and a monster mover takes it (both guards lifted from chunk 1).
+func _trigger_attacks_of_opportunity(from: Vector2i, mover_peer_id: int, mover) -> bool:
+	if _combat == null:
+		return false
+	# Snapshot phase: collect the eligible attacker ids from CURRENT occupancy, touching nothing.
+	var attackers: Array[int] = []
 	for dy in [-1, 0, 1]:
 		for dx in [-1, 0, 1]:
 			if dx == 0 and dy == 0:
@@ -226,20 +407,29 @@ func _trigger_attacks_of_opportunity(from: Vector2i, mover_peer_id: int, mover: 
 			var neighbor := from + Vector2i(dx, dy)
 			if not _occupied.has(neighbor):
 				continue
-			var occupant_peer: int = _occupied[neighbor]
-			var occupant := _players.get_node_or_null(str(occupant_peer)) as Player
+			var occupant_id: int = _occupied[neighbor]
+			var occupant := _node_of_id(occupant_id)
 			if occupant == null:
 				continue
-			# M3 adds the "alive and able to act" qualifiers here (§2.2.6) — trivially true in M2
-			# (no HP, no incapacitation yet), so every hostile neighbour gets its free attack.
+			# §2.2.6 "alive and able to act": a dead neighbour deals nothing.
+			if not _combat.is_alive(occupant_id):
+				continue
 			if not occupant.is_hostile_to(mover):
 				continue
-			NetEvents.post_event("free_attack", {
-				"attacker_peer": occupant_peer,
-				"attacker_name": occupant.player_name,
-				"target_peer": mover_peer_id,
-				"target_name": mover.player_name,
-			})
+			attackers.append(occupant_id)
+	# Apply phase: each snapshotted attacker strikes, in order. Re-check liveness (an earlier strike
+	# in this same scan could in principle have killed a later attacker), and stop once the mover
+	# dies — a corpse takes no further free hits, and apply_damage already tore its state down.
+	for occupant_id in attackers:
+		if not is_instance_valid(_node_of_id(occupant_id)) or not _combat.is_alive(occupant_id):
+			continue
+		if not _combat.is_alive(mover_peer_id):
+			return true
+		var occupant := _node_of_id(occupant_id)
+		var mover_died: bool = _combat.apply_damage(occupant_id, mover_peer_id, _combat.damage_of(occupant), "free", 0.0)
+		if mover_died:
+			return true
+	return false
 
 
 ## Completion timer callback. Stale-guard: only finalize if the peer's current glide is still the
@@ -271,8 +461,9 @@ func _finish_glide(peer_id: int, token: int) -> void:
 		var duration: float = slot["duration"]
 		# Re-resolve the mover: exit cleanup erases the slot, so a live pending slot should always
 		# have a live node — a miss is a real invariant break, worth a log line, never a silent
-		# no-op. Erase the stale _gliding record and bail defensively.
-		var mover := _players.get_node_or_null(str(peer_id)) as Player
+		# no-op. Erase the stale _gliding record and bail defensively. Pending is players-only, so
+		# this id is always positive and _node_of_id lands in the Players container.
+		var mover := _node_of_id(peer_id) as Player
 		if mover == null:
 			push_warning("[MoveReferee] pending slot for peer %d has no node — dropping" % peer_id)
 			_gliding.erase(peer_id)
@@ -283,12 +474,16 @@ func _finish_glide(peer_id: int, token: int) -> void:
 		# AoO fires at the moment the step actually STARTS (boundary-time adjacency — the honest
 		# §2.2.6 read for a deferred step). This INVERTS the fire-before-mutation note on the idle
 		# path (there the swap has not happened yet); here occupancy swapped at accept, so `from`
-		# is the tile the mover is leaving right now.
-		_trigger_attacks_of_opportunity(from, peer_id, mover)
+		# is the tile the mover is leaving right now. If the AoO KILLS the mover at this boundary,
+		# apply_damage already erased its occupancy (the pre-claimed dest) and despawned it via
+		# clear_entity — nothing to promote or broadcast, so bail (decision 4, boundary case).
+		if _trigger_attacks_of_opportunity(from, peer_id, mover):
+			_gliding.erase(peer_id)
+			return
 		# Promote to a live glide with a FRESH token + timer. The full _gliding record must be in
 		# place BEFORE the broadcast: post_event is call_local, so on the host it re-enters the
 		# event path synchronously and any handler that reads referee state must see consistent
-		# truth. AoO's free_attack sits at the lower seq, same relative order as the idle path.
+		# truth. AoO's attack events sit at the lower seq, same relative order as the idle path.
 		var next_token := _next_token
 		_next_token += 1
 		_gliding[peer_id] = { "from": from, "to": to, "token": next_token }
@@ -328,6 +523,27 @@ func _on_player_exiting(node: Node) -> void:
 	_pending.erase(peer_id)
 	_erase_by_value(_occupied, peer_id)
 	_erase_by_value(_reserved, peer_id)
+
+
+## Seed occupancy as a Monster enters the tree. monster.tile is set by Main's spawn_function before
+## the node enters, so it's the server-derived spawn tile here — the mirror of _on_player_entered,
+## keyed on the monster's negative entity id.
+func _on_monster_entered(node: Node) -> void:
+	if node is Monster:
+		_occupied[node.tile] = node.entity_id
+
+
+## Forget a monster wholesale as its node leaves (despawn / teardown): drop its resting tile and any
+## in-flight glide. Monsters never enter _pending (guarded above) or _reserved under conga, but the
+## erases are harmless no-ops there, keeping this symmetric with _on_player_exiting.
+func _on_monster_exiting(node: Node) -> void:
+	if not (node is Monster):
+		return
+	var entity_id: int = node.entity_id
+	_gliding.erase(entity_id)
+	_pending.erase(entity_id)
+	_erase_by_value(_occupied, entity_id)
+	_erase_by_value(_reserved, entity_id)
 
 
 ## Remove every tile->peer entry whose value is this peer (a peer holds at most one of each, but

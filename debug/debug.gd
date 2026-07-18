@@ -138,10 +138,18 @@ func _ready() -> void:
 	# host-only glide-duration override (seconds); inert on the client and without the arg.
 	# Stretches every glide's base step time so conga/timing tests are scriptable + observable.
 	var glide_override := 0.0
+	# host-only wind-up-duration override (seconds); inert on the client and without the arg.
+	# Exact mirror of glide_override: stretches every monster wind-up's telegraph window so the
+	# dodge=whiff test (verification 3) is deterministic — stand until the windup event, then move.
+	var windup_override := 0.0
 	# host-only AoO demo knob (inert on the client, inert without the arg): hostile=1 makes every
 	# entity mutually hostile so a glide out of an adjacent tile fires the free_attack event — the
 	# two-instance demo of the attack-of-opportunity wiring before monsters exist (M3).
 	var all_hostile := false
+	# host-only monster knob (inert on the client): goblin=1 opts THIS autostart run into spawning
+	# M3's goblin. Default off so existing movement harness runs stay monster-free; menu play spawns
+	# it regardless (GameManager.spawn_monsters defaults true — the autostart host below overrides).
+	var spawn_goblin := false
 	for arg in args:
 		if arg.begins_with("screenshot="):
 			_schedule_screenshot(arg.trim_prefix("screenshot="))
@@ -165,6 +173,8 @@ func _ready() -> void:
 			_move_wait_sec = arg.trim_prefix("movewait=").to_float()
 		elif arg.begins_with("glidesec="):
 			glide_override = arg.trim_prefix("glidesec=").to_float()
+		elif arg.begins_with("windupsec="):
+			windup_override = arg.trim_prefix("windupsec=").to_float()
 		elif arg.begins_with("hold="):
 			_parse_hold(arg.trim_prefix("hold="))
 		elif arg.begins_with("holdsec="):
@@ -186,6 +196,8 @@ func _ready() -> void:
 			GameManager.debug_overlay_start_visible = arg.trim_prefix("overlay=").to_int() != 0
 		elif arg.begins_with("hostile="):
 			all_hostile = arg.trim_prefix("hostile=").to_int() != 0
+		elif arg.begins_with("goblin="):
+			spawn_goblin = arg.trim_prefix("goblin=").to_int() != 0
 
 	if not (is_host or is_client):
 		return
@@ -208,10 +220,19 @@ func _ready() -> void:
 		# so setting it any time before the moves fire is enough. Inert on the client.
 		if glide_override > 0.0:
 			GameManager.debug_glide_override_sec = glide_override
+		# windupsec= is host-only: the combat referee reads the override live when it stamps each
+		# wind-up, so setting it before the goblin engages is enough. Inert on the client — and an
+		# independent knob, NOT nested under glidesec= (each stretches its own timing alone).
+		if windup_override > 0.0:
+			GameManager.debug_windup_override_sec = windup_override
 		# hostile= is host-only: set the AoO demo flag before host_game() so the referee reads it
 		# the moment it adjudicates the first glide. Inert on the client and without the arg.
 		if all_hostile:
 			GameManager.all_hostile = true
+		# goblin= is host-only: the autostart run is monster-free unless opted in, so movement
+		# harness runs (move=/hold=/tap=/click=) keep their clean occupancy. Set before host_game()
+		# so Main reads it when it seeds the world. Inert on the client.
+		GameManager.spawn_monsters = spawn_goblin
 		print("[Debug] autostart: hosting on port %d" % NetworkManager.DEFAULT_PORT)
 		if NetworkManager.host_game() != OK:
 			push_error("[Debug] autostart host failed")

@@ -107,12 +107,43 @@ func _on_event_received(event: Dictionary) -> void:
 			var display_name := _escape_bbcode(str(data.get("name", "")))
 			var body := _escape_bbcode(str(data.get("text", "")))
 			_append_markup("[b]%s[/b]: %s" % [display_name, body])
-		"free_attack":
-			# Combat-log line for the attack-of-opportunity trigger (DESIGN §2.2.6 / §2.3.4). The
-			# names are server-resolved, but they STILL go through add_line's sink escape — the file's
-			# rule is escape-at-render regardless of source, no "trusted" bypass.
-			add_line("%s gets a free attack on %s." % [
-				str(data.get("attacker_name", "")), str(data.get("target_name", ""))])
+		"attack":
+			# One combat-log line per landed/whiffed attack (§2.3.4 — every distinct outcome its own
+			# line). The free-attack (attack-of-opportunity) case folds in here as kind "free". Names
+			# are server-resolved but STILL go through add_line's sink escape — the file's rule is
+			# escape-at-render regardless of source, no "trusted" bypass.
+			_log_attack(data)
+		"windup":
+			# The telegraph tell (§2.3.4): a distinct "winding up" line so the wind-up is legible in
+			# the log, not only on-screen.
+			add_line("%s winds up..." % str(data.get("name", "")))
+		"died":
+			# Death line (§2.3.4). The dying entity's OWN client gets a second-person line so a
+			# player knows it was them (their node is already gone — this is the spectate placeholder,
+			# Q1). entity_id is the peer/monster id; a positive one matching us is our own player.
+			if int(data.get("entity_id", 0)) == multiplayer.get_unique_id():
+				add_line("You died.")
+			else:
+				add_line("%s dies." % str(data.get("name", "")))
+
+
+## Compose the combat-log line for one `attack` event, one distinct phrasing per outcome (§2.3.4):
+## a whiff ("hits nothing"), a free attack (AoO flavor), or a normal landed hit with the running HP
+## readout. All names/numbers flow through add_line, which escapes at the sink.
+func _log_attack(data: Dictionary) -> void:
+	var attacker_name := str(data.get("attacker_name", ""))
+	if bool(data.get("whiff", false)):
+		add_line("%s's attack hits nothing." % attacker_name)
+		return
+	var target_name := str(data.get("target_name", ""))
+	var damage := int(data.get("damage", 0))
+	if str(data.get("kind", "")) == "free":
+		add_line("%s gets a free attack on %s — %d damage." % [attacker_name, target_name, damage])
+		return
+	# A landed bump or wind-up hit, with the target's running HP after the blow.
+	add_line("%s hits %s for %d (%d/%d)." % [
+		attacker_name, target_name, damage,
+		int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
 
 
 func _on_intent_rejected(action: String, reason: String) -> void:
@@ -137,6 +168,11 @@ func _log_glide_reject(reason: String) -> void:
 		"occupied":
 			add_line("Blocked — someone's there.")
 		"already moving":
+			pass
+		"dead":
+			# The mover was killed by an attack of opportunity mid-adjudication (decision 4, Q1
+			# placeholder). Suppress the reject line — the `died` event already logged "You died.",
+			# and "Move rejected (dead)" would be confusing noise on top of it.
 			pass
 		_:
 			add_line("Move rejected (%s)." % reason)

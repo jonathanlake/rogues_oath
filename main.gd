@@ -11,7 +11,18 @@ extends Node2D
 # Brand-new scenes: referenced by res:// path until the editor assigns them a uid. Immutable,
 # so const (consts legitimately precede @export in script order).
 const PLAYER_SCENE: PackedScene = preload("res://entities/player/player.tscn")
+const MONSTER_SCENE: PackedScene = preload("res://entities/monster/monster.tscn")
 const GAME_LOG_SCENE: PackedScene = preload("res://ui/game_log/game_log.tscn")
+
+# The one monster kind for M3, loaded per-peer from this PATH (the spawn config carries the path,
+# never a Resource over the wire — every peer loads the same authored .tres). Brand-new resource:
+# referenced by res:// path until the editor assigns it a uid.
+const GOBLIN_TYPE_PATH := "res://resources/monsters/goblin.tres"
+
+# The single goblin's spawn tile (plan §Chunk 1). Map-coupled: the spawn is guarded by
+# is_walkable + is_tile_free so a future room edit that walls this tile skips the spawn instead of
+# dropping a goblin into a wall.
+const GOBLIN_SPAWN_TILE := Vector2i(16, 8)
 
 # Room presentation. The $Room TileMapLayer is painted at runtime FROM WorldGrid (the logical
 # truth) — no authored TileSet .tres, since the room is a disposable prototype fixture. Atlas
@@ -48,10 +59,22 @@ const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN
 
 @onready var _spawner: MultiplayerSpawner = $MultiplayerSpawner
 @onready var _players: Node2D = $Players
+# Monster replication, mirroring the player spawner/container. Present on every peer; the host
+# authors monster spawns, clients just play back the replicated nodes. The container is resolved on
+# all peers (glide events for monsters animate their node everywhere), the spawner drives from host.
+@onready var _monster_spawner: MultiplayerSpawner = $MonsterSpawner
+@onready var _monsters: Node2D = $Monsters
 # Host-only movement brain. Present on every peer (it's in main.tscn) but activated ONLY inside
 # the is_server() branch below, so a client's referee stays inert. Held so the spawn path can ask
 # it whether a slot's tile is free before assigning it.
 @onready var _referee := $MoveReferee
+# Host-only combat authority (HP / damage / death), beside the movement referee. Same inert-on-
+# clients contract — activate() runs only in the is_server() branch. Held so the monster spawn path
+# can hand it to each brain and the late-join snap can query liveness.
+@onready var _combat := $CombatReferee
+# Death SFX (placeholder — pitch-shifted bonk). Played on every peer from the `died` event, at Main
+# level because the dying entity's own node vanishes with the event (can't play a sound on a freed node).
+@onready var _death_sfx: AudioStreamPlayer = $DeathSfx
 
 # Chat/combat log, added on every peer in _ready. Held so spawn/disconnect can post system
 # lines through it. Set before the host spawns its own player so that spawn's "joined." lands.
@@ -59,6 +82,9 @@ var _game_log: Node = null
 
 # Host-only: peer_id -> spawn slot index, so a disconnect frees the slot for reuse.
 var _slots: Dictionary = {}
+# Host-only monotonic monster id source (plan decision 5): each monster gets the next NEGATIVE int,
+# so monster ids never collide with peer ids (always positive) in the referee's one occupancy space.
+var _next_monster_id: int = -1
 # Teardown guard. Suppresses the child_exiting_tree "X left." spam when players leave because
 # the SESSION is ending (returning to menu, app quit) rather than one peer disconnecting.
 # INVARIANT: any deliberate session-teardown path added later (host quit-to-menu, etc.) MUST
@@ -111,6 +137,25 @@ func _ready() -> void:
 		_game_log.add_line("%s joined." % player.player_name)
 		return player
 
+	# Monster spawn_function, on EVERY peer with the same replicated config, so the avatar matches
+	# everywhere. The config carries the type PATH (not a Resource) + host-assigned entity id + tile;
+	# every peer loads the same .tres and derives the same sprite/position. The brain is activated
+	# ONLY on the host (deferred so the referee's enter hook has seeded occupancy and _ready has run
+	# before the first think) — a client's brain stays inert.
+	_monster_spawner.spawn_function = func(data):
+		var monster := MONSTER_SCENE.instantiate() as Monster
+		monster.name = str(data.entity_id)
+		monster.entity_id = int(data.entity_id)
+		monster.monster_type = load(data.type_path) as MonsterType
+		var tile: Vector2i = data.tile
+		monster.tile = tile
+		monster.position = WorldGrid.tile_to_world(tile)
+		if multiplayer.is_server():
+			monster.activate_brain.call_deferred(_referee, _combat)
+		print("[peer %d] spawned monster '%s' (entity %d) at tile %s" % [
+			multiplayer.get_unique_id(), monster.name, monster.entity_id, tile])
+		return monster
+
 	# Movement, on EVERY peer: play back accepted glide events, and bonk our own player when the
 	# host refuses ours. Chat events flow to the game log via its own connection; these two hooks
 	# handle only "glide_to" (accept) and glide rejects (sender-only).
@@ -129,12 +174,30 @@ func _ready() -> void:
 		# Host-only: hand the movement referee the Players container BEFORE spawning the host's own
 		# player, so its child_entered_tree seeds occupancy for every player including the host's.
 		_referee.activate(_players)
+		# Host-only: hand it the Monsters container too, BEFORE spawning any monster, so the monster
+		# enter hook seeds occupancy for the goblin. set_monsters connects the referee's seed hook
+		# first; the goblin spawns later in this same _ready, after the host's own player.
+		_referee.set_monsters(_monsters)
+		# Host-only: activate the combat referee AFTER the movement referee is set up and BEFORE any
+		# spawn — its container enter hooks then seed HP for every entity (host player + goblin), and
+		# the two referees hold each other's references so bump/AoO/wind-up/death can cross-call. Then
+		# hand the movement referee the combat reference so its first adjudication has it.
+		_combat.activate(_players, _monsters, _referee)
+		_referee.set_combat(_combat)
+		# Host-only: snap autonomous movers to truth for a late joiner (no event replay exists,
+		# §2.7). Fires as each new PLAYER node enters; wired here before the host's own player spawns.
+		_players.child_entered_tree.connect(_on_player_spawned_host)
 		# Host-only: the chat referee. Strip, reject empty, clamp, and resolve the sender's
 		# display name server-side (never from the payload) into the broadcast event's data.
 		NetEvents.register_handler("chat", _validate_chat)
 		print("[HOST] server started (peer %d) — spawning host player" % multiplayer.get_unique_id())
 		# Spawn the host's own player immediately — no RPC needed.
 		_spawner.spawn(_spawn_config(multiplayer.get_unique_id(), GameManager.player_name))
+		# Host-only: seed the world with M3's single goblin, AFTER the host player so occupancy is
+		# already populated for the is_tile_free guard. Off by default in the autostart harness
+		# (goblin= knob); on by default for menu play (GameManager.spawn_monsters).
+		if GameManager.spawn_monsters:
+			_spawn_goblin()
 		NetworkManager.peer_connected.connect(_on_peer_connected)
 		NetworkManager.peer_disconnected.connect(_on_peer_disconnected)
 	else:
@@ -161,17 +224,125 @@ func _notification(what: int) -> void:
 		_leaving = true
 
 
-## All peers: play back an accepted glide. Chat events go to the game log via its own hook; this
-## reacts only to "glide_to". The event's `peer` is the mover, so every peer animates that mover's
-## node — including the mover's own instance, where the glide begins ONLY now (no client predict).
+## All peers: play back a broadcast gameplay event. Chat + combat-LOG lines go to the game log via
+## its own hook; this drives the NODE-side presentation (movement + combat feedback). The event's
+## `peer`/ids identify the mover/attacker/target; every peer animates the same nodes from the one
+## ordered stream — no client prediction (the glide/hit begins ONLY now).
 func _on_net_event(event: Dictionary) -> void:
-	if event.get("action", "") != "glide_to":
-		return
-	var mover := _players.get_node_or_null(str(event.get("peer", 0))) as Player
+	match str(event.get("action", "")):
+		"glide_to":
+			_handle_glide_event(event)
+		"attack":
+			_handle_attack_event(event)
+		"windup":
+			_handle_windup_event(event)
+		"died":
+			_handle_died_event(event)
+
+
+## Play back an accepted glide. Resolve the mover by entity id: positive is a player, negative a
+## monster (its glide rides the same event path, posted by the referee with as_peer = the negative
+## id). Both nodes expose glide_to(to, duration_sec), so one call animates either.
+func _handle_glide_event(event: Dictionary) -> void:
+	var mover = _node_for_peer(int(event.get("peer", 0)))
 	if mover == null:
 		return
 	var data: Dictionary = event.get("data", {})
 	mover.glide_to(data.get("to"), float(data.get("duration_sec", 0.0)))
+
+
+## Play back a landed (or whiffed) attack (§2.3.4). All peers: the attacker lunges toward the target
+## + swing sound; on a real hit the target red-flashes and its nameplate updates from hp_after. On a
+## whiff (a resolved wind-up against empty ground) only the attacker's swing plays. Additionally, on
+## the LOCAL player's OWN bump, drive its busy/blocked window (decision 2) — the bump adjudicated as a
+## `deferred` verdict, so this event (not a glide_to) is what clears the input latch and holds the swing.
+func _handle_attack_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var attacker_id := int(data.get("attacker_id", 0))
+	var target_id := int(data.get("target_id", 0))
+	var kind := str(data.get("kind", ""))
+	var whiff := bool(data.get("whiff", false))
+	var attacker = _node_for_peer(attacker_id)
+	var target = _node_for_peer(target_id)
+	# Direction of the strike, for the attacker's directional lunge. Prefer the two nodes' tiles; on
+	# a whiff (no target node) fall back to the event's committed target_tile.
+	var dir := Vector2i.ZERO
+	if attacker != null:
+		if target != null:
+			dir = _step_sign(target.tile - attacker.tile)
+		elif data.has("target_tile"):
+			dir = _step_sign((data.get("target_tile") as Vector2i) - attacker.tile)
+	if whiff:
+		if attacker != null:
+			attacker.play_whiff(dir)
+	else:
+		if attacker != null:
+			attacker.play_attack(dir)
+		if target != null:
+			target.play_hurt()
+			target.set_hp_display(int(data.get("hp_after", 0)), int(data.get("target_max", 0)))
+	# Local attacker's swing-busy mirror for a bump (decision 2) — players only (positive id).
+	if kind == "bump" and attacker_id == multiplayer.get_unique_id() and attacker != null:
+		attacker.commit_in_place(float(data.get("duration_sec", 0.0)))
+
+
+## Play back a monster wind-up telegraph (§2.3.4): the monster yellow-flashes + a telegraph sound on
+## every peer, rendered on the monster node (the log line comes from game_log). Clients render the
+## tell from the authoritative event, never locally-inferred facing.
+func _handle_windup_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var monster = _node_for_peer(int(data.get("entity_id", 0)))
+	if monster != null:
+		monster.play_windup()
+
+
+## Play back a death (§2.3.4): the death sound on every peer (Main-level — the node itself vanishes
+## with the spawner despawn the host authored). The game-log line comes from game_log's own handler,
+## and the node's disappearance is the visual.
+func _handle_died_event(_event: Dictionary) -> void:
+	_death_sfx.play()
+
+
+## Host-only: a new PLAYER node just entered — mend autonomous-mover state for a possible late joiner.
+## No late-join event replay exists (§2.7, by design), so a client that joined after the goblin moved
+## renders it at its stale spawn-config tile. Post one micro snap glide_to per LIVING monster (from ==
+## to == its authoritative tile, 0.05s) on the normal event path (as_peer = monster id): the joiner's
+## stale node glides to truth, everyone else no-ops a same-tile micro-glide. Players are NOT snapped
+## (out of scope — they sit at spawn during the join window by convention). Minimal §2.7-compliant mend.
+func _on_player_spawned_host(node: Node) -> void:
+	if not (node is Player):
+		return
+	for m in _monsters.get_children():
+		if not (m is Monster):
+			continue
+		if not _combat.is_alive(m.entity_id):
+			continue
+		var cur: Vector2i = _referee.tile_of_entity(m.entity_id)
+		if WorldGrid.is_wall(cur):
+			continue  # untracked / despawning — no truth to snap to
+		# Snap only IDLE monsters: post_event broadcasts to everyone, and a snap landing on a
+		# mid-glide monster would kill its running tween on every EXISTING peer (a visible pop).
+		# A gliding monster self-corrects for the joiner anyway: its very next glide event tweens
+		# from wherever the stale node renders to the true destination (idempotent-late-safe).
+		if _referee.is_entity_moving(m.entity_id):
+			continue
+		NetEvents.post_event("glide_to", { "from": cur, "to": cur, "duration_sec": 0.05 }, m.entity_id)
+
+
+## Sign of each axis of a delta, clamped to an 8-way step {-1,0,1}² — used to point an attacker's
+## directional lunge at its target without assuming the two are exactly one tile apart.
+func _step_sign(delta: Vector2i) -> Vector2i:
+	return Vector2i(signi(delta.x), signi(delta.y))
+
+
+## All peers: resolve an entity id to its avatar node — players in $Players, monsters (negative id)
+## in $Monsters. Both containers are plain scene nodes present on every peer, so this works on the
+## client (where the referee is inert) too. The referee has its own id->node helper for host-side
+## adjudication; this is the presentation-side mirror.
+func _node_for_peer(entity_id: int) -> Node:
+	if entity_id < 0:
+		return _monsters.get_node_or_null(str(entity_id))
+	return _players.get_node_or_null(str(entity_id))
 
 
 ## Sender only: the host refused our glide. Bonk our OWN player (§2.3.4 — the sound+visual half;
@@ -244,6 +415,24 @@ func _end_session(reason: String) -> void:
 # support (a same-frame kick drops the reliable reason packet) and is parked.
 func _on_server_disconnected() -> void:
 	_end_session("Disconnected from host.")
+
+
+## Host-only. Spawn M3's single goblin at its map-coupled tile, guarded so a future room edit that
+## walls or fills the tile skips the spawn (push_warning) instead of dropping a goblin into a wall
+## or onto a body. The entity id is the next negative int; the config carries the type PATH so every
+## peer loads the same authored .tres (never a Resource over the wire).
+func _spawn_goblin() -> void:
+	var tile := GOBLIN_SPAWN_TILE
+	if not WorldGrid.is_walkable(tile) or not _referee.is_tile_free(tile):
+		push_warning("[Main] goblin spawn tile %s not walkable/free — skipping (map-coupled)" % tile)
+		return
+	var entity_id := _next_monster_id
+	_next_monster_id -= 1
+	_monster_spawner.spawn({
+		"entity_id": entity_id,
+		"type_path": GOBLIN_TYPE_PATH,
+		"tile": tile,
+	})
 
 
 ## Host-only. Builds the replicated spawn config. spawn_index is the server-assigned slot;
