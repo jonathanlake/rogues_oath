@@ -260,9 +260,13 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    (by exactly one server-held slot) but preserves its intent — no free back-outs, every
    slotted step is a commitment. It is DISTINCT from client-side prediction, which stays
    rejected per 2.2.8: contested tile adjudication makes a misprediction gameplay-wrong,
-   not cosmetic. Awaiting real latency numbers from the F3 overlay (next wire session) +
-   Jeff. Related: the §2.2.9 walk-rule tightening — same cancel-authority axis, review
-   together.
+   not cosmetic. Related: the §2.2.9 walk-rule tightening — same cancel-authority axis,
+   review together.
+   **ANSWERED (Jeff via Jon, 2026-07-18): pipelined next step approved** — one server-held
+   slot, committed on accept, started (and broadcast) only when the current glide
+   completes. Amends 2.2.5 by exactly one slot; no cancel path is created. The 2.2.5 text
+   amendment (plus 2.5.3's "idle or inside a known, finite action" wording) and the full
+   write-up land with the implementation — see HANDOFF.md until then.
 
 ---
 
