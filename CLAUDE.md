@@ -98,6 +98,8 @@ Consistency, not law:
   `.gd.uid` files.
 - For engine behavior, check version-current Godot docs before inventing a workaround —
   a failed "this should be trivial" fix is the trigger to research, not to add complexity.
+  Local ground truth: the Godot 4.7-stable class reference lives at `../godot-ref/doc/classes/`
+  and `../godot-ref/modules/*/doc_classes/` — grep it whenever unsure about an API.
 - Build versioning: `application/config/version` in project.godot is the single source of
   truth (kept in step with the DESIGN changelog version); the menu shows it and startup
   prints it. Exports are `C:/Users/Public/Downloads/rogues_oath_v<version>.exe` — always
