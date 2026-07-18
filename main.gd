@@ -1,12 +1,17 @@
 extends Node2D
 
-## Session root for M1 ("See Each Other"). Server-authoritative and event-synced:
-##  - The HOST (peer 1) owns every player node and assigns each a spawn SLOT.
-##  - Players replicate through a MultiplayerSpawner via a discrete spawn event (a config
+## Session root (through M3). Server-authoritative and event-synced — it paints the room,
+## spawns the world, plays back committed events, and tears the session down:
+##  - Paints the $Room TileMapLayer at runtime from WorldGrid (the logical truth).
+##  - The HOST (peer 1) owns every player + monster node and assigns each a spawn SLOT; players
+##    and the goblin replicate through a MultiplayerSpawner via a discrete spawn event (a config
 ##    dict), NOT per-frame streaming and NOT a MultiplayerSynchronizer.
+##  - Dispatches NetEvents playback: a validated glide_to/attack/windup/chat/died event arrives
+##    on every peer and Main drives the matching node (glide, attack cue, log line, despawn).
+##  - Validates chat and gates the version at peer_ready (a client on a mismatched build is
+##    refused with a reason).
 ##  - Clients never own nodes and never call set_multiplayer_authority; a client asks to
 ##    join with a plain client->host RPC (peer_ready) and the host decides.
-## Nothing moves in this milestone: players just stand at their assigned spawn slots.
 
 # Brand-new scenes: referenced by res:// path until the editor assigns them a uid. Immutable,
 # so const (consts legitimately precede @export in script order).

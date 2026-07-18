@@ -2,8 +2,9 @@ extends Node
 
 ## The intent -> verdict -> broadcast pipe: the single referee gate every gameplay action
 ## flows through (DESIGN §2.5.3 — "replicate discrete commits, each stamped with
-## duration/outcome by the server"). This milestone (M1.3) carries only "chat", but movement,
-## attacks, and item use all land on this same pipe.
+## duration/outcome by the server"). Its passengers today: "chat", "glide_to", "attack",
+## "windup", and "died" — movement and combat ride this same pipe, and item use will land here
+## the same way.
 ##
 ## Topology: listen-server. The host (peer 1) is the authority AND a player; there is no
 ## dedicated server and NO host migration. `seq` is a per-SESSION counter — it is meaningful
@@ -25,8 +26,8 @@ extends Node
 ## peer id, so it is the unambiguous "the server authored this — no validator ran, the host IS
 ## the authority" sentinel. Host-authored and client-driven events share the one monotonic seq
 ## stream, so they stay totally ordered together. This is the seam every future host-originated
-## event reuses (M3+: monster actions, roll outcomes); M2's first passenger is the
-## attack-of-opportunity `free_attack` event.
+## event reuses (M3: monster actions, roll outcomes). The attack-of-opportunity ships on it as an
+## `attack` event with kind "free" — not a distinct `free_attack` action.
 
 # ── Signals ──────────────────────────────────────────────────────────────────
 

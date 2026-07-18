@@ -17,8 +17,6 @@ extends Node2D
 ## the LINEAR tween runs. Per the Commitment Rule there is no cancel path — glide_to only ever
 ## kills a tween to catch up to newer server truth, never to abort a committed step.
 
-const _TILE_PX := 32
-
 # ── Signals ──────────────────────────────────────────────────────────────────
 
 ## Emitted the instant a glide begins (before the tween runs). Mirrors Player.glide_started —
@@ -86,7 +84,7 @@ func _ready() -> void:
 	glide_speed = monster_type.glide_speed
 	var cell := monster_type.atlas_coords
 	_sprite.region_enabled = true
-	_sprite.region_rect = Rect2(cell.x * _TILE_PX, cell.y * _TILE_PX, _TILE_PX, _TILE_PX)
+	_sprite.region_rect = Rect2(cell.x * WorldGrid.TILE_PX, cell.y * WorldGrid.TILE_PX, WorldGrid.TILE_PX, WorldGrid.TILE_PX)
 	# Nameplate is name-only; the HP readout rides its own label under the feet, seeded from the
 	# authored max locally (max_hp is known everywhere). Chunk 2 (combat referee) drives updates
 	# from attack events. Full HP at spawn.

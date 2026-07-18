@@ -15,8 +15,6 @@ extends Node2D
 ##    to a newer server truth, never to abort a committed step.
 ##  - A reject reaches only the sender; Main calls play_bonk() on the sender's own player.
 
-const _TILE_PX := 32
-
 ## Distinct sprite tiles (col, row) into rogues.png, one per spawn slot, so players are
 ## told apart at a glance. Indexed by spawn_index (wraps if there are more players than tiles).
 const _SPRITE_TILES: Array[Vector2i] = [
@@ -94,7 +92,7 @@ var _flash_tween: Tween = null
 func _ready() -> void:
 	var sprite_tile := _SPRITE_TILES[spawn_index % _SPRITE_TILES.size()]
 	_sprite.region_enabled = true
-	_sprite.region_rect = Rect2(sprite_tile.x * _TILE_PX, sprite_tile.y * _TILE_PX, _TILE_PX, _TILE_PX)
+	_sprite.region_rect = Rect2(sprite_tile.x * WorldGrid.TILE_PX, sprite_tile.y * WorldGrid.TILE_PX, WorldGrid.TILE_PX, WorldGrid.TILE_PX)
 	# Nameplate is name-only; the HP readout rides its own label under the feet. max_hp is locally
 	# known everywhere (an @export), so the seed is correct on every peer with no query; the combat
 	# referee's attack events drive live updates via set_hp_display. Full HP at spawn.

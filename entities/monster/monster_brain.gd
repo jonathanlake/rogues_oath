@@ -11,13 +11,14 @@ extends Node
 ## showing this monster not busy and reads AUTHORITATIVE referee occupancy at that instant, so the
 ## AI adjudicates from the same truth the referee does — never a rendered position.
 ##
-## Chunk-1 behaviour (no damage yet): if a hostile player is 8-adjacent, it would attack — chunk 2
-## (combat referee) turns that into a telegraphed wind-up; here it only logs the seam and goes
-## dormant (the wind-up's resolution is what will re-think in chunk 2). Otherwise it paths one step
-## toward the nearest player via WorldGrid.find_path (walls-only A*) and submits it through the
-## referee's host-local validator. A refused step, an empty path, or a busy gate schedules a
-## re-think RETHINK_SEC later — the delay is the hot-loop guard (a brain never re-thinks twice in
-## one frame) and mirrors MoveInput's post-reject retry cadence.
+## Behaviour: if a hostile player is 8-adjacent, it requests a telegraphed wind-up through
+## CombatReferee.wind_up (the referee validates + commits it, posts the telegraph, and resolves the
+## hit against the target TILE later); the brain then schedules its OWN re-think just past that
+## resolution, since a wind-up busy record ends without a glide_finished to wake it. Otherwise it
+## paths one step toward the nearest player via WorldGrid.find_path (walls-only A*) and submits it
+## through the referee's host-local validator. A refused step, an empty path, or a busy gate
+## schedules a re-think rethink_delay_sec later — the delay is the hot-loop guard (a brain never
+## re-thinks twice in one frame) and mirrors MoveInput's post-reject retry cadence.
 
 ## Re-think delay (seconds) after a refused/blocked action or a busy gate. Matches MoveInput's
 ## held_retry_cooldown_sec so a monster and a player back off a contested tile at the same cadence.

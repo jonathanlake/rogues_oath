@@ -149,7 +149,7 @@ func _ready() -> void:
 	# dodge=whiff test (verification 3) is deterministic — stand until the windup event, then move.
 	var windup_override := 0.0
 	# host-only AoO demo knob (inert on the client, inert without the arg): hostile=1 makes every
-	# entity mutually hostile so a glide out of an adjacent tile fires the free_attack event — the
+	# entity mutually hostile so a glide out of an adjacent tile fires a real AoO `attack` event (kind "free") — the
 	# two-instance demo of the attack-of-opportunity wiring before monsters exist (M3).
 	var all_hostile := false
 	# host-only monster knob (inert on the client): goblin=1 opts THIS autostart run into spawning
@@ -252,24 +252,9 @@ func _ready() -> void:
 		if host_delay_sec > 0.0:
 			await get_tree().create_timer(host_delay_sec).timeout
 		get_tree().change_scene_to_packed(load(GameManager.MAIN_SCENE))
-		# Host waits a fixed span for a client to join before saying anything.
-		if _has_say:
-			_schedule_say(_say_text, say_delay_sec)
-		# Scripted moves share the say anchor (after the scene change). movewait= overrides the
-		# delay; unset, it falls back to say_delay_sec so a client has time to join first.
-		if _has_move:
-			_schedule_moves(_move_wait_sec if _move_wait_sec >= 0.0 else say_delay_sec)
-		# Held-key harness: holdwait= is its own first-fire delay (so click-then-key runs can
-		# stagger); unset, it shares the movewait= timing like the other knobs.
-		if _has_hold:
-			_schedule_hold(_hold_wait_sec if _hold_wait_sec >= 0.0 \
-					else (_move_wait_sec if _move_wait_sec >= 0.0 else say_delay_sec))
-		# Tap harness, same anchor + movewait= timing.
-		if _has_tap:
-			_schedule_taps(_move_wait_sec if _move_wait_sec >= 0.0 else say_delay_sec)
-		# Click harness, same anchor + movewait= timing.
-		if _has_click:
-			_schedule_clicks(_move_wait_sec if _move_wait_sec >= 0.0 else say_delay_sec)
+		# Every input knob anchors to the host's fixed wait for a client to join (say_delay_sec) so a
+		# client has time to connect + spawn before the first scripted action fires.
+		_schedule_input_knobs(say_delay_sec)
 	elif is_client:
 		DisplayServer.window_set_title("CLIENT")
 		# name= overrides the default BEFORE join_game(), so peer_ready ships the injected name.
@@ -312,23 +297,29 @@ func _ready() -> void:
 # timer) so it fires only once the connection is real and the host is guaranteed present.
 func _on_autostart_connected() -> void:
 	get_tree().change_scene_to_packed(load(GameManager.MAIN_SCENE))
+	# Every input knob anchors to the connection event (like the client's say), not a blind timer, so
+	# the host is guaranteed present — client_say_settle_sec is the settle-after-connect default.
+	_schedule_input_knobs(client_say_settle_sec)
+
+
+## Schedule every parsed input-harness knob (say/move/hold/tap/click) off ONE anchor. Host and
+## client differ only in that anchor: the host passes its fixed join wait (say_delay_sec), the
+## client passes its post-connect settle (client_say_settle_sec). say fires at the anchor directly;
+## move/tap/click honour movewait= (falling back to the anchor); hold honours its own holdwait=
+## (falling back to movewait=, then the anchor) so click-then-key runs can stagger the two sources.
+func _schedule_input_knobs(default_anchor_sec: float) -> void:
 	if _has_say:
-		_schedule_say(_say_text, client_say_settle_sec)
-	# Scripted moves anchor to the connection event (like the client's say), not a blind timer, so
-	# the host is guaranteed present. movewait= overrides; unset, it uses the say settle default.
+		_schedule_say(_say_text, default_anchor_sec)
+	# movewait= overrides the anchor for the move/tap/click knobs; unset, they share the anchor.
+	var move_anchor := _move_wait_sec if _move_wait_sec >= 0.0 else default_anchor_sec
 	if _has_move:
-		_schedule_moves(_move_wait_sec if _move_wait_sec >= 0.0 else client_say_settle_sec)
-	# Held-key harness: holdwait= is its own first-fire delay (see the host branch); unset,
-	# it shares the movewait= timing like the other knobs.
+		_schedule_moves(move_anchor)
 	if _has_hold:
-		_schedule_hold(_hold_wait_sec if _hold_wait_sec >= 0.0 \
-				else (_move_wait_sec if _move_wait_sec >= 0.0 else client_say_settle_sec))
-	# Tap harness, same anchor + movewait= timing.
+		_schedule_hold(_hold_wait_sec if _hold_wait_sec >= 0.0 else move_anchor)
 	if _has_tap:
-		_schedule_taps(_move_wait_sec if _move_wait_sec >= 0.0 else client_say_settle_sec)
-	# Click harness, same anchor + movewait= timing.
+		_schedule_taps(move_anchor)
 	if _has_click:
-		_schedule_clicks(_move_wait_sec if _move_wait_sec >= 0.0 else client_say_settle_sec)
+		_schedule_clicks(move_anchor)
 
 
 ## Fire one chat intent through the real pipe after a settle delay. Works identically on host

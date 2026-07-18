@@ -5,10 +5,10 @@ extends CanvasLayer
 ##  2. Own the chat input box — a self-contained focus flow that never violates the
 ##     Commitment Rule (chat commits nothing, cancels nothing).
 ##
-## M2 FOCUS RULE (documented here because this file is the reason it exists): once movement
-## input lands, it will be gated on `get_viewport().gui_get_focus_owner()` being a
-## LineEdit/TextEdit — i.e. "is the player typing in the chat box?". There is deliberately NO
-## global is_chatting flag; the focused control IS the single source of truth. Keep it that way.
+## FOCUS RULE (documented here because this file is the reason it exists): movement input IS
+## gated on `get_viewport().gui_get_focus_owner()` being a LineEdit/TextEdit — i.e. "is the
+## player typing in the chat box?". There is deliberately NO global is_chatting flag; the focused
+## control IS the single source of truth. Keep it that way.
 
 ## Ring cap on stored log lines. RichTextLabel keeps every paragraph forever otherwise; at
 ## chat + combat volume across a run that grows unbounded, so we drop the oldest past this.
