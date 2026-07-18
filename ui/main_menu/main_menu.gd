@@ -20,6 +20,11 @@ extends Control
 const JOIN_TIMEOUT_SEC := 12.0
 const NAME_HINT := "Enter a name to play"
 
+## Address ip-halves whose :port is honored when HOSTING — loopback/wildcard forms only.
+## Everything else in the field is a JOIN address, and its port must never leak into hosting
+## (see host_port). Lower-case; compared case-insensitively.
+const LOCAL_HOST_HALVES: Array[String] = ["", "127.0.0.1", "localhost", "0.0.0.0", "::1"]
+
 var _connecting: bool = false
 var _attempt_token: int = 0  # invalidates stale timeout timers from earlier attempts
 
@@ -59,7 +64,13 @@ func _update_button_gate() -> void:
 
 func _on_host_pressed() -> void:
 	GameManager.player_name = _resolved_name()
-	var port := _parse_port(ip_input.text.strip_edges())
+	var address := ip_input.text.strip_edges()
+	var port := host_port(address, NetworkManager.DEFAULT_PORT)
+	# ASSIGNED on every press, true or false — never sticky: true only when the field carried a
+	# :port that host_port ignored because the ip-half is a remote join address (same
+	# _is_local_host_half truth host_port itself uses — one source, no silent divergence).
+	# main.gd's "Hosting on port" line reads it so the override is visible in-game, not silent.
+	GameManager.host_port_was_ignored = ":" in address and not _is_local_host_half(address)
 	# host_game fails synchronously when the port is already bound (e.g. a second host on this
 	# machine). Stay on the menu and say so — changing scene anyway would boot a phantom offline
 	# "host" session nobody could join, with no error shown.
@@ -115,10 +126,48 @@ func _on_connection_failed() -> void:
 	_fail_connection("Could not connect to a host.")
 
 
-# The address field is "ip[:port]". The optional port applies to BOTH join and host (host
-# ignores the ip half — it always binds locally), so same-machine multi-session testing can
-# pick distinct ports. Out-of-range ports fall back to the default rather than reaching ENet
-# as a confusing "Could not host on port -5" failure.
+## The port to BIND when hosting, given the address field's content. Pure and static (and the
+## default arrives as a parameter, zero autoload coupling) so a headless script can load this
+## file and assert the truth table without any UI.
+##
+## The field's :port is honored ONLY when the ip-half is clearly local (LOCAL_HOST_HALVES) —
+## anything else is a JOIN address, and its port is someone ELSE'S port. Footgun history: the
+## menu used to apply the field's :port to hosting unconditionally; with the playit tunnel
+## address (`...:22619`) left in the field — the natural state for the person who SHARES that
+## address — Host bound 22619 while the tunnel forwarded to 127.0.0.1:3000, which burned both
+## the 2026-07-17 and 2026-07-18 wire sessions. Binding is wildcard-only (create_server takes
+## no interface), so the ip-half is purely port selection here — which is exactly why a remote
+## ip-half means "this was never a hosting instruction." The same-machine multi-session dev
+## convenience survives via the local forms (":4000", "127.0.0.1:4000", "localhost:5000").
+## Port validation reuses _parse_port's rule (is_valid_int, 1..65535, else default). Bracketed
+## IPv6 ("[::1]:4000") stays this parser's documented limitation, consistent with join=.
+static func host_port(address: String, default_port: int) -> int:
+	if ":" not in address:
+		return default_port
+	if not _is_local_host_half(address):
+		return default_port
+	var port_half := address.split(":", true, 1)[1].strip_edges()
+	if port_half.is_valid_int():
+		var port := port_half.to_int()
+		if port >= 1 and port <= 65535:
+			return port
+	return default_port
+
+
+## True when the address's ip-half — everything before the FIRST colon, or the whole string
+## when there is no colon (a bare local/empty field) — is one of LOCAL_HOST_HALVES. The single
+## source of truth for "is this address hosting-local": host_port and _on_host_pressed's
+## ignored-port flag both call it, so the two can never silently diverge. allow_empty=true in
+## the split so ":4000" yields an empty (local) ip-half.
+static func _is_local_host_half(address: String) -> bool:
+	var ip_half := address.split(":", true, 1)[0]
+	return LOCAL_HOST_HALVES.has(ip_half.strip_edges().to_lower())
+
+
+# The address field is "ip[:port]" for JOINING; this parser governs joins exactly as it always
+# has and is INTENTIONALLY untouched by the host-port fix above (a join needs whatever port the
+# host published, remote or not). Out-of-range ports fall back to the default rather than
+# reaching ENet as a confusing "connect to port -5" failure.
 func _parse_port(address: String) -> int:
 	if ":" in address:
 		var parts := address.split(":", false, 1)

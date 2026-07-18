@@ -48,15 +48,23 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   *Pre-check (2026-07-17, same-PC through the playit.gg tunnel):* full join + chat
   round-trip works via both `147.185.221.211:22619` and the ply.gg hostname (Godot
   resolves TYPE_ANY → the A record; the AAAA is never picked on Jon's IPv4-only machine).
-  Jon's earlier "Could not connect" was transient playit-agent churn — its log looping
-  `udp channel requires auth` while the tunnel showed In>0/Out=0 B; it settled on its
-  own. If it recurs: restart the agent and retest with the raw-IP form (the two-address
-  discriminator). Harness knob for Jeff's session: `-- join join=<addr[:port]>`.
+  Harness knob for Jeff's session: `-- join join=<addr[:port]>`.
   *Update (2026-07-18):* **reachability validated for real** — Jon+Jeff full session over the
-  tunnel: join, chat, and every movement method worked. Root cause of the earlier "Could not
-  connect": no host was running — the tunnel forwards, it doesn't listen. Remaining for
-  **Done =**: the latency baseline — run the F3 debug overlay next session and log its
-  median/p95 move-verdict numbers. Checkbox stays open until those are recorded.
+  tunnel: join, chat, and every movement method worked.
+  *Root cause, corrected (2026-07-18):* BOTH sessions' connection failures were the menu's
+  **host-port footgun** — the address field's `:port` applied to hosting too, so with the
+  tunnel address (`...:22619`) left in the field, Host bound 22619 while the tunnel forwards
+  to 127.0.0.1:3000 (verified live: the running host sat on 22619, nothing on 3000). The
+  interim "no host running" diagnosis was wrong — the host was up, one port to the left. The
+  07-17 "playit agent churn" theory is demoted to a possible-but-unconfirmed contributor:
+  Jon self-tested a tunnel join that morning and likely hosted with the address still in the
+  field (producing the identical In>0/Out=0 signature), while the harness's own tests bound
+  3000 by construction — which alone explains "it settled on its own." Fixed in code:
+  hosting honors the field's :port only for loopback-style addresses (main_menu.host_port)
+  and the log's first line prints "Hosting on port N." (+ an ignore notice). Runbook: FIRST
+  check that line; the agent-restart recipe is the fallback if the port checks out.
+  Remaining for **Done =**: the latency baseline — run the F3 debug overlay next session and
+  log its median/p95 move-verdict numbers. Checkbox stays open until those are recorded.
 
 - [x] **M2 — Grid & Glide** *(2026-07-17)* **[size M]**
   Logical tile grid (WorldGrid is truth, TileMapLayer is paint); commit/glide movement with
@@ -138,6 +146,8 @@ Not scheduled — pulled in when their moment comes:
 - Shared-beat coordination mechanic (DESIGN §2.4.2) — only if a concrete need appears
 - Resource-editing GUI tool for designers (CLAUDE.md ground rule: design resources as if it
   already exists)
+- Dedicated host-port UI field — only if the local-address heuristic (main_menu.host_port,
+  currently loopback-only + a visible ignore notice in the log) ever needs to grow
 - Client stop-and-go travel (RTT gap between steps, wire-test finding 2026-07-18) — the
   pipelined next-step proposal (one server-held, committed-on-accept slot) lives in DESIGN
   Part 4 Q7; awaiting F3-overlay latency data + Jeff

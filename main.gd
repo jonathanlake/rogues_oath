@@ -113,6 +113,14 @@ func _ready() -> void:
 	NetEvents.intent_rejected.connect(_on_intent_rejected)
 
 	if multiplayer.is_server():
+		# Self-diagnosing surface — the feedback rule (§2.3.4) extended to session plumbing:
+		# which port this host actually bound must never require netstat. Both 2026-07 wire-test
+		# failures were exactly this made invisible (the field's :port silently applied to
+		# hosting). The log node was added above in this same _ready, so it exists here.
+		var hosting_line := "Hosting on port %d." % NetworkManager.current_port()
+		if GameManager.host_port_was_ignored:
+			hosting_line += " (remote address in field — its port was ignored)"
+		_game_log.add_line(hosting_line)
 		# Host-only: hand the movement referee the Players container BEFORE spawning the host's own
 		# player, so its child_entered_tree seeds occupancy for every player including the host's.
 		_referee.activate(_players)

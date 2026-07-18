@@ -19,6 +19,12 @@ var player_name: String = ""
 ## the main menu shows it in its error label on _ready and clears it. Empty = none.
 var last_disconnect_reason: String = ""
 
+## Set by the menu on EVERY Host press (assigned true or false each time — never sticky): true
+## when the address field carried a :port that hosting ignored because the ip-half was a remote
+## join address (main_menu.host_port's rule). Read once by main.gd's "Hosting on port" log line
+## so the override is visible in-game instead of silently surprising a deliberate tunneler.
+var host_port_was_ignored: bool = false
+
 ## DEBUG ONLY. When true, every entity is mutually hostile — the harness `hostile=1` knob sets it
 ## host-side (before host_game()) so the attack-of-opportunity trigger can be demoed two-instance
 ## before monsters exist (M3). Players are never hostile to each other in real play; gameplay code

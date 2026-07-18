@@ -6,6 +6,7 @@
 ##                                      arrive via connection_failed)
 ##   NetworkManager.disconnect_game()
 ##   NetworkManager.kick_peer(id)     (host-only)
+##   NetworkManager.current_port()    -> int (bound port while hosting, 0 otherwise)
 ##
 ## All ENet (or future Steam / relay) code lives exclusively in host_game() and
 ## join_game(). Every other file stays transport-agnostic. To swap transports:
@@ -44,7 +45,18 @@ signal peer_disconnected(peer_id: int)
 
 const DEFAULT_PORT := 3000
 
+# The port this instance is hosting on; 0 when not hosting. Written by host_game on success,
+# zeroed by disconnect_game and join_game. Read via current_port().
+var _hosted_port: int = 0
+
 # ── Public API ────────────────────────────────────────────────────────────────
+
+## The port this instance is currently hosting on, or 0 when not hosting. Requested == bound:
+## ENet's create_server binds the requested port or returns an error, and host_game surfaces
+## that error to its caller instead of storing the port — so this getter can never report a
+## port that isn't actually listening.
+func current_port() -> int:
+	return _hosted_port
 
 ## Returns the create error so the caller can stay on the menu and tell the user — a failed
 ## host (port already bound: e.g. a second host on this machine) must NOT fall through into the
@@ -59,14 +71,21 @@ func host_game(port: int = DEFAULT_PORT) -> Error:
 	var err := peer.create_server(port, maxi(1, GameManager.config.max_players - 1))
 	# ────────────────────────────────────────────────────────────────────────
 	if err != OK:
+		# A failed re-host must not leave a stale port from an earlier successful host —
+		# current_port() reports only a port that is actually listening.
+		_hosted_port = 0
 		return err
 	multiplayer.multiplayer_peer = peer
+	_hosted_port = port
 	return OK
 
 
 ## Returns a synchronous create error (bad address, socket failure). The normal failure path —
 ## host unreachable / refused — is asynchronous and arrives via connection_failed.
 func join_game(ip: String, port: int = DEFAULT_PORT) -> Error:
+	# Joining means not hosting — keep current_port()'s "0 when not hosting" contract honest
+	# even if a caller ever joins without an intervening disconnect_game.
+	_hosted_port = 0
 	# ── ENet transport ───────────────────────────────────────────────────────
 	var peer := ENetMultiplayerPeer.new()
 	var err := peer.create_client(ip, port)
@@ -79,6 +98,7 @@ func join_game(ip: String, port: int = DEFAULT_PORT) -> Error:
 
 
 func disconnect_game() -> void:
+	_hosted_port = 0
 	if multiplayer.multiplayer_peer:
 		multiplayer.multiplayer_peer.close()
 		multiplayer.multiplayer_peer = null
