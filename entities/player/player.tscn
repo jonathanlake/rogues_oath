@@ -11,7 +11,9 @@
 [node name="Player" type="Node2D" unique_id=1171168158]
 script = ExtResource("1_player")
 glide_speed = ExtResource("3_speed")
+max_hp = 20
 melee_damage = 2
+attack_duration_sec = 0.5
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=401734505]
 texture_filter = 1

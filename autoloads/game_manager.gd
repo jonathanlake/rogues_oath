@@ -8,8 +8,11 @@ extends Node
 const MAIN_SCENE := "res://main.tscn"
 const MENU_SCENE := "res://ui/main_menu/main_menu.tscn"
 
-## The host populates this before starting the server. All game systems read from it.
-var config: GameConfig = GameConfig.new()
+## Designer contract: resources/game_config.tres is where Jeff flips playtest toggles
+## (bodies_block_corners, origin_frees_at_glide_start, …) WITHOUT touching code. The host
+## populates this before starting the server; all game systems read from it. Loaded from the .tres
+## so authored values win; a missing/broken file falls back to script defaults LOUDLY (see below).
+var config: GameConfig = _load_config()
 
 ## Set from the main menu before host_game() / join_game(). Flows into the spawn
 ## dict so all peers know each player's display name independently of peer ID.
@@ -65,6 +68,19 @@ var debug_fake_version: String = ""
 # One-shot latch so a missing/typo'd config/version key warns exactly once (the referee's
 # _warned_null_speed pattern), not on every read.
 var _warned_missing_version: bool = false
+
+
+## Load the authored session config, or fall back to script defaults. A designer-facing file
+## silently reverting to defaults would mask a real problem — Jeff's playtest toggles quietly
+## ignored — so a missing/broken .tres is a push_error, not a warning; the game stays runnable on
+## GameConfig.new() either way. Static so it can seed `config` at autoload init with no self-order
+## concern (it touches no other member).
+static func _load_config() -> GameConfig:
+	var loaded := load("res://resources/game_config.tres") as GameConfig
+	if loaded == null:
+		push_error("[GameManager] res://resources/game_config.tres missing or not a GameConfig — running on GameConfig.new() script defaults; the designer toggles in that file are being ignored.")
+		return GameConfig.new()
+	return loaded
 
 
 ## The single read path for the build version string (project.godot application/config/version,

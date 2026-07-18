@@ -7,4 +7,7 @@
 script = ExtResource("1_type")
 display_name = "Goblin"
 atlas_coords = Vector2i(2, 0)
+max_hp = 10
+attack_damage = 3
+windup_sec = 0.8
 glide_speed = ExtResource("1_dekqg")
