@@ -54,3 +54,10 @@ var debug_windup_override_sec: float = 0.0
 ## `overlay=1` arg (either role, before the main scene loads) for scripted screenshots. The
 ## in-session toggle is always F3 regardless; gameplay code never reads this.
 var debug_overlay_start_visible: bool = false
+
+## DEBUG ONLY. When non-empty, overrides the version string this CLIENT sends in peer_ready — set
+## client-side via debug.gd's `fakever=` arg so the version-mismatch refusal path is scriptable
+## two-instance without building a second binary. A send-path override ONLY: never a comparison
+## basis, and the menu still shows the real version. Read client-side at peer_ready send; inert on
+## a host (hosts never send peer_ready). Never touched by gameplay code.
+var debug_fake_version: String = ""

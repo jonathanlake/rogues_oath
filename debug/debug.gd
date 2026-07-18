@@ -135,6 +135,12 @@ func _ready() -> void:
 	# first-colon split below can't tell them from ip:port), matching the menu's parser. Tunnel
 	# addresses are hostnames, so this is fine in practice.
 	var join_address := ""
+	# client-only version-gate test knob (inert on the host, inert without the arg): fakever=<ver>
+	# overrides the version string this client SENDS in peer_ready, so the host's mismatch-refusal
+	# path is scriptable two-instance without building a second binary. Send-path only — never a
+	# comparison basis, and the real version still shows in the menu. Structurally inert on a host
+	# (hosts never send peer_ready), so it's applied in the client branch alongside join=.
+	var fake_version := ""
 	# host-only glide-duration override (seconds); inert on the client and without the arg.
 	# Stretches every glide's base step time so conga/timing tests are scriptable + observable.
 	var glide_override := 0.0
@@ -165,6 +171,8 @@ func _ready() -> void:
 			max_players = arg.trim_prefix("maxplayers=").to_int()
 		elif arg.begins_with("join="):
 			join_address = arg.trim_prefix("join=")
+		elif arg.begins_with("fakever="):
+			fake_version = arg.trim_prefix("fakever=")
 		elif arg.begins_with("move="):
 			_parse_move_list(arg.trim_prefix("move="))
 		elif arg.begins_with("movedelay="):
@@ -266,6 +274,11 @@ func _ready() -> void:
 		DisplayServer.window_set_title("CLIENT")
 		# name= overrides the default BEFORE join_game(), so peer_ready ships the injected name.
 		GameManager.player_name = name_text if has_name else "CLIENT"
+		# fakever= overrides the version this client SENDS in peer_ready (see the knob comment above).
+		# Set before join_game() so it's stashed by the time the client's peer_ready send reads it.
+		# Inert on a host, so this apply lives only in the client branch. Empty = send the real version.
+		if not fake_version.is_empty():
+			GameManager.debug_fake_version = fake_version
 		# join= aims this client at a remote host; absent, it stays on localhost exactly as before.
 		# Split on the FIRST colon only (same shape as the menu's _on_join_pressed) into ip + optional
 		# port; an out-of-range or non-integer port falls back to DEFAULT_PORT rather than reaching

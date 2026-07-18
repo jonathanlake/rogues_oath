@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.4.1)
+# Rogue's Oath — Design Doc (v0.5.0)
 
 ## Part 1 — The Game
 
@@ -150,7 +150,12 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
      invaluable for multiplayer testing).
    - **Lift the patterns, rewrite the code:** session flow from MWF `main.gd` — the
      `peer_ready` RPC with duplicate-spawn guard, capacity spawn-gate with kick
-     backstop, host-left handling, peer-disconnect cleanup. (The host-left pattern is
+     backstop, host-left handling, peer-disconnect cleanup. **Version gate (v0.5.0):**
+     clients and host must run the same build — `peer_ready` carries the client's
+     `config/version`, and the host refuses mismatches before spawn with both versions in
+     the reason ("Version mismatch — you have vX, host has vY."), delivered over a
+     `session_refused` RPC ahead of the kick (the same channel now carries "Server is
+     full."). Exact-match policy while 0.x; a looser rule is a 1.0-era decision. (The host-left pattern is
      client-side UX for the disconnect *moment* — freeze, overlay, return to menu — and
      is needed under any host-disconnect policy; lifting it does not pre-answer Open
      Question 2.)
@@ -324,6 +329,12 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.5.0 (2026-07-18)** — Version gate: the host refuses joins from a different build at
+  `peer_ready` (client version rides the handshake; exact match while 0.x), with the
+  reason — both versions named — delivered over a new `session_refused` RPC before the
+  kick; the same channel finally carries the parked "Server is full." message. Legacy
+  pre-gate builds fail closed (arity drop → the existing timeout, whose message now hints
+  at version mismatch). `fakever=` harness knob for scripted mismatch tests.
 - **v0.4.1 (2026-07-18)** — Post-M3 polish: HP readout moved off the nameplate to its own
   label under each entity's feet (Jon — readability); first combat tuning pass recorded
   (player melee 5→2, goblin speed tier → slow — Jon: "too fast for a real time game";
