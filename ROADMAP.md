@@ -173,6 +173,12 @@ Not scheduled — pulled in when their moment comes:
   the server charges `diagonal_step_multiplier` (2.0 default, where diagonal and L-shape tie);
   if the multiplier moves off 2.0, paths become mildly time-suboptimal — revisit A* weights
   then (M2.1)
+- Rhythm-experiment reversions (v0.6.0, all single-value edits): speed-tier variation
+  (three .tres values), diagonal multiplier off 1.0, AoO re-enable, click pathing
+  re-enable, longer windup telegraph — each waits on Jon+Jeff playtest verdicts
+- Dedicated audio pass: real SFX to replace the pitch-shifted placeholders, and a
+  proper mix (v0.6.0 shipped a stopgap: landed hit = one sound, -6dB on the two
+  chattiest cues)
 - Chat polish: speech bubbles overhead (WoW-style), name colors (escape-then-wrap the
   already-escaped name), timestamps, chat sounds
 - ~~Distinct "Server is full." message for capacity-kicked clients~~ — DONE: shipped

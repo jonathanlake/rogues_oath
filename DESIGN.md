@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.5.6)
+# Rogue's Oath — Design Doc (v0.6.0)
 
 ## Part 1 — The Game
 
@@ -45,7 +45,10 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
 2. Moving = a glide: entity commits to an adjacent tile, then smoothly animates into it over
    a real-time duration. Position data is discrete; presentation is smooth.
 3. Glide duration is stat-driven, in discrete speed tiers (breakpoints), not a continuous
-   scale.
+   scale. **Rhythm experiment (v0.6.0, Jon+Jeff wire notes 2026-07-19, provisional):** all
+   tiers are currently AUTHORED to the same 0.25s beat — one action rhythm for every
+   entity ("if I hold right and the goblin holds right, we reach the edge together" —
+   Jeff). The tier structure stays; variation returns by editing .tres values.
 4. A glide obeys the Commitment Rule: once started, it finishes. Being hit does not interrupt
    it.
 5. Tile reservation: on commit, the destination tile is reserved for the glide's duration. A
@@ -62,10 +65,16 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    unchanged — the threshold gates whether a next-step intent is submitted, never when a
    committed step starts.
 6. Attack of opportunity: starting a glide out of a tile adjacent to a hostile that is alive and
-   able to act grants that hostile one free attack.
+   able to act grants that hostile one free attack. **Provisionally DISABLED (v0.6.0, Jon,
+   playtest):** `attacks_of_opportunity_enabled` in game_config.tres — spec and code stand;
+   flip the bool to restore.
 7. **Diagonal movement (decided 2026-07-15, Jeff — see Part 4 Q3):** 8-way movement;
    a diagonal glide costs a duration multiplier on the step (designer-tunable `@export`,
    default 2.0× — between Pathfinder's 1.5× and Tibia's 3× — tuned in playtest).
+   **Set to 1.0× for the rhythm experiment (v0.6.0, Jeff: "keep the variable... have it be
+   something that means it isn't being changed at all"; cites 5e dropping diagonal rules
+   for simplicity even though "diagonals are OP"; "probably won't ever be double/half,
+   too drastic").**
    **Corner rule (defined in M2, Jon/Jeff 2026-07-17 — provisional, pending playtest):** a
    diagonal step requires both orthogonal flank tiles of the origin — `origin+(dx,0)` and
    `origin+(0,dy)` — to be non-wall, so a squeeze between two walls that touch only at a corner
@@ -80,7 +89,10 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    the server. The client never predicts the outcome, in either direction; there is no
    client-side authority anywhere. A rejected move must never be confusable with dropped
    input, and a locally-guessed rejection must never contradict a server accept.
-9. **Click-to-move pathing (added M2.1, 2026-07-17; walk rule tightened 2026-07-18).**
+9. **Click-to-move pathing (added M2.1, 2026-07-17; walk rule tightened 2026-07-18;
+   provisionally OFF v0.6.0 — `click_pathing_enabled` in game_config.tres, Jon+Jeff: mouse
+   clicks act only on the 8 adjacent squares, one fresh step each, a far click does
+   nothing; all pathing code stays).**
    Click-to-move is CLIENT-SIDE convenience only: the client turns a clicked destination
    into ordinary one-step commits, submitted one at a time through the same intent pipe as
    a key press. The server never sees a path or a target, and never queues steps — 2.2.5
@@ -113,7 +125,13 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    sound, damage resolves at accept, and the attacker is committed for its swing duration.
    **Monster attacks are telegraphed TILE commits:** the wind-up targets a tile, visibly,
    for its full wind-up duration; at resolution it hits whatever hostile body occupies that
-   tile — vacate it and the attack WHIFFS; step into it and you eat the hit. The telegraph
+   tile — vacate it and the attack WHIFFS; step into it and you eat the hit. **Rhythm
+   experiment note (v0.6.0):** windup authored to the 0.25s beat (Jeff's literal "windup+
+   attack take the same time as a move"), so the deliberate-dodge window is effectively
+   closed and whiffs are incidental — the mechanic is PARKED, restored by one .tres number.
+   Open playtest question: does the telegraph still READ at 0.25s, or does it merge with
+   the attack (if it merges, the tell needs a different visual language, not a longer
+   duration)? The telegraph
    commits to ground, not to a name ("decisions carry risk"). Attacks of opportunity
    (2.2.6) resolve instantly through the same damage path.
 4. Every distinct outcome (hit, whiff, free attack, death) has a distinct, unambiguous
@@ -330,6 +348,23 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 ---
 
 ### Changelog
+
+- **v0.6.0 (2026-07-19)** — THE RHYTHM BUILD (Jon+Jeff wire-session notes, first combat
+  session over the tunnel). One 0.25s beat for every action, every entity: all speed
+  tiers authored to 0.25 (structure kept), diagonal multiplier 1.0 (Jeff: keep the
+  variable, no change for now), player swing 0.25, goblin windup 0.25 (dodge window
+  knowingly parked — Jeff: "what was this dodge thing?"). NOT a global tick — actions
+  start on commit and share only a duration; Commitment Rule/event model untouched;
+  pipeline bound holds (0.25s vs 66-83ms measured RTT). Equal speeds move chases onto
+  position — corners, chokepoints, body-blocks — nobody outruns anybody in open field.
+  Provisional toggles (all default-original, flipped in game_config.tres): AoO off,
+  click pathing off (adjacent-square clicks only — Jeff: "if you click 8 spaces ahead
+  nothing happens"). New MonsterType.aggro_range_tiles (Chebyshev; 0=unlimited; goblin
+  5) — checked every think, so acquire gate AND leash. Bowstring attack animation
+  (pull-back then lunge past the tile edge, Jeff's drawstring). Audio trim: landed hit
+  = target hit sound only; commit/windup cues -6dB. Verified two-instance: lockstep
+  0.25 cadence incl. diagonals, leash at authoritative range 5, zero AoO events,
+  adjacent-click single steps, silent far clicks, F5 reset clean.
 
 - **v0.5.6 (2026-07-18)** — Post-wire-session review hygiene on the reset key (5-angle
   code review of v0.5.4/v0.5.5; verified against the first Jon+Jeff combat wire session
