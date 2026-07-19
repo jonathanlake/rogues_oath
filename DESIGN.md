@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.6.3)
+# Rogue's Oath — Design Doc (v0.6.4)
 
 ## Part 1 — The Game
 
@@ -359,6 +359,11 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.6.4 (2026-07-19)** — First DESIGNED combat SFX: SFX_CombatHitDesigned02.wav
+  (sourced by Jon) replaces the generated impact.wav on the monster's Hit player, at
+  natural pitch. Scope is deliberate: only "player hits an enemy" — a player TAKING a
+  hit still plays the impact.wav placeholder, keeping the two hit directions aurally
+  distinct (§2.3.4) until a designed counterpart arrives.
 - **v0.6.3 (2026-07-19)** — Hit juice, honest bonk, 2-beat windup, transport-truth
   departures (Jon's v0.6.2 notes). Two GENERATED placeholder sounds (script committed):
   slash.wav (swept-noise swish) and impact.wav (110Hz thud) — hits/swings/death leave

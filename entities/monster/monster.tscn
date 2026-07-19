@@ -7,7 +7,7 @@
 [ext_resource type="AudioStream" uid="uid://bgobemuhppy00" path="res://assets/audio/bonk.wav" id="5_bonk"]
 [ext_resource type="Shader" path="res://entities/monster/monster_flash.gdshader" id="6_flash"]
 [ext_resource type="AudioStream" uid="uid://by8wkshbhc6rw" path="res://assets/audio/slash.wav" id="7_slash"]
-[ext_resource type="AudioStream" uid="uid://dflvxqnrggpxg" path="res://assets/audio/impact.wav" id="8_impact"]
+[ext_resource type="AudioStream" uid="uid://dlrk1yqd7picf" path="res://assets/audio/SFX_CombatHitDesigned02.wav" id="8_hit"]
 [ext_resource type="Script" uid="uid://nngt3qv36bvj" path="res://entities/slash_fx.gd" id="9_slashfx"]
 
 ; Windup white-flash material (v0.6.1). resource_local_to_scene = true so EACH monster instance
@@ -54,8 +54,7 @@ stream = ExtResource("7_slash")
 pitch_scale = 0.85
 
 [node name="Hit" type="AudioStreamPlayer" parent="." unique_id=1724549287]
-stream = ExtResource("8_impact")
-pitch_scale = 0.9
+stream = ExtResource("8_hit")
 
 [node name="Windup" type="AudioStreamPlayer" parent="." unique_id=1349622745]
 stream = ExtResource("5_bonk")

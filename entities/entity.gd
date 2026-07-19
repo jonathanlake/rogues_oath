@@ -76,8 +76,8 @@ var tile: Vector2i
 # Presentation-only HP readout under the feet, fed by attack events' hp_after via set_hp_display.
 # The nameplate stays name-only; the authoritative HP lives in the host's CombatReferee.
 @onready var _hp_label: Label = $HpLabel
-# Combat feedback (§2.3.4). Placeholder assets: pitch-shifted reuses of the two existing wavs
-# (attack = commit_sent low, hit = bonk high) — flagged placeholder, real SFX arrive later.
+# Combat feedback (§2.3.4). Streams are scene-assigned: the monster's Hit is a designed SFX
+# (SFX_CombatHitDesigned02); the rest are still pitch-shifted placeholder wavs, real SFX later.
 @onready var _attack_audio: AudioStreamPlayer = $Attack
 @onready var _hit_audio: AudioStreamPlayer = $Hit
 # Red slash streak drawn over the sprite when this entity takes a hit (§2.3.4 hit juice, v0.6.3).
