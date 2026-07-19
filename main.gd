@@ -348,8 +348,13 @@ func _handle_attack_event(event: Dictionary) -> void:
 			# outcome being silently swallowed, so name the unhandled attacker instead of dropping it.
 			push_warning("[Main] whiff attack from non-Monster attacker %d — no feedback rendered" % attacker_id)
 	else:
+		# LANDED hit — audio-trim rule (v0.6.0, §2.3.4 feedback audit). The attacker lunges (bowstring)
+		# but its swing sound is SUPPRESSED (with_sound=false): a landed exchange plays exactly ONE
+		# sound, the target's hit. Per-outcome distinctness still holds — landed hit = target hit sound,
+		# whiff = the attacker's swing (play_whiff above, kept audible), reject = bonk (play_bonk) — so
+		# every outcome is uniquely audible, one sound each, none confusable (§2.2.8 / §2.3.4).
 		if attacker != null:
-			attacker.play_attack(dir)
+			attacker.play_attack(dir, false)
 		if target != null:
 			target.play_hurt()
 			target.set_hp_display(int(data.get("hp_after", 0)), int(data.get("target_max", 0)))

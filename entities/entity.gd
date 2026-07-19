@@ -137,12 +137,16 @@ func glide_to(to_tile: Vector2i, duration_sec: float) -> void:
 
 
 ## Attacker feedback for a landed strike (§2.3.4), played on every peer from the referee's `attack`
-## event: a short lunge TOWARD the target + the swing sound. Distinct from any input ack cue —
-## this is a committed strike resolving. `dir` is the 8-way step toward the victim so the wobble
-## reads directional; Vector2i.ZERO falls back to the plain horizontal shake.
-func play_attack(dir: Vector2i) -> void:
-	_shake(dir)
-	_attack_audio.play()
+## event: Jeff's BOWSTRING lunge (pull back off the target, shoot forward past the tile edge, return)
+## via _bowstring, optionally with the swing sound. Distinct from any input ack cue — this is a
+## committed strike resolving. `with_sound` defaults true for API completeness, but the v0.6.0
+## audio-trim rule (main.gd _handle_attack_event) passes FALSE on a landed hit so only the TARGET's
+## hit sound plays and the exchange is one sound, not two overlapping. `dir` is the 8-way step toward
+## the victim so the lunge reads directional; Vector2i.ZERO falls back to a horizontal lunge.
+func play_attack(dir: Vector2i, with_sound := true) -> void:
+	_bowstring(dir)
+	if with_sound:
+		_attack_audio.play()
 
 
 ## Target feedback for taking a hit (§2.3.4), played on every peer from the referee's `attack`
@@ -181,6 +185,25 @@ func _flash(color: Color) -> void:
 	modulate = color
 	_flash_tween = create_tween()
 	_flash_tween.tween_property(self, "modulate", Color.WHITE, 0.18)
+
+
+## Jeff's bowstring attack lunge (v0.6.0 rhythm build), the shared drive for play_attack/play_whiff:
+## pull BACK ~4px away from the target over ~0.10s (the wind-up read — its pull-back doubles as the
+## monster telegraph tell), then shoot FORWARD ~11px toward it over ~0.06s (the sprite edge crosses
+## the 16px half-tile boundary — Jeff's "out of his square a tiny bit"), then settle to base over the
+## remaining ~0.09s. Total ≈0.25s = one action beat. Shares _shake_tween with the bonk jitter (the
+## two never fire on one entity at once), so glide_to's kill of _shake_tween pre-empts it exactly as
+## before, and it touches position ONLY, never modulate. `dir` is the 8-way step toward the target;
+## Vector2i.ZERO falls back to a horizontal lunge.
+func _bowstring(dir: Vector2i) -> void:
+	if _shake_tween != null and _shake_tween.is_valid():
+		_shake_tween.kill()
+	var base := position
+	var unit := Vector2(dir.x, dir.y).normalized() if dir != Vector2i.ZERO else Vector2(1, 0)
+	_shake_tween = create_tween()
+	_shake_tween.tween_property(self, "position", base - unit * 4.0, 0.10)
+	_shake_tween.tween_property(self, "position", base + unit * 11.0, 0.06)
+	_shake_tween.tween_property(self, "position", base, 0.09)
 
 
 ## A quick 2px position wobble that returns exactly to where it started. If a real glide pre-empts

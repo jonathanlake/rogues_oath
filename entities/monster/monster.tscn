@@ -47,6 +47,7 @@ pitch_scale = 1.4
 [node name="Windup" type="AudioStreamPlayer" parent="." unique_id=1349622745]
 stream = ExtResource("5_bonk")
 pitch_scale = 0.7
+volume_db = -6.0
 
 [node name="Whiff" type="AudioStreamPlayer" parent="." unique_id=1324668704]
 stream = ExtResource("4_commit")

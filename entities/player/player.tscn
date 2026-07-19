@@ -48,6 +48,7 @@ script = ExtResource("7_marker")
 
 [node name="CommitSent" type="AudioStreamPlayer" parent="." unique_id=1288336947]
 stream = ExtResource("5_commit")
+volume_db = -6.0
 
 [node name="Bonk" type="AudioStreamPlayer" parent="." unique_id=1444953764]
 stream = ExtResource("6_bonk")
