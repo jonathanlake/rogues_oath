@@ -281,10 +281,15 @@ func _notification(what: int) -> void:
 ## no-op, which is acceptable for a dev key and stated here so it reads as deliberate, not a missing
 ## branch. Handled (_unhandled_input) so a focused chat LineEdit consumes its own keys first; the
 ## event is consumed whenever the action fires so F5 never falls through to anything else.
+## call_deferred, not a direct call: the reset frees nodes synchronously, and doing that from
+## inside input dispatch could perturb the same frame's input iteration — deferring runs the whole
+## reset in the idle deferred-flush phase, where the reset body is the only thing on the stack.
+## is_echo filter: a held F5 auto-repeats; each echo would queue a full (benign but wasteful)
+## re-seed, so only the initial press fires.
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("dev_reset_round"):
+	if event.is_action_pressed("dev_reset_round") and not event.is_echo():
 		if multiplayer.is_server():
-			_reset_round()
+			_reset_round.call_deferred()
 		get_viewport().set_input_as_handled()
 
 
@@ -530,9 +535,10 @@ func _on_server_disconnected() -> void:
 ## (the proven disconnect/death paths), and stale wind-up/glide timers no-op through the existing
 ## token / is_alive / freed-node guards. The spawn path (_spawn_config, _spawn_goblin) is reused as-is.
 func _reset_round() -> void:
-	# d2. Re-entry lock (also the child_exiting_tree mute via _resetting): an F5 mash during the
-	# awaited frame boundary below must not despawn a half-spawned new round. Early-return while a
-	# reset is already in flight. Cleared at the FUNCTION TAIL — no early return may sit between here
+	# d2. _resetting's job is the child_exiting_tree "left."-MUTE during the synchronous frees below
+	# (the body is await-free since v0.5.5, so there is no interleaving to re-enter — back-to-back
+	# deferred resets would each run to completion, benignly). The early-return is belt-and-braces.
+	# Cleared at the FUNCTION TAIL — no early return may sit between here
 	# and there (GDScript has no exceptions; the spawn calls warn-and-continue on failure), so the
 	# tail always runs and the key can never brick.
 	if _resetting:
@@ -543,21 +549,25 @@ func _reset_round() -> void:
 	# disconnect), so there is nothing to scrape from the about-to-die nodes — names die with them, and
 	# a DEAD peer's name lives nowhere else. _peer_names is the single robust source the respawn reads.
 
-	# b/c. Despawn every player + monster on the host; the spawners replicate the despawns to all peers
-	# (same as death/disconnect). The container exit hooks clear occupancy / glides / pending / HP as
-	# each node leaves. _resetting mutes the "X left." line for the living players (dead players already
-	# had their nodes removed, so the guard only quiets the ones still standing).
+	# b/c. Despawn every player + monster SYNCHRONOUSLY (free, not queue_free) — the v0.5.5 race fix.
+	# v0.5.4 queue_freed then awaited process_frame, but the awaited resume's ordering vs the deletion
+	# flush is engine-internal and phase-dependent: observed in the wild (Jon, first manual F5), the
+	# exit hooks fired AFTER the respawn had seeded and AFTER _resetting cleared — unmuted "left."
+	# lines, and the late hooks erased the NEW nodes' referee state by entity id ("not in session"
+	# forever). free() collapses the window instead of tuning the wait: every exit hook (they only
+	# erase the exiting node's own dict keys) completes INLINE, before the respawn seeds anything,
+	# while _resetting is still true (the mute holds). Legal because nothing freed is on the current
+	# call stack — this body runs as the deferred call, outside input dispatch and entity callbacks;
+	# get_children() returns a fresh array, so the iteration is inherently a snapshot. The spawners
+	# replicate the despawns from tree-exit exactly as before.
 	for node in _players.get_children():
-		node.queue_free()
+		node.free()
 	for node in _monsters.get_children():
-		node.queue_free()
+		node.free()
 
-	# d. Clear the slot bookkeeping so the respawn assigns fresh (spawn-tile occupancy checks read
-	# referee state, which the exit hooks just cleared). queue_free deletes at END-of-frame, so wait a
-	# FULL frame boundary before re-seeding — NOT call_deferred, whose ordering vs queue_free's deletion
-	# is unguaranteed; process_frame is the guaranteed "old nodes gone, occupancy empty" point.
+	# d. Clear the slot bookkeeping so the respawn assigns fresh — the exit hooks above have already
+	# run to completion, so referee occupancy is provably empty HERE, no wait of any kind.
 	_slots.clear()
-	await get_tree().process_frame
 
 	# e. Re-seed: respawn each CONNECTED peer that still has a roster entry — host 1 FIRST, then the
 	# rest, in that order — then the goblin if monsters are enabled. _peer_names.has guards the mid-join

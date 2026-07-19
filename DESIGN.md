@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.5.4)
+# Rogue's Oath — Design Doc (v0.5.5)
 
 ## Part 1 — The Game
 
@@ -331,6 +331,19 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.5.5 (2026-07-18)** — F5 reset race fix, found by Jon's FIRST manual press (the
+  humbling kind): v0.5.4's queue_free + awaited process_frame let the old nodes' exit
+  hooks fire AFTER the respawn had seeded — erasing the new round's referee state by
+  entity id ("Move rejected (not in session)" forever, unmuted "left." lines). Fixed
+  by collapsing the window, not tuning the wait: the reset body (now call_deferred
+  from the input handler, is_echo-filtered) frees entities SYNCHRONOUSLY, so hook
+  cleanup provably completes before the re-seed — ordering is a property of the code,
+  not the engine's phase schedule. v0.5.4's verification gap named honestly: its
+  scripted runs never submitted a player move post-reset (goblin chasing made the
+  world look alive). The harness now reproduces the bug on the old code, passes on
+  the fix, and asserts accepted post-reset player glides on both roles — the symptom
+  net this class needed. Known pre-existing cosmetic (predates the reset key): a
+  death prints "X left." beside "X dies." — parked.
 - **v0.5.4 (2026-07-18)** — Dev round-reset key: host-only F5 re-seeds the whole world in place
   (despawn all + respawn from a host-only name roster + fresh goblin) so a wire session can iterate
   rounds without tearing down two instances and the tunnel. Explicitly DISPOSABLE — M6's real run
