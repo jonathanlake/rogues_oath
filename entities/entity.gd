@@ -195,10 +195,15 @@ func _flash(color: Color) -> void:
 ## two never fire on one entity at once), so glide_to's kill of _shake_tween pre-empts it exactly as
 ## before, and it touches position ONLY, never modulate. `dir` is the 8-way step toward the target;
 ## Vector2i.ZERO falls back to a horizontal lunge.
-func _bowstring(dir: Vector2i) -> void:
+## `base_override` (v0.6.1): the settle point the lunge springs from and returns to. Defaults to the
+## current rendered `position` (the historical behaviour, correct for the player bump). Monster
+## overrides _bowstring to pass its TILE CENTER here — a held windup coil offsets `position`, so a
+## base captured there would settle the sprite off-centre forever (see Monster._bowstring). Untyped
+## null default so the caller can omit it; when omitted, position stands in.
+func _bowstring(dir: Vector2i, base_override = null) -> void:
 	if _shake_tween != null and _shake_tween.is_valid():
 		_shake_tween.kill()
-	var base := position
+	var base: Vector2 = base_override if base_override != null else position
 	var unit := Vector2(dir.x, dir.y).normalized() if dir != Vector2i.ZERO else Vector2(1, 0)
 	_shake_tween = create_tween()
 	_shake_tween.tween_property(self, "position", base - unit * 4.0, 0.10)

@@ -128,7 +128,14 @@ func _think() -> void:
 				# glides), so schedule our OWN re-think just past resolution — think-at-own-boundary,
 				# no new signal plumbing. On resolution the target may have fled or died; the next
 				# think re-decides (chase, or wind up anew if still adjacent).
-				_reschedule_after(windup_sec + windup_rethink_epsilon_sec)
+				# The epsilon keeps its timer-safety meaning (the referee's busy record has cleared);
+				# attack_recovery_sec is the designer's REST beat layered on top (v0.6.1) — the
+				# deliberate idle that makes each windup read as a discrete event instead of a ~0.3s
+				# blur. It is brain pacing, NOT a commitment and never a referee record, so resting
+				# opens no cancel path (the Commitment Rule is untouched). Null-guarded like the
+				# aggro-range check above — a client's inert brain never reaches here anyway.
+				var recovery_sec: float = _monster_type.attack_recovery_sec if _monster_type != null else 0.0
+				_reschedule_after(windup_sec + windup_rethink_epsilon_sec + recovery_sec)
 			else:
 				# Declined (already busy / not alive) — back off on the normal cadence and retry.
 				_reschedule()

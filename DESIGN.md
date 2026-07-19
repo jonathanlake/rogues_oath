@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.6.0)
+# Rogue's Oath — Design Doc (v0.6.1)
 
 ## Part 1 — The Game
 
@@ -129,9 +129,19 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    experiment note (v0.6.0):** windup authored to the 0.25s beat (Jeff's literal "windup+
    attack take the same time as a move"), so the deliberate-dodge window is effectively
    closed and whiffs are incidental — the mechanic is PARKED, restored by one .tres number.
-   Open playtest question: does the telegraph still READ at 0.25s, or does it merge with
-   the attack (if it merges, the tell needs a different visual language, not a longer
-   duration)? The telegraph
+   Playtest question ANSWERED NO within one solo test (Jon, v0.6.0: "winded up maybe
+   once... attacked me pretty fast") — the 0.25s yellow blink inside a ~0.3s attack
+   cycle was sub-perceptual and the cadence tripled the goblin's DPS. **v0.6.1
+   choreography fix (Jon's direction: "flash white, stay in place"):** (a)
+   `attack_recovery_sec` (MonsterType, goblin 0.25) — one beat of deliberate stillness
+   after each strike; brain pacing, NOT a referee commitment (the server would accept a
+   move — the brain isn't asking; a baited swing leaving the monster punishable is
+   intended monster-side "decisions carry risk"); cycle ≈ plant 0.25 + strike + rest
+   0.25 ≈ 0.55s, DPS back near pre-rhythm. (b) The tell is now a TRUE-white shader
+   flash (modulate multiplies — it can never whiten a green sprite) + a snap-and-hold
+   coil away from the committed tile, released into the lunge at resolution. Windup
+   stays 0.25 (literal-uniform stands). Readability at real speed: re-test on Jon+Jeff
+   next session. The telegraph
    commits to ground, not to a name ("decisions carry risk"). Attacks of opportunity
    (2.2.6) resolve instantly through the same damage path.
 4. Every distinct outcome (hit, whiff, free attack, death) has a distinct, unambiguous
@@ -349,6 +359,16 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.6.1 (2026-07-19)** — Attack choreography: plant, flash white, strike, rest
+  (Jon's first v0.6.0 test answered the telegraph question NO — see §2.3.3). New
+  MonsterType.attack_recovery_sec (goblin 0.25): one beat of stillness after each
+  strike — brain pacing, not a commitment; cycle ~0.55s, DPS near pre-rhythm. True
+  -white windup tell via a minimal canvas shader (modulate can't whiten) + snap-and-
+  hold coil released into the lunge; settle-at-center invariant on the release.
+  Verified two-instance: strict windup→attack alternation with zero interleaved
+  goblin moves, adjacency survival 2.1s → 3.9s, and — with a stretched telegraph —
+  a live dodge-to-whiff, proving the parked mechanic returns whenever windup_sec
+  grows. Readability at real 0.25s speed: Jon+Jeff re-test next session.
 - **v0.6.0 (2026-07-19)** — THE RHYTHM BUILD (Jon+Jeff wire-session notes, first combat
   session over the tunnel). One 0.25s beat for every action, every entity: all speed
   tiers authored to 0.25 (structure kept), diagonal multiplier 1.0 (Jeff: keep the

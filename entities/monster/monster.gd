@@ -30,6 +30,11 @@ var monster_type: MonsterType = null
 @onready var _windup_audio: AudioStreamPlayer = $Windup
 @onready var _whiff_audio: AudioStreamPlayer = $Whiff
 
+# The white-flash shader tween (the v0.6.1 windup tell), held on its OWN slot so it never collides
+# with the modulate flash (_flash_tween, still play_hurt's) or the position coil (_shake_tween).
+# Drives the Sprite2D ShaderMaterial's flash_amount (see _set_flash).
+var _flash_shader_tween: Tween = null
+
 
 func _ready() -> void:
 	super()
@@ -76,12 +81,39 @@ func is_hostile_to(other: Node) -> bool:
 	return other is Player
 
 
-## Telegraph feedback (§2.3.4) for a wind-up starting: a distinct yellow flash + telegraph sound,
-## played on every peer from the `windup` event. This is the "slow telegraph" tell (DESIGN §2.1)
-## that gives a target the window to glide off the committed tile before resolution.
-func play_windup() -> void:
-	_flash(Color(1.5, 1.5, 0.4))
+## Telegraph feedback (§2.3.4) for a wind-up starting, played on every peer from the `windup` event:
+## a COILED WHITE tell (v0.6.1). Two pieces on the same beat — a TRUE-white shader flash snapped
+## near-peak and HELD, and a SNAP-AND-HOLD pull-BACK away from the target. This is the "slow
+## telegraph" (DESIGN §2.1) giving a target the window to glide off the committed tile before
+## resolution; every peer renders it from the authoritative event, never locally-inferred facing, so
+## the tell is identical on the wire (multiplayer-first). The old yellow modulate flash is REPLACED:
+## modulate MULTIPLIES, so it can only brighten a green sprite, never whiten it — _flash() itself
+## stays, play_hurt still uses it. `dir_away` is the 8-way step from the target toward this monster
+## (main derives it from monster.tile - target_tile); `hold_sec` is the windup duration, so the coil
+## and flash hold exactly the telegraph window.
+func play_windup(dir_away: Vector2i, hold_sec: float) -> void:
 	_windup_audio.play()
+	# White flash: snap flash_amount to near-peak in ~30ms, then HOLD — no fade-during-hold, which
+	# would kill the tell exactly when it must persist. The release (_bowstring) cuts it to 0.
+	_set_flash(0.8, 0.03)
+	# Coil: SNAP ~5px away from the target in ~30ms, then HOLD for the rest of the windup — a
+	# sustained displacement reads as a coil where a slow 4px drift over 0.25s reads as creep. NO
+	# return step here: the RELEASE (_bowstring at resolution) springs back through centre. Shares the
+	# _shake_tween slot with the bowstring (they can't co-occur — the monster is busy through the
+	# windup) so glide_to's kill of _shake_tween pre-empts this pose exactly as it pre-empts a lunge —
+	# the same documented arbitration.
+	if _shake_tween != null and _shake_tween.is_valid():
+		_shake_tween.kill()
+	var unit := Vector2(dir_away.x, dir_away.y).normalized() if dir_away != Vector2i.ZERO else Vector2(-1, 0)
+	# Base from TILE CENTRE, not position: the settle-at-centre invariant (see _bowstring). The
+	# monster is stationary through the windup (busy record), so tile-centre is exact.
+	var base := WorldGrid.tile_to_world(tile)
+	var snap_sec := 0.03
+	_shake_tween = create_tween()
+	_shake_tween.tween_property(self, "position", base + unit * 5.0, snap_sec)
+	var hold_remaining := maxf(hold_sec - snap_sec, 0.0)
+	if hold_remaining > 0.0:
+		_shake_tween.tween_interval(hold_remaining)
 
 
 ## Whiff feedback (§2.3.4): the wind-up resolved against an empty/vacated tile — the SAME bowstring
@@ -91,3 +123,36 @@ func play_windup() -> void:
 func play_whiff(dir: Vector2i) -> void:
 	_bowstring(dir)
 	_whiff_audio.play()
+
+
+# ── Private methods ───────────────────────────────────────────────────────────
+
+## Release override for the coiled tell (v0.6.1). Both strike paths route here — play_attack (a
+## landed windup) and play_whiff (a resolved windup against empty ground) — so this is the SINGLE
+## site where the windup RESOLVES, and it does two things the base can't. (1) It cuts the white
+## flash to 0 (~50ms, not a fade-during-hold): the release IS the flash ending. (2) It fixes the
+## lunge base to TILE CENTRE, NEVER the rendered position. WHY: with the coil held, `position` is
+## offset ~5px away from the target; a base captured there (Entity's default) would settle the
+## sprite 4-6px off-centre forever, until the next glide re-bases it. The monster is stationary
+## through the windup (busy record), so tile-centre is the exact truth. super() then runs Jeff's
+## bowstring FROM the coiled position (no pre-snap) THROUGH centre toward the target — the spring
+## release — and settles at that centre base.
+func _bowstring(dir: Vector2i, base_override = null) -> void:
+	_set_flash(0.0, 0.05)
+	var base: Vector2 = base_override if base_override != null else WorldGrid.tile_to_world(tile)
+	super(dir, base)
+
+
+## Drive the Sprite2D's white-flash shader param to `amount` over `duration_sec` on its own tween
+## slot. TRUE white (mix toward vec3(1.0)) that modulate can't produce on a coloured sprite — the
+## §2.3.4 tell must be unmistakable. The material is scene-assigned + resource_local_to_scene, so
+## this tweens THIS monster's own copy. A missing material is a scene-config bug: warn, don't crash.
+func _set_flash(amount: float, duration_sec: float) -> void:
+	var mat := _sprite.material as ShaderMaterial
+	if mat == null:
+		push_warning("[Monster] entity %d sprite has no ShaderMaterial — white tell not rendered" % entity_id)
+		return
+	if _flash_shader_tween != null and _flash_shader_tween.is_valid():
+		_flash_shader_tween.kill()
+	_flash_shader_tween = create_tween()
+	_flash_shader_tween.tween_property(mat, "shader_parameter/flash_amount", amount, duration_sec)

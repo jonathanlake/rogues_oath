@@ -366,15 +366,21 @@ func _handle_attack_event(event: Dictionary) -> void:
 			local_attacker.commit_in_place(float(data.get("duration_sec", 0.0)))
 
 
-## Play back a monster wind-up telegraph (§2.3.4): the monster yellow-flashes + a telegraph sound on
-## every peer, rendered on the monster node (the log line comes from game_log). Clients render the
-## tell from the authoritative event, never locally-inferred facing.
+## Play back a monster wind-up telegraph (§2.3.4): the monster white-flashes + coils back + a
+## telegraph sound on every peer, rendered on the monster node (the log line comes from game_log).
+## Clients render the tell from the authoritative event, never locally-inferred facing. The coil's
+## away-direction is derived here (per-peer presentation) from the monster's CURRENT tile and the
+## committed target_tile the event carries — sign per axis, the same shape the bowstring dir uses.
+## hold_sec rides the event as windup_sec (host-authored / debug-overridden), so the coil holds
+## exactly the telegraph window on every peer.
 func _handle_windup_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
 	# Wind-up cues are Monster surface — deliberate narrow cast off the Entity resolver.
 	var monster := _node_for_peer(int(data.get("entity_id", 0))) as Monster
 	if monster != null:
-		monster.play_windup()
+		var target_tile: Vector2i = data.get("target_tile", monster.tile)
+		var dir_away := _step_sign(monster.tile - target_tile)
+		monster.play_windup(dir_away, float(data.get("windup_sec", 0.0)))
 
 
 ## Play back a death (§2.3.4): the death sound on every peer (Main-level — the node itself vanishes

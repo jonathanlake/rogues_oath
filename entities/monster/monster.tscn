@@ -5,12 +5,22 @@
 [ext_resource type="Script" uid="uid://b828qddbhkhx7" path="res://entities/monster/monster_brain.gd" id="3_brain"]
 [ext_resource type="AudioStream" uid="uid://bcfp1anfpbqw3" path="res://assets/audio/commit_sent.wav" id="4_commit"]
 [ext_resource type="AudioStream" uid="uid://bgobemuhppy00" path="res://assets/audio/bonk.wav" id="5_bonk"]
+[ext_resource type="Shader" path="res://entities/monster/monster_flash.gdshader" id="6_flash"]
+
+; Windup white-flash material (v0.6.1). resource_local_to_scene = true so EACH monster instance
+; gets its OWN ShaderMaterial copy — a scene-assigned material is shared by default, which with
+; one goblin is moot but would cross-bleed the flash across every monster once multiple spawn.
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_flash"]
+resource_local_to_scene = true
+shader = ExtResource("6_flash")
+shader_parameter/flash_amount = 0.0
 
 [node name="Monster" type="Node2D" unique_id=1348309680]
 script = ExtResource("1_monster")
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=742174548]
 texture_filter = 1
+material = SubResource("ShaderMaterial_flash")
 texture = ExtResource("2_monsters")
 region_enabled = true
 region_rect = Rect2(64, 0, 32, 32)

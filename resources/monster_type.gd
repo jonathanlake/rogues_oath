@@ -36,6 +36,15 @@ const DEFAULT_WINDUP_SEC := 0.8
 ## against the target TILE (DESIGN §2.1 "slow telegraphs, hard commits").
 @export var windup_sec: float = DEFAULT_WINDUP_SEC
 
+## Deliberate idle (seconds) the monster holds AFTER an attack resolves before its next think —
+## the "action complete" delay from the wire notes (v0.6.1). 0 = the old immediate re-think. This
+## is the REST beat that makes each windup read as a discrete event (goblin fixed at ~0.3s cycles
+## in the first v0.6.0 test — a 0.25s tell inside a 0.3s cycle is sub-perceptual). It is NOT a
+## commitment and NEVER a referee record — purely brain pacing on top of the windup duration, so
+## the Commitment Rule is untouched (no cancel path is created by resting). Read HOST-side by
+## MonsterBrain when it schedules the post-windup re-think.
+@export var attack_recovery_sec: float = 0.0
+
 ## Movement speed tier — a shared GlideSpeed resource, same mechanism players use. The referee
 ## reads glide_duration_sec from here when it stamps each monster step's duration.
 @export var glide_speed: GlideSpeed
