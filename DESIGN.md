@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.5.3)
+# Rogue's Oath — Design Doc (v0.5.4)
 
 ## Part 1 — The Game
 
@@ -331,6 +331,11 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.5.4 (2026-07-18)** — Dev round-reset key: host-only F5 re-seeds the whole world in place
+  (despawn all + respawn from a host-only name roster + fresh goblin) so a wire session can iterate
+  rounds without tearing down two instances and the tunnel. Explicitly DISPOSABLE — M6's real run
+  start/end flow replaces it; not a Commitment Rule leak (a world re-seed is disconnect semantics —
+  the world ended, nobody backed out of a decision within it), host-authored, no client reset surface.
 - **v0.5.3 (2026-07-18)** — Code-review fix pass on the v0.5.2 series (5-angle review,
   GLM red-teamed the review itself; 8 fixes, 6 declines recorded in the commit). The
   Entity contract completed: `max_hp` and `display_name` are now Entity-level and

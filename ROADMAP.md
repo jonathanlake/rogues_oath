@@ -143,6 +143,8 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
 
 Not scheduled — pulled in when their moment comes:
 
+- Host round-reset key (v0.5.4) — F5 re-seeds the whole world in place; a disposable wire-session dev
+  facility that stands in for M6's real run start/end flow, which replaces it when M6 lands
 - Death design — Q1's real answer replaces the M3 spectate placeholder
 - Host disconnect policy (Q2): accept run-loss vs. save/resume story
 - Origin-tile timing during a glide (Q4) — *(provisional shipped in M2: frees at glide start —

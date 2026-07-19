@@ -91,11 +91,12 @@ const _MOVE_DIRS := {
 # bindings); one key event per tap — the InputMap fans a dual-bound diagonal (KP7/KP9/KP1/KP3)
 # out to both actions itself, which is exactly what the harness verifies. No KP5 (no wait action).
 # "enter" scripts the chat-focus flow (game_log grabs focus on Enter) — the focus-release
-# regression test needs it, and it's generally useful.
+# regression test needs it, and it's generally useful. "f5" scripts the host round-reset key
+# (dev_reset_round) so reset verification runs two-instance without a hand on the keyboard.
 const _TAP_KEYS := {
 	"kp1": KEY_KP_1, "kp2": KEY_KP_2, "kp3": KEY_KP_3, "kp4": KEY_KP_4,
 	"kp6": KEY_KP_6, "kp7": KEY_KP_7, "kp8": KEY_KP_8, "kp9": KEY_KP_9,
-	"enter": KEY_ENTER,
+	"enter": KEY_ENTER, "f5": KEY_F5,
 }
 const _TAP_BUTTONS := {
 	"dpup": JOY_BUTTON_DPAD_UP, "dpdown": JOY_BUTTON_DPAD_DOWN,
