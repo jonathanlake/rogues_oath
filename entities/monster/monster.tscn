@@ -48,11 +48,11 @@ script = ExtResource("3_brain")
 
 [node name="Attack" type="AudioStreamPlayer" parent="." unique_id=1026429460]
 stream = ExtResource("4_commit")
-pitch_scale = 0.6
+pitch_scale = 1.5
 
 [node name="Hit" type="AudioStreamPlayer" parent="." unique_id=1724549287]
 stream = ExtResource("5_bonk")
-pitch_scale = 1.4
+pitch_scale = 0.7
 
 [node name="Windup" type="AudioStreamPlayer" parent="." unique_id=1349622745]
 stream = ExtResource("5_bonk")

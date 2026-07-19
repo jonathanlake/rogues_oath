@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.6.1)
+# Rogue's Oath — Design Doc (v0.6.2)
 
 ## Part 1 — The Game
 
@@ -359,6 +359,17 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.6.2 (2026-07-19)** — Sound grammar + blink tell (Jon's v0.6.1 verdict: flash
+  "too much — needs to be a blink"; too many noises). Movement is SILENT (the §2.2.8
+  ack is the flash alone; the tick is gone); combat is exactly swing + impact, pitch-
+  separated (swing = commit_sent high/short 1.5-1.7, impact = bonk low 0.7 — standard
+  whoosh-vs-thud timbre grammar); the windup tell is one sharp white BLINK
+  (Monster-exported peak/in/out knobs) over the HELD coil — motion carries the plant,
+  light marks the instant. Windup sound removed. KEPT deliberately: the rejection bonk
+  (§2.2.8 — a refused move must never be silent; errors only, not spam) and the death
+  sound. All sounds are still pitch-shifted placeholders — the real SFX pass stays
+  parked. Honest verification note: the grammar is code-path-verified (sole call sites
+  silenced/restored, whole-project grep); the ACOUSTIC verdict is Jon's first launch.
 - **v0.6.1 (2026-07-19)** — Attack choreography: plant, flash white, strike, rest
   (Jon's first v0.6.0 test answered the telegraph question NO — see §2.3.3). New
   MonsterType.attack_recovery_sec (goblin 0.25): one beat of stillness after each

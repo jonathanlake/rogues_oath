@@ -99,7 +99,8 @@ func play_commit_sent() -> void:
 	if OS.is_debug_build():
 		print("[peer %d] commit-sent cue" % multiplayer.get_unique_id())
 	_flash(Color(1.6, 1.6, 1.6))
-	_commit_audio.play()
+	# Sound deliberately ABSENT (v0.6.2 grammar, Jon: movement makes no noise — combat sounds are
+	# swing + impact only; the flash IS the §2.2.8 ack). $CommitSent stays per the keep-code rule.
 
 
 ## Local attacker's BUSY mirror for a bump (decision 2), driven by the attacker's own `attack`

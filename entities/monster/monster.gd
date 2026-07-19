@@ -18,6 +18,13 @@ extends Entity
 ## the LINEAR tween runs. Per the Commitment Rule there is no cancel path — glide_to only ever
 ## kills a tween to catch up to newer server truth, never to abort a committed step.
 
+## Windup blink tell (v0.6.2 — one sharp white pulse at windup start; Jon's feel knobs). Peak is
+## the shader flash_amount (0-1, mix-to-white — cannot overshoot); in/out are the pulse's rise and
+## fall times in seconds. The sustained plant is the COIL pose, not the light.
+@export_range(0.0, 1.0, 0.05) var windup_blink_peak: float = 0.85
+@export var windup_blink_in_sec: float = 0.03
+@export var windup_blink_out_sec: float = 0.08
+
 # ── Public state ──────────────────────────────────────────────────────────────
 
 ## This monster's authored template — display name, sprite cell, stats, speed tier. Set at spawn
@@ -92,10 +99,18 @@ func is_hostile_to(other: Node) -> bool:
 ## (main derives it from monster.tile - target_tile); `hold_sec` is the windup duration, so the coil
 ## and flash hold exactly the telegraph window.
 func play_windup(dir_away: Vector2i, hold_sec: float) -> void:
-	_windup_audio.play()
-	# White flash: snap flash_amount to near-peak in ~30ms, then HOLD — no fade-during-hold, which
-	# would kill the tell exactly when it must persist. The release (_bowstring) cuts it to 0.
-	_set_flash(0.8, 0.03)
+	# Sound deliberately ABSENT (v0.6.2 grammar, Jon: hit + swing are the only combat noises; the
+	# visual tell carries the telegraph). $Windup stays in the scene per the keep-code rule.
+	# White flash is a BLINK, not a hold (Jon v0.6.1: the held flash read as "too much"): one sharp
+	# pulse at windup start — up to the peak, straight back to 0 — while the held COIL below carries
+	# the sustained plant. One chained tween in the shader-flash slot; it always ends at 0.
+	if _flash_shader_tween != null and _flash_shader_tween.is_valid():
+		_flash_shader_tween.kill()
+	_flash_shader_tween = create_tween()
+	_flash_shader_tween.tween_property(_sprite.material, "shader_parameter/flash_amount",
+			windup_blink_peak, windup_blink_in_sec)
+	_flash_shader_tween.tween_property(_sprite.material, "shader_parameter/flash_amount",
+			0.0, windup_blink_out_sec)
 	# Coil: SNAP ~5px away from the target in ~30ms, then HOLD for the rest of the windup — a
 	# sustained displacement reads as a coil where a slow 4px drift over 0.25s reads as creep. NO
 	# return step here: the RELEASE (_bowstring at resolution) springs back through centre. Shares the

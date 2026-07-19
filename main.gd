@@ -354,7 +354,9 @@ func _handle_attack_event(event: Dictionary) -> void:
 		# whiff = the attacker's swing (play_whiff above, kept audible), reject = bonk (play_bonk) — so
 		# every outcome is uniquely audible, one sound each, none confusable (§2.2.8 / §2.3.4).
 		if attacker != null:
-			attacker.play_attack(dir, false)
+			# Swing sound RESTORED (v0.6.2, Jon: attack must be audible AND distinct from the hit —
+			# swing = high short whoosh, impact = low thud; pitch-separated in the scenes).
+			attacker.play_attack(dir, true)
 		if target != null:
 			target.play_hurt()
 			target.set_hp_display(int(data.get("hp_after", 0)), int(data.get("target_max", 0)))

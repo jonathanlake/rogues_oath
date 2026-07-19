@@ -180,8 +180,8 @@ Not scheduled — pulled in when their moment comes:
   choreography fix (recovery beat + coiled white tell) — RE-TEST at real speed is on
   Jon+Jeff next session*
 - Dedicated audio pass: real SFX to replace the pitch-shifted placeholders, and a
-  proper mix (v0.6.0 shipped a stopgap: landed hit = one sound, -6dB on the two
-  chattiest cues)
+  proper mix (v0.6.2 shipped the placeholder GRAMMAR: silent movement, swing-vs-impact
+  pitch separation, blink tell, no windup sound — the real-sample pass is still parked)
 - Chat polish: speech bubbles overhead (WoW-style), name colors (escape-then-wrap the
   already-escaped name), timestamps, chat sounds
 - ~~Distinct "Server is full." message for capacity-kicked clients~~ — DONE: shipped
