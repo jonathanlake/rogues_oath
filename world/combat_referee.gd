@@ -15,10 +15,11 @@ extends Node
 ##  - BUMP — MoveReferee's _validate_glide resolves an idle move into a hostile tile into a bump and
 ##    calls apply_damage(kind "bump"); MoveReferee also owns the attacker's busy record.
 ##  - AoO  — MoveReferee's attack-of-opportunity scan calls apply_damage(kind "free").
-##  - WIND-UP — a MonsterBrain requests wind_up(); this referee validates it, records the monster's
-##    busy commit on MoveReferee, posts the `windup` telegraph, and resolves it against the target
-##    TILE windup_sec later (DESIGN §2.1 "slow telegraph, hard commit" — a distinct WHIFF outcome
-##    survives deterministic damage).
+##  - ATTACK — a MonsterBrain requests wind_up(); this referee validates it and, on the goblin's
+##    windup_beats==0 dial, resolves an INSTANT deterministic strike then holds a recovery busy
+##    (DESIGN §2.8); on a >0 dial it records the busy commit, posts the `windup` telegraph, and
+##    resolves against the target TILE later (DESIGN §2.1 "slow telegraph, hard commit" — a distinct
+##    WHIFF outcome survives, the machinery preserved behind the dial).
 ##
 ## Every landed hit posts an `attack` event and every death a `died` event on the SAME NetEvents
 ## pipe (host-authored, peer=attacker/0), so all peers play back feedback and HP readouts from the
@@ -106,30 +107,47 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 	return false
 
 
-## A MonsterBrain requests a telegraphed wind-up against a target TILE (decision 3). Host-only.
-## Validates (attacker alive + not already busy per MoveReferee), records the monster's from==to
-## busy commit through MoveReferee's shared commit_in_place, posts the `windup` telegraph, and arms
-## a SceneTreeTimer that resolves against the tile windup_sec later. Returns the wind-up duration on
-## success (the brain schedules its own re-think just past it), or 0.0 if declined (brain re-thinks
-## on the normal cadence). The duration is the authored MonsterType.windup_sec unless the debug
-## windupsec= override is set (read LIVE, the exact mirror of the glide override).
+## A MonsterBrain requests an attack against a target TILE (decision 3; DESIGN §2.8). Host-only.
+## Two shapes on the ONE windup_beats dial:
+##  - windup_beats == 0 (the goblin): an INSTANT deterministic strike resolved against the target
+##    tile NOW (no telegraph event, no whiff-window timer), then the attacker is BUSY for
+##    recovery_beats — the symmetric "instant strike + N-beat recovery" the milestone lands.
+##  - windup_beats > 0 (or the windupsec= debug override): the full telegraphed wind-up, UNCHANGED
+##    — busy for the telegraph, post the `windup` event, resolve against the tile windup_sec later
+##    (the distinct WHIFF outcome survives, DESIGN §2.1). recovery is then brain pacing on top.
+## Both stamp seconds from the LIVE beat (GameManager.current_beat_sec). Returns the total seconds
+## the brain should wait before its next think (the committed busy plus any post-telegraph recovery)
+## on success, or -1.0 if DECLINED (attacker not alive / already busy) so the brain distinguishes a
+## real attack from a back-off. Validates attacker alive + not already busy per MoveReferee first.
 func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 	if not is_alive(attacker_id):
-		return 0.0
-	# The attacker must be free to act — never overlap a wind-up with a glide/another commit. The
+		return -1.0
+	# The attacker must be free to act — never overlap an attack with a glide/another commit. The
 	# busy record is the Commitment Rule backstop, owned by MoveReferee.
 	if _move_referee.is_entity_moving(attacker_id):
-		return 0.0
+		return -1.0
 	var attacker := _node_of_id(attacker_id)
 	var windup_sec := _windup_duration_of(attacker)
 	if GameManager.debug_windup_override_sec > 0.0:
 		windup_sec = GameManager.debug_windup_override_sec
-	# Record the busy commit through the ONE shared path (bump uses it too), so the from==to busy
-	# logic lives in exactly one place. A miss here means the attacker went busy between the checks
-	# above and now — decline cleanly.
-	var committed: bool = _move_referee.commit_in_place(attacker_id, windup_sec)
-	if not committed:
-		return 0.0
+	var recovery_sec := _recovery_duration_of(attacker)
+
+	# Instant-strike path (windup dial at 0). Commit the recovery busy FIRST (the Commitment Rule
+	# tail — the strike plays out its recovery, no cancel path), then resolve immediately against the
+	# target tile: apply_damage / whiff carries recovery_sec so every peer shows the recovery tell for
+	# it. No telegraph event and no timer — the strike is deterministic and lands in this same stack,
+	# so a target cannot dodge it (that dodge window was the failed windup experiment). A commit_in_place
+	# miss means the attacker went busy between the checks above and now — decline cleanly.
+	if windup_sec <= 0.0:
+		if not _move_referee.commit_in_place(attacker_id, recovery_sec):
+			return -1.0
+		_resolve_windup(attacker_id, target_tile, "strike", recovery_sec)
+		return recovery_sec
+
+	# Telegraphed wind-up path (dial > 0) — unchanged. Record the busy commit through the ONE shared
+	# path (bump uses it too), so the from==to busy logic lives in exactly one place.
+	if not _move_referee.commit_in_place(attacker_id, windup_sec):
+		return -1.0
 	NetEvents.post_event("windup", {
 		"entity_id": attacker_id,
 		"name": _name_of(attacker),
@@ -137,14 +155,16 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 		"windup_sec": windup_sec,
 	}, attacker_id)
 	# SceneTreeTimer on the host tree (never a Timer child of the monster — survives despawn by
-	# construction, the same mechanism MoveReferee's completion timers use).
-	get_tree().create_timer(windup_sec).timeout.connect(_resolve_windup.bind(attacker_id, target_tile))
-	return windup_sec
+	# construction, the same mechanism MoveReferee's completion timers use). recovery on this path is
+	# brain pacing (added to the return), NOT a referee record — the telegraph WAS the busy window.
+	get_tree().create_timer(windup_sec).timeout.connect(
+			_resolve_windup.bind(attacker_id, target_tile, "windup", 0.0))
+	return windup_sec + recovery_sec
 
 
 ## Host-side stat accessors, read by MoveReferee for a bump/AoO so combat numbers live in ONE place
 ## (this referee). Damage is per-entity (player melee_damage / monster attack_damage); the bump's
-## swing duration is the player's attack_duration_sec. Duck-typed across the two entity kinds; an
+## recovery tail is the attacker's recovery beats. Duck-typed across the two entity kinds; an
 ## unknown node reads harmless defaults. DELIBERATELY not collapsed to one Entity read: Player's
 ## export keeps its tuned name melee_damage (pinned in player.tscn), so the two stats keep their
 ## own names and this accessor stays the one translation point.
@@ -156,23 +176,30 @@ func damage_of(node: Node) -> int:
 	return 0
 
 
+## The bump's busy tail (seconds): the attacker's recovery beats stamped at the live beat — instant
+## strike + N-beat recovery (DESIGN §2.8). Delegates to _recovery_duration_of so player and monster
+## bumps share the one beats→seconds conversion (a monster never bumps in M3, but the accessor stays
+## total for a future monster bumper).
 func bump_duration_of(node: Node) -> float:
-	if node is Player:
-		return node.attack_duration_sec
-	# M3 monsters never bump (they attack via wind-up), but keep the accessor total: fall back to
-	# the monster's wind-up time so a future monster bump has a sane commit tail.
-	return _windup_duration_of(node)
+	return _recovery_duration_of(node)
 
 
 # ── Private methods ───────────────────────────────────────────────────────────
 
-## Resolve a wind-up against its committed TILE (decision 3). The attacker must still be alive — a
-## mid-wind-up kill deals nothing (that is the distinct outcome a slow telegraph buys). Damage hits
-## whatever hostile-to-the-attacker LIVING entity occupies the tile NOW (read from MoveReferee's
-## authoritative occupancy): a target that glided off whiffs; a different hostile that stepped onto
-## the telegraphed tile eats it (the telegraph commits to ground, not a name). No occupant / no
-## hostile / dead occupant → a WHIFF `attack` event (whiff true, no damage).
-func _resolve_windup(attacker_id: int, target_tile: Vector2i) -> void:
+## Resolve an attack against its committed TILE. Shared by both shapes (decision 3; DESIGN §2.8):
+## the telegraphed wind-up (armed on a timer; recovery_sec 0 — recovery is brain pacing there, so
+## the landed hit carries no recovery tell, and the coil already told) AND the instant strike
+## (called synchronously from wind_up with the recovery seconds, so the strike's `attack`/whiff
+## event carries the recovery duration and every peer plays the recovery tell for it). `kind` is
+## passed EXPLICITLY by the caller — "windup" for the telegraphed path (log/feedback unchanged),
+## "strike" for the instant path — never inferred from recovery_sec, whose sign says nothing about
+## which path fired (a zero-recovery instant strike is still a strike).
+## The attacker must still be alive — a mid-wind-up kill deals nothing (the distinct outcome a slow
+## telegraph buys; on the instant path the same-stack liveness makes this always true). Damage hits
+## whatever hostile-to-the-attacker LIVING entity occupies the tile NOW (MoveReferee's authoritative
+## occupancy): a target that glided off whiffs; a different hostile that stepped onto the tile eats
+## it (the attack commits to ground, not a name). No occupant / no hostile / dead → a WHIFF event.
+func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, recovery_sec: float) -> void:
 	if not is_alive(attacker_id):
 		return
 	var attacker := _node_of_id(attacker_id)
@@ -180,10 +207,11 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i) -> void:
 	if occ_id != _NO_ENTITY:
 		var occ := _node_of_id(occ_id)
 		if occ != null and is_alive(occ_id) and attacker != null and attacker.is_hostile_to(occ):
-			apply_damage(attacker_id, occ_id, damage_of(attacker), "windup", 0.0)
+			apply_damage(attacker_id, occ_id, damage_of(attacker), kind, recovery_sec)
 			return
 	# Whiff: swing into empty/vacated ground. Distinct outcome — no damage, hp_after -1 (absent),
-	# target_tile carried so the client renders the swing toward the committed tile.
+	# target_tile carried so the client renders the swing toward the committed tile. recovery_sec
+	# still rides so the instant-strike attacker shows its recovery tell even on a (rare) whiff.
 	NetEvents.post_event("attack", {
 		"attacker_id": attacker_id,
 		"attacker_name": _name_of(attacker),
@@ -193,9 +221,9 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i) -> void:
 		"damage": 0,
 		"hp_after": -1,
 		"target_max": 0,
-		"kind": "windup",
+		"kind": kind,
 		"whiff": true,
-		"duration_sec": 0.0,
+		"duration_sec": recovery_sec,
 	}, attacker_id)
 
 
@@ -261,10 +289,24 @@ func _max_hp_of(node: Node) -> int:
 	return 0
 
 
-## The wind-up telegraph duration for a node (seconds), from its MonsterType. A non-monster / missing
-## type falls back to MonsterType.DEFAULT_WINDUP_SEC — the value's single authoring site — so the
-## accessor is total without a shadow copy of the number here.
+## The wind-up telegraph duration for a node (seconds) — its MonsterType.windup_beats stamped at the
+## LIVE beat (GameManager.current_beat_sec). A non-monster / missing type falls back to
+## MonsterType.DEFAULT_WINDUP_BEATS — the value's single authoring site — so the accessor is total
+## without a shadow copy of the number here.
 func _windup_duration_of(node: Node) -> float:
+	var beats := MonsterType.DEFAULT_WINDUP_BEATS
 	if node is Monster and node.monster_type != null:
-		return node.monster_type.windup_sec
-	return MonsterType.DEFAULT_WINDUP_SEC
+		beats = node.monster_type.windup_beats
+	return beats * GameManager.current_beat_sec
+
+
+## The attacker's recovery tail (seconds) — its authored recovery beats stamped at the live beat
+## (DESIGN §2.8). Player: attack_recovery_beats; monster: recovery_beats. The one beats→seconds
+## conversion for a bump tail (bump_duration_of) and an instant strike's busy (wind_up). Unknown /
+## missing-type node reads 0 (no recovery).
+func _recovery_duration_of(node: Node) -> float:
+	if node is Player:
+		return node.attack_recovery_beats * GameManager.current_beat_sec
+	if node is Monster and node.monster_type != null:
+		return node.monster_type.recovery_beats * GameManager.current_beat_sec
+	return 0.0

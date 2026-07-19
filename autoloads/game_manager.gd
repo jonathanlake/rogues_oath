@@ -14,6 +14,15 @@ const MENU_SCENE := "res://ui/main_menu/main_menu.tscn"
 ## so authored values win; a missing/broken file falls back to script defaults LOUDLY (see below).
 var config: GameConfig = _load_config()
 
+## The session's live beat (seconds) — the tempo referees read when they stamp a verdict
+## (DESIGN §2.8). Seeded from GameConfig.beat_sec (or the host-only beatsec= override) at session
+## start by main.gd, on EVERY peer, BEFORE the first verdict. Referees read it LIVE at stamp time
+## (same pattern as debug_glide_override_sec below), so a future runtime tempo change takes effect
+## from the next verdict onward — never re-deriving an in-flight commit (stamp-and-bake, §2.8.2).
+## Clients may read it for local PACING only (move_input retry cadence); all adjudication is
+## host-side. Seeded inline from config so it is never 0 before a session opens.
+var current_beat_sec: float = config.beat_sec
+
 ## Set from the main menu before host_game() / join_game(). Flows into the spawn
 ## dict so all peers know each player's display name independently of peer ID.
 var player_name: String = ""
@@ -28,11 +37,16 @@ var last_disconnect_reason: String = ""
 ## so the override is visible in-game instead of silently surprising a deliberate tunneler.
 var host_port_was_ignored: bool = false
 
-## When true, the host seeds the world with M3's monster(s) on session start. Default true so menu
-## play gets the goblin; the autostart harness sets it false unless `goblin=1` (debug.gd), so the
-## existing movement harness runs stay monster-free. Read host-side only — the host authors all
+## When true, the host seeds the world with the map's monster(s) on session start. Default true so
+## menu play gets the goblins; the autostart harness sets it false unless `goblin=N>0` (debug.gd), so
+## the existing movement harness runs stay monster-free. Read host-side only — the host authors all
 ## monster spawns; clients replicate.
 var spawn_monsters: bool = true
+
+## Caps how many of main.gd's GOBLIN_SPAWN_TILES actually get a goblin. -1 = no cap (spawn all —
+## menu play). The autostart `goblin=N` knob (debug.gd) sets it to N so a scripted run can seed fewer
+## than the full set. Read host-side only, alongside spawn_monsters, when the host seeds the world.
+var monster_spawn_cap: int = -1
 
 ## DEBUG ONLY. When true, every entity is mutually hostile — the harness `hostile=1` knob sets it
 ## host-side (before host_game()) so the attack-of-opportunity trigger can be demoed two-instance
@@ -46,8 +60,16 @@ var all_hostile: bool = false
 ## applies on top. 0 = off (normal tier-driven pacing). Never touched by gameplay code.
 var debug_glide_override_sec: float = 0.0
 
+## DEBUG ONLY. When > 0, main.gd seeds current_beat_sec from this (seconds) at session start
+## instead of GameConfig.beat_sec — set host-side via debug.gd's `beatsec=` arg so a scripted run
+## can test a whole-game tempo (e.g. beatsec=0.40) without editing the .tres. Host-only, mirroring
+## glidesec=/windupsec=; a client seeds from its own config. Read ONCE at seed time (not live like
+## the two overrides below — the beat itself is the live value). 0 = off. Never touched by gameplay.
+var debug_beat_override_sec: float = 0.0
+
 ## DEBUG ONLY. When > 0, the combat referee uses this (seconds) as every monster wind-up's
-## telegraph duration instead of the MonsterType.windup_sec — set host-side via debug.gd's
+## telegraph duration instead of the beats product (MonsterType.windup_beats × current_beat_sec) —
+## set host-side via debug.gd's
 ## `windupsec=` arg (exact mirror of `glidesec=`) to stretch the wind-up window long enough to
 ## script a deterministic dodge/whiff. Read live by CombatReferee when it stamps a wind-up.
 ## 0 = off (authored per-monster pacing). Never touched by gameplay code.

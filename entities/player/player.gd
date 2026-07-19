@@ -31,10 +31,12 @@ const _SPRITE_TILES: Array[Vector2i] = [
 ## the referees when they stamp this attacker's damage; never trusted from the wire.
 @export var melee_damage: int = 5
 
-## Swing commit duration (seconds): after a bump lands (instantly), the attacker is BUSY for this
-## long — the Commitment Rule tail (decision 2). The referee stamps it into the from==to busy
-## record; the local attacker mirrors it as a blocked-input window (commit_in_place).
-@export var attack_duration_sec: float = 0.5
+## Recovery in BEATS after a bump lands: damage is instant, then the attacker is BUSY for this many
+## beats — the symmetric attack shape (DESIGN §2.8) and the Commitment Rule tail (decision 2). The
+## referee converts it to seconds at stamp time (beats × current_beat_sec) into the from==to busy
+## record; the local attacker mirrors that window as blocked input (commit_in_place) and every peer
+## plays the recovery tell for it. 2.0 → attack rate = movement rate (a step is glide + 1 rest beat).
+@export var attack_recovery_beats: float = 2.0
 
 @onready var _move_input := $MoveInput
 @onready var _path_marker: Node2D = $PathMarker

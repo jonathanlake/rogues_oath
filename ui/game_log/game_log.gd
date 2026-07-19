@@ -130,6 +130,14 @@ func _on_event_received(event: Dictionary) -> void:
 			# One distinct line on BOTH peers' logs so the re-seed is legible, never confusable with
 			# the "X joined." spam the respawn also produces (feedback rule §2.3.4).
 			add_line("— Round reset —")
+		"set_tempo":
+			# The host's tempo referee outcome (§2.8.3): an accepted set_tempo intent broadcasts under
+			# its own action name (like "chat"). One line naming who changed it, on every peer, so a live
+			# tempo change is legible in the log alongside the always-on readout. Names go through
+			# add_line's sink escape like every other system line.
+			var beat := float(data.get("beat_sec", 0.25))
+			var bpm := int(round(60.0 / beat)) if beat > 0.0 else 0
+			add_line("Tempo: %.2fs/beat (%d BPM) — set by %s." % [beat, bpm, str(data.get("by", "someone"))])
 
 
 ## Compose the combat-log line for one `attack` event, one distinct phrasing per outcome (§2.3.4):

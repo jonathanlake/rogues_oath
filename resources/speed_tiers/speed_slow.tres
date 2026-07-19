@@ -5,4 +5,4 @@
 [resource]
 script = ExtResource("1_glide")
 tier_name = "slow"
-glide_duration_sec = 0.25
+glide_beats = 1.0

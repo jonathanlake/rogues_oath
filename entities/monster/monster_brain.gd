@@ -16,13 +16,17 @@ extends Node
 ## hit against the target TILE later); the brain then schedules its OWN re-think just past that
 ## resolution, since a wind-up busy record ends without a glide_finished to wake it. Otherwise it
 ## paths one step toward the nearest player via WorldGrid.find_path (walls-only A*) and submits it
-## through the referee's host-local validator. A refused step, an empty path, or a busy gate
-## schedules a re-think rethink_delay_sec later — the delay is the hot-loop guard (a brain never
-## re-thinks twice in one frame) and mirrors MoveInput's post-reject retry cadence.
+## through the referee's host-local validator. A refused step or an empty path schedules a re-think
+## rethink_beats later, and a busy gate (mid glide+rest) polls on the tight epsilon — both are the
+## hot-loop guard (a brain never re-thinks twice in one frame) and mirror MoveInput's retry cadence.
 
-## Re-think delay (seconds) after a refused/blocked action or a busy gate. Matches MoveInput's
-## held_retry_cooldown_sec so a monster and a player back off a contested tile at the same cadence.
-@export var rethink_delay_sec: float = 0.25
+## Re-think delay in BEATS after a refused/blocked action (a contested tile back-off) — converted at
+## the live beat when used, not cached (DESIGN §2.8; matches MoveInput's held-retry cadence so a
+## monster and a player back off a contested tile together). 1 beat = one movement rest. NOTE: the
+## BUSY-gate retry (the referee still showing this monster mid glide+rest) uses the tight
+## windup_rethink_epsilon_sec poll instead, so a monster resumes right as its rest ends rather than a
+## whole beat later — go-stop-go stays uniform (see _think).
+@export var rethink_beats: float = 1.0
 
 ## Small margin (seconds) added past a wind-up's duration when the brain schedules its own
 ## re-think after committing one. A wind-up busy record ends without a glide_finished (that only
@@ -32,6 +36,11 @@ extends Node
 
 # Set true by activate(); a client's brain stays false and every think early-returns.
 var _active: bool = false
+# Aggro latch (DESIGN §2.8, aggro persistence). Set true the first think the nearest player is
+# within aggro_range_tiles; while latched AND monster_type.aggro_persists, the range check is
+# skipped so the chase never leash-drops. With aggro_persists false it tracks current in-range
+# state (legacy leash). Unused by unlimited-range monsters (aggro_range_tiles <= 0 skip the gate).
+var _aggroed: bool = false
 # The host's MoveReferee, handed in by the parent at activation. The brain reads occupancy truth
 # and submits monster intents through it (host-local — no RPC; monsters have no RTT). It never
 # reaches up to Main or the monster; the referee is its one injected dependency. Untyped so its
@@ -60,6 +69,9 @@ func activate(referee: Node, combat: Node, entity_id: int, monster_type: Monster
 	_combat = combat
 	_entity_id = entity_id
 	_monster_type = monster_type
+	# Fresh life, fresh aggro. Instances are currently always freshly spawned, but a pooled or
+	# re-activated monster must never inherit a previous life's latch and skip the acquire gate.
+	_aggroed = false
 	_active = true
 	_think.call_deferred()
 
@@ -77,11 +89,13 @@ func on_boundary() -> void:
 func _think() -> void:
 	if not _active:
 		return
-	# Busy gate: only ever act between committed steps. If the referee still shows this monster
-	# mid-glide (a boundary think can race the referee's completion timer against the visual
-	# tween), back off and retry — self-healing, never a lockup.
+	# Busy gate: only ever act between committed steps. Under go-stop-go the referee holds this
+	# monster busy for glide + REST, but the node's glide_finished (which woke us via on_boundary)
+	# fires at the glide boundary — so a post-glide think lands mid-rest and sees busy. Poll on the
+	# tight epsilon (not the full rethink beat) so the monster resumes right as its rest ends and the
+	# cadence stays uniform. Self-healing, never a lockup.
 	if _referee.is_entity_moving(_entity_id):
-		_reschedule()
+		_reschedule_after(windup_rethink_epsilon_sec)
 		return
 	var my_tile: Vector2i = _referee.tile_of_entity(_entity_id)
 	# tile_of_entity returns a wall-sentinel tile when the entity is untracked (e.g. despawned
@@ -100,42 +114,48 @@ func _think() -> void:
 		_reschedule()
 		return
 
-	# Aggro-range leash (monster_type.aggro_range_tiles, DESIGN §2.2.6-behavior): nearest player by
-	# Chebyshev (king-move) distance; if the type caps the range (>0) and the nearest sits beyond it,
-	# idle on the SAME 0.25s re-poll instead of chasing/attacking. Runs EVERY think, so it is both the
-	# acquire gate AND the leash — a chase drops the moment the target breaks range. 0 = unlimited
-	# (whole-room aggro), so an un-ranged monster skips the gate entirely. Type is null only on a
-	# client's inert brain, which never reaches here; the guard keeps a misconfig from crashing.
+	# Aggro acquisition + persistence (monster_type.aggro_range_tiles + aggro_persists, DESIGN §2.8):
+	# nearest player by Chebyshev (king-move) distance. aggro_range_tiles <= 0 = unlimited (whole-room
+	# aggro), so an un-ranged monster skips the gate entirely. Otherwise the brain ACQUIRES when the
+	# nearest is within range (latching _aggroed) and, with aggro_persists true (the default), IGNORES
+	# range from then on — the chase never leash-drops, following the target across rooms. With
+	# aggro_persists false the legacy LEASH returns: _aggroed tracks current in-range state and the
+	# chase drops the instant the target breaks range. Type is null only on a client's inert brain,
+	# which never reaches here; the guard keeps a misconfig from crashing.
 	var nearest_dist: int = -1
 	for t in targets:
 		var d: int = maxi(absi(t.x - my_tile.x), absi(t.y - my_tile.y))
 		if nearest_dist < 0 or d < nearest_dist:
 			nearest_dist = d
-	if _monster_type != null and _monster_type.aggro_range_tiles > 0 and nearest_dist > _monster_type.aggro_range_tiles:
-		_reschedule()
-		return
+	if _monster_type != null and _monster_type.aggro_range_tiles > 0:
+		var in_range := nearest_dist <= _monster_type.aggro_range_tiles
+		if in_range:
+			_aggroed = true
+		elif not _monster_type.aggro_persists:
+			# Legacy leash: aggro drops the moment the target breaks range (persistence off).
+			_aggroed = false
+		# Un-acquired, or leash-dropped, means idle on the re-think cadence. A latched persistent
+		# aggro skips straight past this — range no longer matters once acquired.
+		if not _aggroed:
+			_reschedule()
+			return
 
 	# Adjacent to a hostile player? (M3: every player is hostile to the monster — the faction rule;
 	# when neutral factions exist this filters by is_hostile_to.) Chunk-2 seam: request a wind-up.
 	for t in targets:
 		if maxi(absi(t.x - my_tile.x), absi(t.y - my_tile.y)) == 1:
-			# Request a telegraphed wind-up against that tile (decision 3). The combat referee
-			# validates it, commits the monster (from==to busy record on the movement referee),
-			# posts the telegraph, and resolves it against the TILE windup_sec later.
-			var windup_sec: float = _combat.wind_up(_entity_id, t)
-			if windup_sec > 0.0:
-				# The wind-up busy record ends WITHOUT waking us (glide_finished fires only on real
-				# glides), so schedule our OWN re-think just past resolution — think-at-own-boundary,
-				# no new signal plumbing. On resolution the target may have fled or died; the next
-				# think re-decides (chase, or wind up anew if still adjacent).
-				# The epsilon keeps its timer-safety meaning (the referee's busy record has cleared);
-				# attack_recovery_sec is the designer's REST beat layered on top (v0.6.1) — the
-				# deliberate idle that makes each windup read as a discrete event instead of a ~0.3s
-				# blur. It is brain pacing, NOT a commitment and never a referee record, so resting
-				# opens no cancel path (the Commitment Rule is untouched). Null-guarded like the
-				# aggro-range check above — a client's inert brain never reaches here anyway.
-				var recovery_sec: float = _monster_type.attack_recovery_sec if _monster_type != null else 0.0
-				_reschedule_after(windup_sec + windup_rethink_epsilon_sec + recovery_sec)
+			# Request an attack against that tile (decision 3; DESIGN §2.8). The combat referee runs
+			# either the instant strike (goblin, windup_beats==0: resolve now + recovery busy) or the
+			# telegraphed wind-up (>0 dial), commits the monster's busy record, and returns the total
+			# seconds until the monster is free again (committed busy plus any post-telegraph recovery),
+			# or -1.0 if it DECLINED (already busy / not alive).
+			var wait_sec: float = _combat.wind_up(_entity_id, t)
+			if wait_sec >= 0.0:
+				# The attack's busy record ends WITHOUT waking us (glide_finished fires only on real
+				# glides), so schedule our OWN re-think just past it — think-at-own-boundary, no new
+				# signal plumbing. The epsilon guarantees the referee's busy record has cleared first.
+				# On resolution the target may have fled or died; the next think re-decides.
+				_reschedule_after(wait_sec + windup_rethink_epsilon_sec)
 			else:
 				# Declined (already busy / not alive) — back off on the normal cadence and retry.
 				_reschedule()
@@ -167,9 +187,10 @@ func _think() -> void:
 		_reschedule()
 
 
-## Schedule one re-think rethink_delay_sec from now (the refused/blocked/busy cadence).
+## Schedule one re-think rethink_beats from now (the refused/blocked/no-target back-off cadence),
+## converted at the LIVE beat — not cached, so a tempo change is picked up on the next back-off.
 func _reschedule() -> void:
-	_reschedule_after(rethink_delay_sec)
+	_reschedule_after(rethink_beats * GameManager.current_beat_sec)
 
 
 ## Schedule one re-think `sec` from now. A get_tree() SceneTreeTimer (not a Timer child) so it

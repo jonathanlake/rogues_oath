@@ -14,26 +14,52 @@ extends RefCounted
 ## Pixels per tile edge (square). Matches the 32rogues tileset cell size.
 const TILE_PX := 32
 
-## 20 columns × 11 rows. '#' = wall, '.' = floor. Read as ROOM_LAYOUT[row][col], i.e.
-## ROOM_LAYOUT[tile.y][tile.x]. Features, all purpose-built for M2 demos:
-##  - full wall border,
-##  - two 2-tile pillars left-of-center (row 3 and row 7, cols 5-6),
-##  - one diagonal-gate off-center-right: walls at (13,4) and (14,3) touch only at a corner,
-##    with their flanking tiles (13,3) and (14,4) left as floor — a purpose-built spot for
-##    chunk 2 to demonstrate the corner rule (a diagonal squeeze between the two walls is
-##    rejected even though both endpoints are floor).
+## 48 columns × 28 rows. '#' = wall, '.' = floor. Read as ROOM_LAYOUT[row][col], i.e.
+## ROOM_LAYOUT[tile.y][tile.x]. Disposable multi-room fixture (M3.5 — the screen-size /
+## camera question; M4a's procedural generation replaces it). Five rooms joined by 1–2-tile
+## corridors:
+##  - A  start room, top-left      (cols 2–13, rows 2–8)
+##  - B  top-right                 (cols 32–45, rows 2–9)
+##  - C  centre                    (cols 19–30, rows 12–18)
+##  - D  bottom-left               (cols 2–13, rows 19–25)
+##  - E  bottom-right              (cols 33–45, rows 18–25)
+## Corridors: A↔B along row 5; A↔D down col 7; the A–B corridor↔C down col 25; C↔E along
+## row 16; D↔E along row 22.
+## Features preserved from the M2 fixture, spread across the map:
+##  - full wall border ((0,0) MUST stay wall — MoveReferee's _NO_TILE sentinel assumes it),
+##  - a single pillar in A at (10,4) and a 2-tile pillar in C at (24,15)/(25,15),
+##  - one diagonal-gate in B: walls at (40,5) and (41,4) touch only at a corner, with their
+##    flanking tiles (40,4) and (41,5) left as floor — the corner rule rejects a diagonal
+##    squeeze between the two walls even though both endpoints are floor.
 const ROOM_LAYOUT: Array[String] = [
-	"####################",  # row 0  — border
-	"#..................#",  # row 1
-	"#..................#",  # row 2
-	"#....##.......#....#",  # row 3  — pillar (5,6); gate wall (14,3)
-	"#............#.....#",  # row 4  — gate wall (13,4)
-	"#..................#",  # row 5
-	"#..................#",  # row 6
-	"#....##............#",  # row 7  — pillar (5,6)
-	"#..................#",  # row 8
-	"#..................#",  # row 9
-	"####################",  # row 10 — border
+	"################################################",  # row 0  — border
+	"################################################",  # row 1
+	"##............##################..............##",  # row 2
+	"##............##################..............##",  # row 3
+	"##........#...##################.........#....##",  # row 4  — A pillar (10,4); gate wall (41,4)
+	"##......................................#.....##",  # row 5  — A↔B corridor; gate wall (40,5)
+	"##............###########.######..............##",  # row 6
+	"##............###########.######..............##",  # row 7
+	"##............###########.######..............##",  # row 8
+	"#######.#################.######..............##",  # row 9
+	"#######.#################.######################",  # row 10
+	"#######.#################.######################",  # row 11
+	"#######.###########............#################",  # row 12
+	"#######.###########............#################",  # row 13
+	"#######.###########............#################",  # row 14
+	"#######.###########.....##.....#################",  # row 15 — C pillar (24,15)/(25,15)
+	"#######.###########...............##############",  # row 16 — C↔E corridor
+	"#######.###########............##.##############",  # row 17 — C↔E corridor turns south
+	"#######.###########............##.............##",  # row 18
+	"##............###################.............##",  # row 19
+	"##............###################.............##",  # row 20
+	"##............###################.............##",  # row 21
+	"##............................................##",  # row 22 — D↔E corridor
+	"##............###################.............##",  # row 23
+	"##............###################.............##",  # row 24
+	"##............###################.............##",  # row 25
+	"################################################",  # row 26
+	"################################################",  # row 27 — border
 ]
 
 

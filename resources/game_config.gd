@@ -5,6 +5,21 @@ extends Resource
 
 @export var max_players: int = 6
 
+## The global beat (seconds) — the unit every action duration is authored against (DESIGN §2.8).
+## Every gameplay resource expresses its timings as designer-editable BEAT MULTIPLES (glide_beats,
+## windup_beats, recovery_beats, move_rest_beats); seconds exist only when a referee stamps a
+## verdict. Seeded into GameManager.current_beat_sec at session start; the runtime tempo knob
+## (§2.8.3, future chunk) adjusts the live value from there. NOT a global tick — actions still
+## start on commit and share only their unit (§2.4.1 stands).
+@export var beat_sec: float = 0.25
+
+## Rest beats appended to every movement step's committed window (go-stop-go, DESIGN §2.8/§2.2):
+## a step is a 1-beat glide + this many beats of rhythmic pause, the whole thing one committed
+## action. Server-authored and identical on every peer (not RTT jitter — the pipeline makes it
+## uniform). The diagonal multiplier scales the GLIDE portion only; this rest is a separate term.
+## Read HOST-side by MoveReferee when it stamps a step's busy window.
+@export var move_rest_beats: float = 1.0
+
 ## Unitless duration multiplier applied to a glide's per-step time when the step is diagonal
 ## (DESIGN §2.2.7). Jeff's default is 2.0× — a diagonal costs twice an orthogonal step, so
 ## corner-cutting isn't a free shortcut. Read server-side when stamping each glide's duration.

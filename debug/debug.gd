@@ -70,6 +70,16 @@ var _has_click: bool = false
 # walk to visibly bend before the next target replaces it.
 var _click_delay_sec: float = 1.5
 
+# Tempo harness (tempo=/tempowait=): fire ONE set_tempo intent through the REAL pipe (submit_intent)
+# from EITHER role, testing the runtime tempo knob (§2.8.3) end-to-end — the host validates/clamps and
+# broadcasts, both peers adopt it. Deliberately bypasses the +/- key sampling (like move= bypasses
+# MoveInput), so it exercises the SERVER path: a client tempo= proves the intent crosses the wire and
+# the host restamps subsequent verdicts. Fires mid-sequence by default (move anchor + 2s) so a
+# concurrent move=/hold= shows durations change across the tempo boundary; tempowait= overrides.
+var _tempo_beat: float = 0.0
+var _has_tempo: bool = false
+var _tempo_wait_sec: float = -1.0
+
 # Tap harness (tap=/tapsec=): synthesizes press/release EVENTS via Input.parse_input_event(),
 # which routes through the REAL InputMap bindings — one layer deeper than hold=, which presses
 # actions directly and therefore cannot test the bindings themselves (numpad dual-bound
@@ -142,6 +152,11 @@ func _ready() -> void:
 	# comparison basis, and the real version still shows in the menu. Structurally inert on a host
 	# (hosts never send peer_ready), so it's applied in the client branch alongside join=.
 	var fake_version := ""
+	# host-only beat override (seconds); inert on the client and without the arg. Sets the whole-game
+	# tempo (GameManager.current_beat_sec seed) so a scripted run can test a slower/faster beat
+	# end-to-end — e.g. beatsec=0.40 — without editing the .tres. Unlike glidesec=/windupsec= (which
+	# override a single FINAL duration), this scales EVERYTHING authored in beats together.
+	var beat_override := 0.0
 	# host-only glide-duration override (seconds); inert on the client and without the arg.
 	# Stretches every glide's base step time so conga/timing tests are scriptable + observable.
 	var glide_override := 0.0
@@ -153,10 +168,9 @@ func _ready() -> void:
 	# entity mutually hostile so a glide out of an adjacent tile fires a real AoO `attack` event (kind "free") — the
 	# two-instance demo of the attack-of-opportunity wiring before monsters exist (M3).
 	var all_hostile := false
-	# host-only monster knob (inert on the client): goblin=1 opts THIS autostart run into spawning
-	# M3's goblin. Default off so existing movement harness runs stay monster-free; menu play spawns
-	# it regardless (GameManager.spawn_monsters defaults true — the autostart host below overrides).
-	var spawn_goblin := false
+	# goblin=N: -1 = knob absent (autostart default: monster-free); 0 = none; N>0 = up to N goblins
+	# from main.gd's GOBLIN_SPAWN_TILES. Menu play (not autostart) spawns all goblins by default.
+	var goblin_count := -1
 	for arg in args:
 		if arg.begins_with("screenshot="):
 			_schedule_screenshot(arg.trim_prefix("screenshot="))
@@ -180,6 +194,8 @@ func _ready() -> void:
 			_move_delay_sec = arg.trim_prefix("movedelay=").to_float()
 		elif arg.begins_with("movewait="):
 			_move_wait_sec = arg.trim_prefix("movewait=").to_float()
+		elif arg.begins_with("beatsec="):
+			beat_override = arg.trim_prefix("beatsec=").to_float()
 		elif arg.begins_with("glidesec="):
 			glide_override = arg.trim_prefix("glidesec=").to_float()
 		elif arg.begins_with("windupsec="):
@@ -198,6 +214,11 @@ func _ready() -> void:
 			_parse_click_list(arg.trim_prefix("click="))
 		elif arg.begins_with("clickdelay="):
 			_click_delay_sec = arg.trim_prefix("clickdelay=").to_float()
+		elif arg.begins_with("tempo="):
+			_tempo_beat = arg.trim_prefix("tempo=").to_float()
+			_has_tempo = true
+		elif arg.begins_with("tempowait="):
+			_tempo_wait_sec = arg.trim_prefix("tempowait=").to_float()
 		elif arg.begins_with("overlay="):
 			# Both roles: show the F3 overlay from startup (scripted screenshots). Applied via a
 			# GameManager flag the overlay reads in its _ready — set here at parse time, before
@@ -206,7 +227,7 @@ func _ready() -> void:
 		elif arg.begins_with("hostile="):
 			all_hostile = arg.trim_prefix("hostile=").to_int() != 0
 		elif arg.begins_with("goblin="):
-			spawn_goblin = arg.trim_prefix("goblin=").to_int() != 0
+			goblin_count = arg.trim_prefix("goblin=").to_int()
 
 	if not (is_host or is_client):
 		return
@@ -225,6 +246,12 @@ func _ready() -> void:
 		# is capacity-kicked — a two-window test for the kick path.
 		if max_players > 0:
 			GameManager.config.max_players = max_players
+		# beatsec= is host-only: main.gd seeds current_beat_sec from this override at session start
+		# (before any verdict), so setting it before host_game() is enough. Inert on the client (it
+		# seeds from its own config) — the host stamps every duration, so both windows' visible cadence
+		# still matches. Independent of glidesec=/windupsec= (this scales all beats; those pin one value).
+		if beat_override > 0.0:
+			GameManager.debug_beat_override_sec = beat_override
 		# glidesec= is host-only: the referee reads the override live when it stamps each glide,
 		# so setting it any time before the moves fire is enough. Inert on the client.
 		if glide_override > 0.0:
@@ -239,9 +266,14 @@ func _ready() -> void:
 		if all_hostile:
 			GameManager.all_hostile = true
 		# goblin= is host-only: the autostart run is monster-free unless opted in, so movement
-		# harness runs (move=/hold=/tap=/click=) keep their clean occupancy. Set before host_game()
-		# so Main reads it when it seeds the world. Inert on the client.
-		GameManager.spawn_monsters = spawn_goblin
+		# harness runs (move=/hold=/tap=/click=) keep their clean occupancy. goblin=N caps the count
+		# (0 = none, N>0 = up to N); knob absent (-1) stays monster-free. Set before host_game() so Main
+		# reads both when it seeds the world. Inert on the client.
+		if goblin_count >= 0:
+			GameManager.spawn_monsters = goblin_count > 0
+			GameManager.monster_spawn_cap = goblin_count
+		else:
+			GameManager.spawn_monsters = false
 		print("[Debug] autostart: hosting on port %d" % NetworkManager.DEFAULT_PORT)
 		if NetworkManager.host_game() != OK:
 			push_error("[Debug] autostart host failed")
@@ -321,6 +353,10 @@ func _schedule_input_knobs(default_anchor_sec: float) -> void:
 		_schedule_taps(move_anchor)
 	if _has_click:
 		_schedule_clicks(move_anchor)
+	# tempo= fires mid-sequence by default (move anchor + 2s) so a concurrent move=/hold= shows glide
+	# durations change across the tempo boundary; tempowait= pins it (e.g. early, for a late-join test).
+	if _has_tempo:
+		_schedule_tempo(_tempo_wait_sec if _tempo_wait_sec >= 0.0 else move_anchor + 2.0)
 
 
 ## Fire one chat intent through the real pipe after a settle delay. Works identically on host
@@ -341,6 +377,15 @@ func _schedule_moves(delay_sec: float) -> void:
 		if i > 0:
 			await get_tree().create_timer(_move_delay_sec).timeout
 		NetEvents.submit_intent("glide_to", { "dir": _move_dirs[i] })
+
+
+## Fire one set_tempo intent through the real pipe after a delay. Works identically on host and
+## client — submit_intent is the single public entry point, no role branch. The host validates,
+## clamps/snaps, applies, and broadcasts; both peers adopt the new beat (§2.8.3).
+func _schedule_tempo(delay_sec: float) -> void:
+	await get_tree().create_timer(delay_sec).timeout
+	print("[Debug] tempo: submitting set_tempo beat_sec=%.2f" % _tempo_beat)
+	NetEvents.submit_intent("set_tempo", { "beat_sec": _tempo_beat })
 
 
 ## Parse a comma-separated compass list (e.g. "e,ne,sw") into _move_dirs. Unknown tokens are

@@ -26,9 +26,10 @@ extends Node
 # (full border), so it can never be a real resting tile — an unambiguous "not found".
 const _NO_TILE := Vector2i(0, 0)
 
-## Fallback per-step glide time (seconds) used only when a mover has no GlideSpeed resource
+## Fallback per-step glide time in BEATS used only when a mover has no GlideSpeed resource
 ## assigned — a misconfiguration guard, warned once. The real value comes from the mover's tier.
-@export var fallback_glide_duration_sec: float = 0.35
+## Converted to seconds (× current_beat_sec) at stamp time like every authored beat value.
+@export var fallback_glide_beats: float = 1.0
 
 # The Players container, handed in by Main via activate(). We read child Player nodes from it
 # (membership, the mover's GlideSpeed) but never reach up to Main — component pattern.
@@ -305,9 +306,13 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 				return _begin_bump(sender_peer_id, mover, occupant_id, occupant)
 		return { "ok": false, "reason": "occupied" }
 
-	# Duration is stamped ONCE here (base × diagonal multiplier) and drives BOTH the host's
-	# completion timer and every client's tween, so the two can never disagree.
-	var duration := _step_duration(mover, dir)
+	# Stamp both windows ONCE here (stamp-and-bake, DESIGN §2.8), so a live tempo change never
+	# re-derives this in-flight commit. glide_sec (base × diagonal multiplier) drives the host's
+	# completion of the VISUAL and rides the broadcast — every client tweens exactly it. busy_sec =
+	# glide + rest is the mover's committed OCCUPANCY window (go-stop-go): it owns the completion
+	# timer and gates the pipelined promotion, so the next step broadcasts at the END of the rest.
+	var glide_sec := _step_duration(mover, dir)
+	var busy_sec := glide_sec + _rest_duration()
 
 	# Pipelined accept: the mover is mid-glide, so this step is committed NOW (occupancy swaps one
 	# step deeper, exactly as the conga branch below) but its broadcast — and its AoO scan — are
@@ -317,7 +322,9 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	if is_pipelined:
 		_occupied.erase(from)
 		_occupied[to] = sender_peer_id
-		_pending[sender_peer_id] = { "from": from, "to": to, "duration": duration }
+		# Both stamped windows travel in the slot: glide_sec for the deferred broadcast/tween,
+		# busy_sec for the completion timer the promotion arms (go-stop-go carries through the pipe).
+		_pending[sender_peer_id] = { "from": from, "to": to, "glide_sec": glide_sec, "busy_sec": busy_sec }
 		if OS.is_debug_build():
 			print("[MoveReferee] pipelined accept peer=%d %s→%s" % [sender_peer_id, from, to])
 		return { "ok": true, "deferred": true }
@@ -347,30 +354,45 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	else:
 		# Hold origin: keep it in _occupied, reserve the destination until arrival.
 		_reserved[to] = sender_peer_id
-	# Host-side completion. create_timer survives on the host's tree; the stale-guard in
-	# _finish_glide ignores a fire whose glide has been superseded or whose peer has left.
-	get_tree().create_timer(duration).timeout.connect(_finish_glide.bind(sender_peer_id, token))
+	# Host-side completion fires at the END of the busy window (glide + rest) — the mover holds its
+	# occupancy through the rest, and a pending step promotes here. create_timer survives on the
+	# host's tree; the stale-guard in _finish_glide ignores a fire whose glide has been superseded or
+	# whose peer has left. The broadcast carries glide_sec: clients tween the glide, then sit still
+	# for the rest until the next step's broadcast arrives at busy_sec (the visible go-stop-go pause).
+	get_tree().create_timer(busy_sec).timeout.connect(_finish_glide.bind(sender_peer_id, token))
 
-	return { "ok": true, "data": { "from": from, "to": to, "duration_sec": duration } }
+	return { "ok": true, "data": { "from": from, "to": to, "duration_sec": glide_sec } }
 
 
-## Compute a step's glide time: the mover's tier (or the warned fallback if it has none), then
-## the diagonal multiplier for a diagonal step, and the debug override — when set — replaces the
-## base BEFORE the multiplier so a diagonal debug step still stamps override × multiplier. `mover`
-## is untyped: a Player or a Monster, both of which expose glide_speed (the referee reads only that).
+## Compute a step's GLIDE seconds — the visual tween / broadcast duration, NOT the busy window
+## (see _rest_duration: the mover is busy for glide + rest). The mover's tier beats (or the warned
+## fallback), converted to seconds at the LIVE beat (GameManager.current_beat_sec), then the
+## diagonal multiplier on the GLIDE portion only. The debug glidesec= override, when set, replaces
+## the final glide seconds BEFORE the multiplier so a diagonal debug step still stamps override ×
+## multiplier — the exact mirror of the beat product it stands in for. `mover` is untyped: a Player
+## or a Monster, both of which expose glide_speed (the referee reads only that).
 func _step_duration(mover, dir: Vector2i) -> float:
-	var base := fallback_glide_duration_sec
+	var glide_beats := fallback_glide_beats
 	if mover.glide_speed == null:
 		if not _warned_null_speed:
-			push_warning("[MoveReferee] mover has no GlideSpeed — using fallback %.2fs" % fallback_glide_duration_sec)
+			push_warning("[MoveReferee] mover has no GlideSpeed — using fallback %.1f beat(s)" % fallback_glide_beats)
 			_warned_null_speed = true
 	else:
-		base = mover.glide_speed.glide_duration_sec
+		glide_beats = mover.glide_speed.glide_beats
+	var base := glide_beats * GameManager.current_beat_sec
 	if GameManager.debug_glide_override_sec > 0.0:
 		base = GameManager.debug_glide_override_sec
 	if dir.x != 0 and dir.y != 0:
 		base *= GameManager.config.diagonal_step_multiplier
 	return base
+
+
+## The go-stop-go REST seconds appended to every step's busy window (DESIGN §2.8): move_rest_beats
+## converted at the live beat. A SEPARATE term from the glide — the diagonal multiplier does NOT
+## scale the rest (a diagonal step glides longer but rests the same). Baked into busy_sec alongside
+## the glide at stamp time (stamp-and-bake): a later tempo change never re-derives this window.
+func _rest_duration() -> float:
+	return GameManager.config.move_rest_beats * GameManager.current_beat_sec
 
 
 ## Begin a BUMP attack (host-only, decision 1+2). The idle mover moves INTO a hostile living tile:
@@ -465,7 +487,8 @@ func _finish_glide(peer_id: int, token: int) -> void:
 		_pending.erase(peer_id)
 		var from: Vector2i = slot["from"]
 		var to: Vector2i = slot["to"]
-		var duration: float = slot["duration"]
+		var glide_sec: float = slot["glide_sec"]
+		var busy_sec: float = slot["busy_sec"]
 		# Re-resolve the mover: exit cleanup erases the slot, so a live pending slot should always
 		# have a live node — a miss is a real invariant break, worth a log line, never a silent
 		# no-op. Erase the stale _gliding record and bail defensively. Pending is players-only, so
@@ -494,8 +517,10 @@ func _finish_glide(peer_id: int, token: int) -> void:
 		var next_token := _next_token
 		_next_token += 1
 		_gliding[peer_id] = { "from": from, "to": to, "token": next_token }
-		get_tree().create_timer(duration).timeout.connect(_finish_glide.bind(peer_id, next_token))
-		NetEvents.post_event("glide_to", { "from": from, "to": to, "duration_sec": duration }, peer_id)
+		# The promoted step's own busy window (glide + rest) — the NEXT rest is honoured too, so a
+		# held run keeps its go-stop-go cadence step after step. Broadcast carries glide_sec.
+		get_tree().create_timer(busy_sec).timeout.connect(_finish_glide.bind(peer_id, next_token))
+		NetEvents.post_event("glide_to", { "from": from, "to": to, "duration_sec": glide_sec }, peer_id)
 		return
 	_gliding.erase(peer_id)
 

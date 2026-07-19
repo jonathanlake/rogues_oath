@@ -25,10 +25,16 @@ const GAME_LOG_SCENE: PackedScene = preload("uid://djd1d1pf44yi2") # ui/game_log
 # the same build (version gate), so the readable path is the stable, comparable form.
 const GOBLIN_TYPE_PATH := "res://resources/monsters/goblin.tres"
 
-# The single goblin's spawn tile (plan §Chunk 1). Map-coupled: the spawn is guarded by
-# is_walkable + is_tile_free so a future room edit that walls this tile skips the spawn instead of
-# dropping a goblin into a wall.
-const GOBLIN_SPAWN_TILE := Vector2i(16, 8)
+# Goblin spawn tiles, one per far room so the multi-room map (M3.5) is populated and cross-room
+# aggro/chase gets exercised: B (top-right), C (centre), E (bottom-right). Map-coupled: each spawn
+# is guarded by is_walkable + is_tile_free, so a future room edit that walls a tile skips that goblin
+# instead of dropping it into a wall. The autostart goblin=N knob caps how many actually spawn
+# (GameManager.monster_spawn_cap); menu play spawns them all.
+const GOBLIN_SPAWN_TILES: Array[Vector2i] = [
+	Vector2i(38, 6),   # room B
+	Vector2i(23, 14),  # room C
+	Vector2i(39, 21),  # room E
+]
 
 # Room presentation. The $Room TileMapLayer is painted at runtime FROM WorldGrid (the logical
 # truth) — no authored TileSet .tres, since the room is a disposable prototype fixture. Atlas
@@ -44,18 +50,26 @@ const WALL_ATLAS := Vector2i(0, 1)   # tiles.txt row 2a — "rough stone wall (t
 const PEER_READY_RETRY_INTERVAL_SEC := 0.5
 const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN_TIMEOUT_SEC
 
+# Tempo knob bounds (DESIGN §2.8.3). The HOST clamps every requested beat to [TEMPO_MIN, TEMPO_MAX]
+# and snaps it to TEMPO_STEP, so a client's +/- request can never drive the beat out of range or off
+# the grid — the authority owns the value; the client's request is only a nudge direction. 0.05s
+# steps around the 0.25 default (240 BPM) are each a clearly audible/visible cadence change.
+const TEMPO_MIN_SEC := 0.10
+const TEMPO_MAX_SEC := 1.00
+const TEMPO_STEP_SEC := 0.05
+
 ## Server-side clamp on chat body length (chars). The referee never trusts the wire; the
 ## client's LineEdit does no length limiting, so the host is the only guard.
 @export var chat_max_chars: int = 200
 
 ## Server-assigned spawn slots, in TILE coordinates. The host hands each player a spawn_index;
 ## every peer derives the same tile — and thus the same tile-center pixel position — from it, so
-## there's no shared hardcoded point and no client authority. A 3x2 cluster near room center:
-## six floor tiles, each ≥2 tiles from the others (none are 8-neighbours) and none 8-adjacent to
-## the diagonal-gate feature, so chunk 2's corner-rule demo begins from clean ground.
+## there's no shared hardcoded point and no client authority. A 3x2 cluster in the start room (A,
+## top-left of the M3.5 map): six floor tiles, each ≥2 tiles from the others (none are 8-neighbours)
+## and clear of A's pillar (10,4) and the col-7 corridor mouth, so the party begins on clean ground.
 @export var spawn_tiles: Array[Vector2i] = [
-	Vector2i(7, 5), Vector2i(9, 5), Vector2i(11, 5),
-	Vector2i(7, 8), Vector2i(9, 8), Vector2i(11, 8),
+	Vector2i(3, 3), Vector2i(6, 3), Vector2i(9, 3),
+	Vector2i(3, 6), Vector2i(6, 6), Vector2i(9, 6),
 ]
 
 ## Presentation only: the multiply applied to alternate floor tiles for the subtle grid
@@ -85,6 +99,13 @@ const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN
 # (main.tscn), alpha 0 at rest, pulsed ONLY when OUR OWN avatar takes a hit. mouse_filter IGNORE so
 # it never eats input. Pure local presentation — never replicated, never adjudication.
 @onready var _hurt_vignette: ColorRect = $HurtVignette/Overlay
+# Per-peer follow camera (M3.5). Lives under Main (not the avatar) so it SURVIVES the local avatar's
+# despawn on death — _update_camera stops tracking and it holds its last position instead of the view
+# snapping to origin. Pure local presentation: it reads only THIS peer's own avatar node, nothing
+# crosses the wire.
+@onready var _camera: Camera2D = $Camera
+# Always-on tempo readout (DESIGN §2.8.3), top-center. Session UI only (in main.tscn, never the menu).
+@onready var _tempo_label: Label = $TempoDisplay/Label
 
 # Chat/combat log, added on every peer in _ready. Held so spawn/disconnect can post system
 # lines through it. Set before the host spawns its own player so that spawn's "joined." lands.
@@ -119,9 +140,23 @@ var _leaving: bool = false
 var _peer_ready_attempts: int = 0
 # Kill-prior slot for the local hurt vignette pulse (v0.6.3), so rapid hits replace rather than stack.
 var _vignette_tween: Tween = null
+# The local peer's own avatar node, tracked by _update_camera. Null until our player spawns (or after
+# our death); (re)acquired lazily from $Players by our peer id, so first spawn, late join, and F5
+# respawn all re-attach the camera uniformly. Local presentation only — never read for adjudication.
+var _local_avatar: Node2D = null
 
 
 func _ready() -> void:
+	# Seed the session tempo (DESIGN §2.8) BEFORE any verdict is stamped, on EVERY peer: the authored
+	# GameConfig.beat_sec, or the host-only beatsec= debug override when set (mirrors glidesec=). The
+	# referees read GameManager.current_beat_sec LIVE at stamp time from here; a future runtime tempo
+	# knob (§2.8.3) rebroadcasts a new value. Same value on host and client at start (same authored
+	# config, same build), so client-side pacing matches until the knob ships.
+	GameManager.current_beat_sec = GameManager.debug_beat_override_sec if GameManager.debug_beat_override_sec > 0.0 else GameManager.config.beat_sec
+	# Seed the always-on tempo readout from that same value, on EVERY peer, so it is correct before any
+	# set_tempo event (§2.8.3). A late joiner's host-supplied beat (sync_tempo below) refreshes it.
+	_update_tempo_display()
+
 	# Paint the room first, on EVERY peer, so players spawn onto a visible floor. Deterministic
 	# presentation of the logical grid — same input (WorldGrid) everywhere, so it can't diverge.
 	_build_room()
@@ -235,15 +270,20 @@ func _ready() -> void:
 		# Host-only: the chat referee. Strip, reject empty, clamp, and resolve the sender's
 		# display name server-side (never from the payload) into the broadcast event's data.
 		NetEvents.register_handler("chat", _validate_chat)
+		# Host-only: the tempo referee (DESIGN §2.8.3). ANY peer submits a set_tempo intent on the same
+		# pipe; this validator clamps/snaps/applies host-side, and the accepted intent broadcasts back as
+		# a set_tempo event (intent-name == event-name, like "chat") that every peer adopts. Gameplay only
+		# ever reads GameManager.current_beat_sec, which no client can write (§2.5 stands).
+		NetEvents.register_handler("set_tempo", _validate_set_tempo)
 		print("[HOST] server started (peer %d) — spawning host player" % multiplayer.get_unique_id())
 		# Spawn the host's own player immediately — no RPC needed. (_spawn_config records the reset
 		# roster entry as a side effect — the one chokepoint every spawn path shares.)
 		_spawner.spawn(_spawn_config(multiplayer.get_unique_id(), GameManager.player_name))
-		# Host-only: seed the world with M3's single goblin, AFTER the host player so occupancy is
+		# Host-only: seed the world with the map's goblins, AFTER the host player so occupancy is
 		# already populated for the is_tile_free guard. Off by default in the autostart harness
 		# (goblin= knob); on by default for menu play (GameManager.spawn_monsters).
 		if GameManager.spawn_monsters:
-			_spawn_goblin()
+			_spawn_goblins()
 		NetworkManager.peer_connected.connect(_on_peer_connected)
 		NetworkManager.peer_disconnected.connect(_on_peer_disconnected)
 	else:
@@ -288,6 +328,21 @@ func _unhandled_input(event: InputEvent) -> void:
 		if multiplayer.is_server():
 			_reset_round.call_deferred()
 		get_viewport().set_input_as_handled()
+	# Tempo knob (DESIGN §2.8.3): +/- from ANY peer. tempo_up = faster (fewer seconds/beat), tempo_down
+	# = slower. Handled here (like dev_reset_round) so a focused chat LineEdit consumes its own +/- keys
+	# first. The step is applied by the HOST authority — we only submit a request.
+	elif event.is_action_pressed("tempo_up"):
+		_request_tempo(-TEMPO_STEP_SEC)
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("tempo_down"):
+		_request_tempo(TEMPO_STEP_SEC)
+		get_viewport().set_input_as_handled()
+
+
+## Per-peer local camera follow (M3.5), every frame on every peer. Pure presentation — reads only our
+## own avatar node (see _update_camera); nothing crosses the wire.
+func _process(_delta: float) -> void:
+	_update_camera()
 
 
 ## All peers: play back a broadcast gameplay event. Chat + combat-LOG lines go to the game log via
@@ -304,6 +359,10 @@ func _on_net_event(event: Dictionary) -> void:
 			_handle_windup_event(event)
 		"died":
 			_handle_died_event(event)
+		"set_tempo":
+			# An accepted set_tempo intent broadcasts under its own action name (like "chat"), NOT a
+			# separate "tempo_changed" — the whole party adopts the new beat from this one event.
+			_handle_tempo_changed_event(event)
 
 
 ## Play back an accepted glide. Resolve the mover by entity id: positive is a player, negative a
@@ -368,6 +427,13 @@ func _handle_attack_event(event: Dictionary) -> void:
 		# event every peer receives; the target's slash streak + flash still render on every peer.
 		if target_id == multiplayer.get_unique_id():
 			_flash_hurt_vignette()
+	# Recovery tell (§2.3.4; DESIGN §2.8): the attacker is SPENT for the recovery window the event
+	# carries in duration_sec — a bump (player) and an instant strike (goblin windup_beats==0) both
+	# stamp it; an AoO free attack and a telegraphed-windup landed hit carry 0 (play_recovery no-ops).
+	# Played on the attacker node on EVERY peer (whiff or landed), so the spent window matches the
+	# host's busy record on the wire — no new sync, same event the whole party already receives.
+	if attacker != null:
+		attacker.play_recovery(float(data.get("duration_sec", 0.0)))
 	# Local attacker's swing-busy mirror for a bump (decision 2) — players only (positive id), so
 	# commit_in_place is Player surface: deliberate narrow cast, not cruft.
 	if kind == "bump" and attacker_id == multiplayer.get_unique_id():
@@ -398,6 +464,51 @@ func _handle_windup_event(event: Dictionary) -> void:
 ## and the node's disappearance is the visual.
 func _handle_died_event(_event: Dictionary) -> void:
 	_death_sfx.play()
+
+
+## All peers: adopt a host-stamped tempo change (§2.8.3). Apply it to the LOCAL GameManager beat so the
+## display AND client-side pacing (move_input's held-retry) stay in sync — adjudication stays host-side
+## by construction (only the host stamps verdicts). Then refresh the readout. On the HOST this also runs
+## (call_local), re-applying the value the validator already set — idempotent. The combat-log line is
+## added by game_log off this same event; in-flight commits keep their baked seconds (stamp-and-bake).
+func _handle_tempo_changed_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	GameManager.current_beat_sec = float(data.get("beat_sec", GameManager.current_beat_sec))
+	_update_tempo_display()
+
+
+## Per-peer local camera follow (M3.5). Track OUR OWN avatar's position each frame; the avatar's glide
+## tween is already smooth, so the camera rides it smoothly (pure presentation — nothing networked).
+## (Re)acquire the avatar from $Players by our peer id whenever we don't hold a live one — covering
+## first spawn, late join, and F5 respawn — and snap the camera on (re)acquire. On our death the avatar
+## frees, re-acquire finds nothing, and the camera simply HOLDS its last position (no snap to origin).
+func _update_camera() -> void:
+	if not is_instance_valid(_local_avatar):
+		var mine := _players.get_node_or_null(str(multiplayer.get_unique_id())) as Node2D
+		if mine == null:
+			return
+		_local_avatar = mine
+		_camera.global_position = _local_avatar.global_position
+		_camera.reset_smoothing()
+		return
+	_camera.global_position = _local_avatar.global_position
+
+
+## Refresh the top-center tempo readout from the LOCAL GameManager beat (each peer's own). Format
+## "beat 0.25s · 240 BPM" (§2.8.3); BPM = 60 / beat, rounded for display.
+func _update_tempo_display() -> void:
+	var beat := GameManager.current_beat_sec
+	var bpm := int(round(60.0 / beat)) if beat > 0.0 else 0
+	_tempo_label.text = "beat %.2fs · %d BPM" % [beat, bpm]
+
+
+## Any peer: request a tempo nudge of `delta` seconds/beat (negative = faster). Computed from OUR OWN
+## displayed beat and pre-clamped locally for a sane value, then submitted on the ordinary intent pipe —
+## the HOST re-clamps/snaps and is the sole authority (§2.8.3). We never change our own beat here; it
+## changes only when the host's accepted set_tempo event returns.
+func _request_tempo(delta: float) -> void:
+	var requested := clampf(GameManager.current_beat_sec + delta, TEMPO_MIN_SEC, TEMPO_MAX_SEC)
+	NetEvents.submit_intent("set_tempo", { "beat_sec": requested })
 
 
 ## LOCAL-only red hit vignette (§2.3.4 hit juice, v0.6.3): a brief full-screen red pulse when OUR OWN
@@ -584,7 +695,7 @@ func _on_server_disconnected() -> void:
 ##
 ## Cleanup is free because despawn already tears down all referee state via the container exit hooks
 ## (the proven disconnect/death paths), and stale wind-up/glide timers no-op through the existing
-## token / is_alive / freed-node guards. The spawn path (_spawn_config, _spawn_goblin) is reused as-is.
+## token / is_alive / freed-node guards. The spawn path (_spawn_config, _spawn_goblins) is reused as-is.
 func _reset_round() -> void:
 	# No departure-mute is armed here anymore (v0.6.3): departures ride transport truth
 	# (_on_peer_departed), and a reset fires no transport event, so the mass frees below are silent by
@@ -621,7 +732,7 @@ func _reset_round() -> void:
 	for id in _peer_names:
 		_spawner.spawn(_spawn_config(id, _peer_names[id]))
 	if GameManager.spawn_monsters:
-		_spawn_goblin()
+		_spawn_goblins()
 
 	# f. One marker on the shared pipe so BOTH peers' logs show the reset distinctly (feedback rule
 	# §2.3.4): host-authored, peer 0 (server-originated, no validator). game_log renders "— Round reset —".
@@ -629,22 +740,29 @@ func _reset_round() -> void:
 	NetEvents.post_event("round_reset", {})
 
 
-## Host-only. Spawn M3's single goblin at its map-coupled tile, guarded so a future room edit that
-## walls or fills the tile skips the spawn (push_warning) instead of dropping a goblin into a wall
-## or onto a body. The entity id is the next negative int; the config carries the type PATH so every
-## peer loads the same authored .tres (never a Resource over the wire).
-func _spawn_goblin() -> void:
-	var tile := GOBLIN_SPAWN_TILE
-	if not WorldGrid.is_walkable(tile) or not _referee.is_tile_free(tile):
-		push_warning("[Main] goblin spawn tile %s not walkable/free — skipping (map-coupled)" % tile)
-		return
-	var entity_id := _next_monster_id
-	_next_monster_id -= 1
-	_monster_spawner.spawn({
-		"entity_id": entity_id,
-		"type_path": GOBLIN_TYPE_PATH,
-		"tile": tile,
-	})
+## Host-only. Spawn a goblin at each of GOBLIN_SPAWN_TILES, up to GameManager.monster_spawn_cap
+## (-1 = all — menu play; the autostart goblin=N knob caps it). Each spawn is guarded so a future
+## room edit that walls or fills a tile skips THAT goblin (push_warning) instead of dropping it into a
+## wall or onto a body — a skip doesn't consume a cap slot (the cap counts goblins actually placed).
+## Each gets the next negative entity id; the config carries the type PATH so every peer loads the
+## same authored .tres (never a Resource over the wire). Reused as-is by the F5 round reset.
+func _spawn_goblins() -> void:
+	var cap := GameManager.monster_spawn_cap  # -1 = no cap
+	var spawned := 0
+	for tile in GOBLIN_SPAWN_TILES:
+		if cap >= 0 and spawned >= cap:
+			break
+		if not WorldGrid.is_walkable(tile) or not _referee.is_tile_free(tile):
+			push_warning("[Main] goblin spawn tile %s not walkable/free — skipping (map-coupled)" % tile)
+			continue
+		var entity_id := _next_monster_id
+		_next_monster_id -= 1
+		_monster_spawner.spawn({
+			"entity_id": entity_id,
+			"type_path": GOBLIN_TYPE_PATH,
+			"tile": tile,
+		})
+		spawned += 1
 
 
 ## Host-only. Builds the replicated spawn config. spawn_index is the server-assigned slot;
@@ -767,6 +885,26 @@ func _validate_chat(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	return { "ok": true, "data": { "text": text, "name": player_node.player_name } }
 
 
+## Host-only tempo referee (DESIGN §2.8.3), registered with NetEvents in _ready. Snaps the requested
+## beat to the 0.05s grid and clamps it to [0.10, 1.00] — the authority owns the value; a client's
+## request is only a direction. Ignores a no-op (unchanged) request so the log/display don't churn (its
+## silent reject is by design — game_log ignores set_tempo rejects). Applies to current_beat_sec
+## HOST-side and returns the stamped beat + the requester's server-resolved name; every peer (host too,
+## via call_local) then adopts it in _handle_tempo_changed_event. Only FUTURE verdicts read the new
+## beat — in-flight commits keep their baked seconds (stamp-and-bake, §2.8.2). No re-derivation here.
+func _validate_set_tempo(sender_peer_id: int, data: Dictionary) -> Dictionary:
+	var beat := clampf(snappedf(float(data.get("beat_sec", 0.0)), TEMPO_STEP_SEC), TEMPO_MIN_SEC, TEMPO_MAX_SEC)
+	if is_equal_approx(beat, GameManager.current_beat_sec):
+		return { "ok": false, "reason": "no change" }
+	# Membership: only a peer with a live player node is in the session (mirrors _validate_chat) —
+	# the name is resolved server-side, never from the payload.
+	var player_node := _players.get_node_or_null(str(sender_peer_id))
+	if player_node == null:
+		return { "ok": false, "reason": "not in session" }
+	GameManager.current_beat_sec = beat
+	return { "ok": true, "data": { "beat_sec": beat, "by": player_node.player_name } }
+
+
 ## Host-only. Refuse a peer that was NEVER admitted (version mismatch or capacity). Used by BOTH
 ## refusal paths: mark it refused, send the reason over the transient host->client channel, then
 ## kick IMMEDIATELY — no grace timer. The RPC is enqueued synchronously onto the peer's reliable
@@ -841,6 +979,12 @@ func peer_ready(p_name: String, client_version: String) -> void:
 		# peer never spawns), so a later re-seed can respawn this client by name even after its
 		# player node — the only other name source — is gone (dead or despawned).
 		_spawner.spawn(_spawn_config(peer_id, p_name))
+		# Late-join tempo sync (§2.8.3): the joiner seeded its beat from its OWN config default, so if the
+		# live beat differs (a beatsec= override or a runtime tempo change) hand it the host's current
+		# value over a targeted host->client RPC. Same-build guarantee makes config.beat_sec the value it
+		# seeded, so an equal beat needs no sync — which also spares existing peers a redundant broadcast.
+		if not is_equal_approx(GameManager.current_beat_sec, GameManager.config.beat_sec):
+			sync_tempo.rpc_id(peer_id, GameManager.current_beat_sec)
 	else:
 		# Symmetric with the version branch: host-side visibility before the refusal, so a full-server
 		# rejection shows in the host's log/console too (not just on the refused client's menu).
@@ -857,3 +1001,16 @@ func peer_ready(p_name: String, client_version: String) -> void:
 @rpc("authority", "call_remote", "reliable")
 func session_refused(reason: String) -> void:
 	_end_session(reason)
+
+
+## Host -> one late-joining client (§2.8.3). Adopt the host's current beat so the joiner's display and
+## client-side pacing match a mid-session tempo. Host-authored (authority) and TARGETED (no broadcast,
+## so existing peers see no redundant line). Applied to the LOCAL beat + readout, with one neutral log
+## line — no "set by", since nobody just changed it; this is the standing tempo the joiner walked into.
+@rpc("authority", "call_remote", "reliable")
+func sync_tempo(beat_sec: float) -> void:
+	GameManager.current_beat_sec = beat_sec
+	_update_tempo_display()
+	if is_instance_valid(_game_log):
+		var bpm := int(round(60.0 / beat_sec)) if beat_sec > 0.0 else 0
+		_game_log.add_line("Tempo: %.2fs/beat (%d BPM)." % [beat_sec, bpm])

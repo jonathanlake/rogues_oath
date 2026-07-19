@@ -106,6 +106,18 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   survived). Player bump swing interval carries 0-0.25s retry jitter (~0.5-0.75s) — Jeff
   feel-test pending; queued-attack-slot follow-up parked if it reads as lag.
 
+- [x] **M3.5 — Tempo** *(2026-07-19)* **[size M]** *(plan: 2026-07-19 playtest feedback)*
+  The beat becomes a variable (DESIGN §2.8): global `beat_sec`, all durations authored in
+  beats, stamp-and-bake at verdict time; live +/- tempo knob (any peer requests, host
+  clamps/broadcasts, readout + late-join sync); go-stop-go movement (1-beat glide +
+  1-beat rest, all movers); windup experiment closed — instant strike + 2-beat visible
+  recovery both sides (machinery kept behind `windup_beats=0`); aggro persistence
+  (acquire-only range); disposable multi-room map + follow camera.
+  **Done =** two-instance: client +/- changes both windows' cadence live (stamped
+  in-flight commits finish at old tempo); go-stop-go hold; symmetric attack trades with
+  visible recovery; cross-room chase without aggro drop; camera follows through rooms;
+  late joiner matches a mid-session tempo.
+
 - [ ] **M4a — Dungeon Generation** **[size M]**
   Room-and-corridor generation (its own design pass first, per DESIGN §2.7); a goal/stairs
   placeholder (hardcoded scene is fine — disposable; M5's resource pipeline doesn't
@@ -176,10 +188,11 @@ Not scheduled — pulled in when their moment comes:
 - Rhythm-experiment reversions (v0.6.0, all single-value edits): speed-tier variation
   (three .tres values), diagonal multiplier off 1.0, AoO re-enable, click pathing
   re-enable, longer windup telegraph — each waits on Jon+Jeff playtest verdicts.
-  *Telegraph readability: answered NO at both 0.25s attempts; v0.6.3 sets windup to
-  2 beats (0.5s — FLAGGED FOR JEFF, amends literal-uniform) with the coil/blink tell —
-  re-test on Jon+Jeff next session. Client "left."-spam + death-"left." bug: FIXED
-  v0.6.3 (departures ride transport truth now)*
+  *Telegraph readability: answered NO at both 0.25s attempts; the 0.5s retry was
+  dodgeable-every-time (voice verdict 2026-07-19) — windup experiment CLOSED v0.7.0
+  (instant strike + recovery, DESIGN §2.3.3); any future windup re-test should run WITH
+  AoO re-enabled (the config where dodging costs). Client "left."-spam + death-"left."
+  bug: FIXED v0.6.3 (departures ride transport truth now)*
 - Dedicated audio pass: real SFX to replace the pitch-shifted placeholders, and a
   proper mix (v0.6.2 shipped the placeholder GRAMMAR: silent movement, swing-vs-impact
   pitch separation, blink tell, no windup sound — the real-sample pass is still parked)

@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.6.4)
+# Rogue's Oath — Design Doc (v0.7.0)
 
 ## Part 1 — The Game
 
@@ -49,6 +49,11 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    tiers are currently AUTHORED to the same 0.25s beat — one action rhythm for every
    entity ("if I hold right and the goblin holds right, we reach the edge together" —
    Jeff). The tier structure stays; variation returns by editing .tres values.
+   **v0.7.0:** tiers are now authored in BEATS (`glide_beats`, all 1.0) against the global
+   beat (§2.8); a step is a 1-beat glide + a 1-beat rest — go-stop-go (Jon 2026-07-19,
+   reversing his earlier continuous-hold call: "it makes it more appropriate for a
+   roguelike"). The rest is PART of the committed action — server-stamped, uniform on
+   every peer, all movers (players and monsters alike).
 4. A glide obeys the Commitment Rule: once started, it finishes. Being hit does not interrupt
    it.
 5. Tile reservation: on commit, the destination tile is reserved for the glide's duration. A
@@ -56,7 +61,9 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    one pipelined slot below). **Pipelined next step (decided 2026-07-18, Jeff — see Part 4
    Q7):** the server holds AT MOST ONE accepted next step per mover — adjudicated and
    COMMITTED at accept (occupancy swaps at accept: the frees-at-start rule of Q4 applied one
-   step deeper), broadcast and started only when that mover's current glide completes. A
+   step deeper), broadcast and started only when that mover's current committed window
+   completes (v0.7.0: glide + rest — promotion moved from the glide boundary to rest-end,
+   which WIDENS the pipeline's RTT budget from one beat to two). A
    pipelined mover's next tile is therefore spoken for up to one step early — intended
    gameplay, not an artifact ("decisions carry risk": conga semantics one step sooner). No
    cancel path exists; disconnect is the sole slot-clear. **Tap/hold rule (v0.3.5):** only a
@@ -144,6 +151,22 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    next session. The telegraph
    commits to ground, not to a name ("decisions carry risk"). Attacks of opportunity
    (2.2.6) resolve instantly through the same damage path.
+   **v0.7.0 — the windup experiment is CLOSED (Jon+Jeff, 2026-07-19):** it failed in both
+   directions — 0.25s is sub-perceptual (v0.6.0/v0.6.3 verdicts) and 0.5s is
+   dodgeable-every-time with AoO off (this session's voice verdict). Structural, not
+   tuning: at 1-beat movement, any windup ≥ 1 beat is a free dodge and any windup < 1
+   beat is invisible. New shape, BOTH sides symmetric: **instant deterministic strike +
+   committed N-beat RECOVERY** with a visible "spent" tell (§2.3.4) — the tell moves from
+   before the hit (invites the degenerate dodge-dance) to after it (readable state: "the
+   goblin is spent — now's my window"). Player and goblin recovery both authored 2 beats,
+   so attack rate = movement rate ("equal in terms of time and ability" — Jon's note).
+   The telegraph/whiff machinery is PRESERVED behind `windup_beats` (goblin 0.0) — a
+   future heavy monster may windup, ideally re-tested WITH AoO enabled, the configuration
+   where dodging finally costs something (parked beside the §2.2.6 AoO toggle).
+   **Aggro persistence (same session):** `aggro_range_tiles` becomes the ACQUIRE gate
+   only — once aggroed, a monster stays aggroed (`aggro_persists`, MonsterType, default
+   true; Jon: "he shouldn't turn off aggro"). The v0.6.0 range-as-leash behavior (chase
+   drops the moment range breaks, re-polled every beat) is the flag's false branch.
 4. Every distinct outcome (hit, whiff, free attack, death) has a distinct, unambiguous
    feedback signal (sound + visual + combat log line). A player must never confuse "the
    attack missed" with "my input didn't register." *(This rule extends to movement
@@ -230,6 +253,28 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
 - Mid-run join / late-join state snapshot (added v0.3): everyone starts the run together.
   This also removes the "what does a late joiner see mid-glide" replication problem from
   v1 entirely.
+
+### 2.8 The Beat (global tempo — v0.7.0)
+
+1. One global beat — `beat_sec` (GameConfig, default 0.25) — is the unit every action
+   duration is authored in. Durations live in resources as designer-editable BEAT
+   MULTIPLES (`glide_beats`, `windup_beats`, `recovery_beats`, `move_rest_beats`);
+   seconds exist only at the moment the server stamps a verdict. This is Jeff's
+   "universal rhythm speed" (2026-07-19) made literal — and it is NOT a global tick
+   (§2.4.1 stands): actions still start on commit and share only their unit.
+2. **Stamp-and-bake:** a commit's full window (glide + rest; strike + recovery) is
+   converted to seconds ONCE, at verdict time, and baked into the busy record/event. A
+   tempo change never re-derives an in-flight commit's remaining time — it applies from
+   the next verdict onward. (The Commitment Rule, applied to time itself.)
+3. **Dev tempo knob (Jeff, 2026-07-19):** +/- adjusts the beat live in 0.05s steps,
+   clamped 0.10–1.00. ANY peer may request it (playtest convenience, Jon's call) — the
+   request rides the ordinary intent pipe, the HOST validates/clamps/applies, and
+   gameplay only ever reads the host's value (§2.5 stands untouched). Every peer gets an
+   on-screen readout (beat + BPM), a combat-log line naming who changed it, and late
+   joiners receive the current tempo at handshake.
+4. Whether this knob ships as a player-facing game-speed setting (RimWorld / Dwarf
+   Fortress precedent; Fisty's hare-and-tortoise icon) is an open product question —
+   Part 4 Q8.
 
 ## Part 3 — Appendix: Why (short version)
 
@@ -355,10 +400,35 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    first pipelined session):** Jeff's F3 move verdict med 66.7ms / p95 83.3ms vs the 350ms
    step — the bound holds with ~4× headroom (M1.5's recorded baseline).
 
+8. **Does the tempo knob ship?** The dev +/- beat control (§2.8.3) mirrors RimWorld/DF
+   game-speed controls ("maybe its the baseline 'speed' of the game… some players might
+   wanna play a faster game, and other want it slower" — Jeff; hare-and-tortoise icon —
+   Jon). Options: ship it as a host-side lobby/run setting; lock a tuned default and keep
+   the knob dev-only; or something between (a few named presets). Notes for the
+   discussion: because EVERYTHING scales off one value, a tempo setting can't unbalance
+   relative timings the way per-action tuning could — but very fast beats start testing
+   reflexes, which brushes the "never tests your reflexes" pillar (Part 1).
+
 ---
 
 ### Changelog
 
+- **v0.7.0 (2026-07-19)** — M3.5: THE BEAT BECOMES A VARIABLE (Jon+Jeff Discord/voice
+  notes, post-v0.6.4 test). New §2.8: global `beat_sec` (default 0.25); every action
+  duration authored in beats (`glide_beats`/`windup_beats`/`recovery_beats`/
+  `move_rest_beats`), stamped to seconds only at verdict time (STAMP-AND-BAKE — tempo
+  changes never touch in-flight commits). Live +/- tempo knob: any peer requests via the
+  intent pipe, host clamps (0.10–1.00, 0.05 steps) and broadcasts; readout + log line +
+  F3 line + late-join handshake sync; ship-it question → new Q8. GO-STOP-GO movement:
+  step = 1-beat glide + 1-beat rest, all part of the commit, all movers; pipeline
+  promotion moves to rest-end (RTT budget widens to two beats). WINDUP EXPERIMENT CLOSED
+  (§2.3.3): failed both directions (0.25s invisible, 0.5s dodgeable-every-time) —
+  instant strike + 2-beat visible recovery on BOTH sides ("equal in time and ability"),
+  machinery preserved behind windup_beats=0; re-test-with-AoO parked. Aggro persistence:
+  range is acquire-only, `aggro_persists` default true ("he shouldn't turn off aggro").
+  Disposable multi-room hand-carved map + per-peer follow camera (screen-size eval —
+  M4a's generator untouched). Potions/inventory noted and parked to M5 (an N-beat
+  commit once beats exist — Jeff's "same natural rhythm").
 - **v0.6.4 (2026-07-19)** — First DESIGNED combat SFX: SFX_CombatHitDesigned02.wav
   (sourced by Jon) replaces the generated impact.wav on the monster's Hit player, at
   natural pitch. Scope is deliberate: only "player hits an enemy" — a player TAKING a

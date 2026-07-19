@@ -13,10 +13,11 @@ extends Resource
 ## defaults below are therefore part of the authored surface: changing one retunes every monster
 ## that doesn't override it. Change them as deliberately as you would a .tres value.
 
-## The single authoring site for the wind-up default (seconds): the windup_sec export below seeds
+## The single authoring site for the wind-up default (BEATS): the windup_beats export below seeds
 ## from it, and CombatReferee's total-accessor fallback returns it for a non-monster / missing-type
-## node — so the "slow telegraph" default has ONE home, not a shadow copy in the referee.
-const DEFAULT_WINDUP_SEC := 0.8
+## node — so the "slow telegraph" default has ONE home, not a shadow copy in the referee. Non-zero
+## so a fresh monster telegraphs by default (the windup is a per-monster dial the goblin sets to 0).
+const DEFAULT_WINDUP_BEATS := 2.0
 
 ## Log / nameplate name for this monster ("Goblin").
 @export var display_name: String = ""
@@ -32,21 +33,26 @@ const DEFAULT_WINDUP_SEC := 0.8
 ## Hit points removed per landed attack (deterministic — no to-hit roll, DESIGN §2.3 amendment).
 @export var attack_damage: int = 3
 
-## Telegraph duration (seconds) between a monster committing its attack and the damage resolving
-## against the target TILE (DESIGN §2.1 "slow telegraphs, hard commits").
-@export var windup_sec: float = DEFAULT_WINDUP_SEC
+## Telegraph duration in BEATS between a monster committing its attack and the damage resolving
+## against the target TILE (DESIGN §2.1 "slow telegraphs, hard commits"; §2.8 beats). The windup
+## EXPERIMENT failed in both directions (0.25s unreadable, 0.5s dodgeable-every-time), so this is
+## now a per-monster DIAL set to 0 on the goblin: at 0 the attack is an instant deterministic
+## strike (no telegraph, no whiff window) followed by recovery_beats. At > 0 the full telegraph/
+## whiff machinery runs unchanged (CombatReferee.wind_up) — preserved behind the dial, not deleted.
+@export var windup_beats: float = DEFAULT_WINDUP_BEATS
 
-## Deliberate idle (seconds) the monster holds AFTER an attack resolves before its next think —
-## the "action complete" delay from the wire notes (v0.6.1). 0 = the old immediate re-think. This
-## is the REST beat that makes each windup read as a discrete event (goblin fixed at ~0.3s cycles
-## in the first v0.6.0 test — a 0.25s tell inside a 0.3s cycle is sub-perceptual). It is NOT a
-## commitment and NEVER a referee record — purely brain pacing on top of the windup duration, so
-## the Commitment Rule is untouched (no cancel path is created by resting). Read HOST-side by
-## MonsterBrain when it schedules the post-windup re-think.
-@export var attack_recovery_sec: float = 0.0
+## Recovery in BEATS the monster is BUSY after an instant strike (windup_beats == 0) resolves — the
+## symmetric attack shape (DESIGN §2.8): instant strike + N-beat recovery during which it cannot
+## act. Unlike the old brain-pacing idle, this is a real referee busy record (Commitment Rule
+## enforced) for the windup==0 path. For the windup > 0 path it is added as brain pacing after the
+## telegraph resolves (that path is otherwise unchanged). Goblin = 2.0 → attack rate = movement
+## rate. Read HOST-side by CombatReferee (stamped to seconds) and MonsterBrain (post-attack pacing).
+## Non-zero DEFAULT (like the windup's) so a fresh windup-0 monster never gets a zero-length busy
+## by omission — attacking every brain poll must be an explicit authoring choice, never a default.
+@export var recovery_beats: float = 2.0
 
 ## Movement speed tier — a shared GlideSpeed resource, same mechanism players use. The referee
-## reads glide_duration_sec from here when it stamps each monster step's duration.
+## reads glide_beats from here when it stamps each monster step's duration.
 @export var glide_speed: GlideSpeed
 
 ## Aggro range in Chebyshev tiles (king-move distance): the brain chases/attacks only while the
@@ -56,3 +62,10 @@ const DEFAULT_WINDUP_SEC := 0.8
 ## so distance is always >= 1 and 0 is dead value-space, a safe "no limit" sentinel. Read HOST-side
 ## by MonsterBrain._think.
 @export var aggro_range_tiles: int = 0
+
+## When true (default), aggro PERSISTS: once the brain acquires a target within aggro_range_tiles it
+## stays aggroed and the range check is skipped thereafter — the monster keeps chasing across rooms,
+## never leash-dropping (playtest verdict, Jon/Jeff 2026-07-19). When false, the legacy LEASH
+## behaviour returns: aggro_range_tiles is re-checked every think and the chase drops the instant the
+## target breaks range. Designer dial (DESIGN §2.8). Read HOST-side by MonsterBrain._think.
+@export var aggro_persists: bool = true

@@ -49,10 +49,12 @@ signal path_target_cleared
 ## forever. A late verdict still renders (glide_to catches up), so clearing early is harmless.
 @export var verdict_timeout_sec: float = 2.0
 
-## After a REJECT, a still-held key waits this long before resubmitting (seconds). Without it a
-## zero-RTT host would bonk ~60×/sec on a wall. A FRESH press bypasses the wait (responsive to
-## deliberate re-taps); only auto-repeat from a held key is throttled.
-@export var held_retry_cooldown_sec: float = 0.25
+## After a REJECT, a still-held key waits this many BEATS before resubmitting. Without it a zero-RTT
+## host would bonk ~60×/sec on a wall. A FRESH press bypasses the wait (responsive to deliberate
+## re-taps); only auto-repeat from a held key is throttled. Converted to seconds at the LIVE beat
+## when used, not cached (DESIGN §2.8) — client-side PACING only (adjudication stays host-side); the
+## client reads its own current_beat_sec, which matches the host's at session start. 1 beat = one rest.
+@export var held_retry_beats: float = 1.0
 
 ## Consecutive step rejects that drop a standing walk target. The first reject marks the refused
 ## tile as a transient obstacle and retries around it; a second in a row means the way is shut.
@@ -164,7 +166,7 @@ func _process(delta: float) -> void:
 				_state = State.IDLE
 			else:
 				_cooldown_elapsed += delta
-				if _cooldown_elapsed < held_retry_cooldown_sec:
+				if _cooldown_elapsed < held_retry_beats * GameManager.current_beat_sec:
 					return
 				_state = State.IDLE
 				_cooldown_elapsed = 0.0

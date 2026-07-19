@@ -91,7 +91,7 @@ Consistency, not law:
   lives in the `Entity` base class; behavior that varies or is optional is a component child;
   authoritative state (HP, occupancy) lives in the referees, never on replicated nodes.
 - Naming: `snake_case.gd` scripts, `PascalCase` classes/nodes, past-tense `snake_case`
-  signals (`glide_committed`), exported vars with units (`glide_duration_sec`).
+  signals (`glide_committed`), exported vars with units (`glide_beats`, `beat_sec`).
 - Script order: `extends` → signals → `@export` → `@onready` → private vars → lifecycle
   (`_ready`/`_input`/`_process`) → public methods → private methods → RPCs grouped at bottom.
 - RPC shapes: client→host `@rpc("any_peer", "call_remote", "reliable")` with a

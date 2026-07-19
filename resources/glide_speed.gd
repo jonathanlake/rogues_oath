@@ -12,7 +12,10 @@ extends Resource
 ## Display / debug name for this tier ("slow", "normal", "fast").
 @export var tier_name: String = ""
 
-## Seconds to glide ONE orthogonal (N/S/E/W) tile step. A diagonal step multiplies this by
-## GameConfig.diagonal_step_multiplier (DESIGN §2.2.7). The server stamps the final duration
-## onto each glide event; clients only play it back.
-@export var glide_duration_sec: float = 0.35
+## BEATS to glide ONE orthogonal (N/S/E/W) tile step (DESIGN §2.8 — durations are authored as
+## beat multiples, converted to seconds only when the server stamps a verdict: beats ×
+## GameManager.current_beat_sec). A diagonal step multiplies the resulting seconds by
+## GameConfig.diagonal_step_multiplier (DESIGN §2.2.7). The server stamps the final duration onto
+## each glide event; clients only play it back. All three shipped tiers are 1.0 beat (the tempo
+## lives in the beat now, not the tier — tier VARIATION is a parked rhythm-experiment revert).
+@export var glide_beats: float = 1.0

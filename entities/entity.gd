@@ -25,6 +25,13 @@ extends Node2D
 # colour need not, and sharing one const keeps the two flashes visually identical on purpose.
 const _HURT_FLASH_COLOR := Color(1.0, 0.3, 0.3)
 
+# The "spent" tint held during an attacker's recovery window (§2.3.4 recovery tell, DESIGN §2.8):
+# a dim, slightly-cool desaturate (modulate MULTIPLIES) — reads as "can't act yet", deliberately
+# distinct from the bright-red hurt flash and the white windup coil. Held for the recovery duration
+# then eased back to white. Shares the _flash_tween modulate-cue slot so a hurt flash landing during
+# recovery cleanly replaces it (the documented flash-cue precedence).
+const _RECOVERY_TINT := Color(0.55, 0.55, 0.62)
+
 # ── Signals ──────────────────────────────────────────────────────────────────
 
 ## Emitted the instant a glide begins (before the tween runs). Player wires it to block its own
@@ -163,6 +170,28 @@ func play_hurt(dir: Vector2i = Vector2i.ZERO) -> void:
 	_hit_audio.play()
 	if _slash_fx != null:
 		_slash_fx.show_streak(dir)
+
+
+## Recovery tell (§2.3.4; DESIGN §2.8): the attacker is SPENT for the recovery window after a
+## committed strike — a dim desaturate held for `duration_sec`, then eased back to white. Played on
+## EVERY peer from the attack event's stamped recovery duration (main.gd), so the spent window
+## matches the host's busy record on the wire — no new sync. Both entity kinds use it (player bump,
+## monster instant strike). Distinct from the hurt flash (bright red) and the windup coil (white
+## pull-back). Shares the _flash_tween slot (the modulate-cue precedence): a hurt flash landing
+## mid-recovery — e.g. a trade — cleanly replaces it. A non-positive duration is a no-op (an AoO or
+## a telegraphed-windup landed hit carries none — recovery is the instant-strike/bump shape only).
+func play_recovery(duration_sec: float) -> void:
+	if duration_sec <= 0.0:
+		return
+	if _flash_tween != null and _flash_tween.is_valid():
+		_flash_tween.kill()
+	modulate = _RECOVERY_TINT
+	_flash_tween = create_tween()
+	# Hold the spent tint for the bulk of the window, then a short ease back to white so the release
+	# reads as "ready again". The 0.12s ease is clamped inside the window for very short recoveries.
+	var ease_sec := minf(0.12, duration_sec)
+	_flash_tween.tween_interval(duration_sec - ease_sec)
+	_flash_tween.tween_property(self, "modulate", Color.WHITE, ease_sec)
 
 
 ## Update the under-feet HP readout ("hp/max") from an `attack` event's hp_after. Presentation
