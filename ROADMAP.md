@@ -176,9 +176,10 @@ Not scheduled — pulled in when their moment comes:
 - Rhythm-experiment reversions (v0.6.0, all single-value edits): speed-tier variation
   (three .tres values), diagonal multiplier off 1.0, AoO re-enable, click pathing
   re-enable, longer windup telegraph — each waits on Jon+Jeff playtest verdicts.
-  *Telegraph readability: answered NO at v0.6.0 (one solo test); v0.6.1 shipped the
-  choreography fix (recovery beat + coiled white tell) — RE-TEST at real speed is on
-  Jon+Jeff next session*
+  *Telegraph readability: answered NO at both 0.25s attempts; v0.6.3 sets windup to
+  2 beats (0.5s — FLAGGED FOR JEFF, amends literal-uniform) with the coil/blink tell —
+  re-test on Jon+Jeff next session. Client "left."-spam + death-"left." bug: FIXED
+  v0.6.3 (departures ride transport truth now)*
 - Dedicated audio pass: real SFX to replace the pitch-shifted placeholders, and a
   proper mix (v0.6.2 shipped the placeholder GRAMMAR: silent movement, swing-vs-impact
   pitch separation, blink tell, no windup sound — the real-sample pass is still parked)

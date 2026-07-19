@@ -6,6 +6,9 @@
 [ext_resource type="AudioStream" uid="uid://bcfp1anfpbqw3" path="res://assets/audio/commit_sent.wav" id="4_commit"]
 [ext_resource type="AudioStream" uid="uid://bgobemuhppy00" path="res://assets/audio/bonk.wav" id="5_bonk"]
 [ext_resource type="Shader" path="res://entities/monster/monster_flash.gdshader" id="6_flash"]
+[ext_resource type="AudioStream" uid="uid://by8wkshbhc6rw" path="res://assets/audio/slash.wav" id="7_slash"]
+[ext_resource type="AudioStream" uid="uid://dflvxqnrggpxg" path="res://assets/audio/impact.wav" id="8_impact"]
+[ext_resource type="Script" uid="uid://nngt3qv36bvj" path="res://entities/slash_fx.gd" id="9_slashfx"]
 
 ; Windup white-flash material (v0.6.1). resource_local_to_scene = true so EACH monster instance
 ; gets its OWN ShaderMaterial copy — a scene-assigned material is shared by default, which with
@@ -47,12 +50,12 @@ vertical_alignment = 1
 script = ExtResource("3_brain")
 
 [node name="Attack" type="AudioStreamPlayer" parent="." unique_id=1026429460]
-stream = ExtResource("4_commit")
-pitch_scale = 1.5
+stream = ExtResource("7_slash")
+pitch_scale = 0.85
 
 [node name="Hit" type="AudioStreamPlayer" parent="." unique_id=1724549287]
-stream = ExtResource("5_bonk")
-pitch_scale = 0.7
+stream = ExtResource("8_impact")
+pitch_scale = 0.9
 
 [node name="Windup" type="AudioStreamPlayer" parent="." unique_id=1349622745]
 stream = ExtResource("5_bonk")
@@ -62,3 +65,6 @@ volume_db = -6.0
 [node name="Whiff" type="AudioStreamPlayer" parent="." unique_id=1324668704]
 stream = ExtResource("4_commit")
 pitch_scale = 0.4
+
+[node name="SlashFx" type="Node2D" parent="." unique_id=928471635]
+script = ExtResource("9_slashfx")

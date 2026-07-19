@@ -81,6 +81,10 @@ const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN
 # Death SFX (placeholder — pitch-shifted bonk). Played on every peer from the `died` event, at Main
 # level because the dying entity's own node vanishes with the event (can't play a sound on a freed node).
 @onready var _death_sfx: AudioStreamPlayer = $DeathSfx
+# LOCAL-only hurt vignette (v0.6.3 hit juice): a full-rect red ColorRect on a high CanvasLayer
+# (main.tscn), alpha 0 at rest, pulsed ONLY when OUR OWN avatar takes a hit. mouse_filter IGNORE so
+# it never eats input. Pure local presentation — never replicated, never adjudication.
+@onready var _hurt_vignette: ColorRect = $HurtVignette/Overlay
 
 # Chat/combat log, added on every peer in _ready. Held so spawn/disconnect can post system
 # lines through it. Set before the host spawns its own player so that spawn's "joined." lands.
@@ -104,19 +108,17 @@ var _refused: Dictionary = {}
 # Host-only monotonic monster id source (plan decision 5): each monster gets the next NEGATIVE int,
 # so monster ids never collide with peer ids (always positive) in the referee's one occupancy space.
 var _next_monster_id: int = -1
-# Teardown guard. Suppresses the child_exiting_tree "X left." spam when players leave because
-# the SESSION is ending (returning to menu, app quit) rather than one peer disconnecting.
-# INVARIANT: any deliberate session-teardown path added later (host quit-to-menu, etc.) MUST
-# set _leaving = true before it tears anything down. Also the client's one-shot host-left guard.
+# Client/teardown guard. Set true when THIS peer's session is ending (returning to menu, app quit,
+# host-left, refusal): while set, the client stops resending peer_ready and _end_session is
+# first-writer-wins. INVARIANT: any deliberate session-teardown path added later (host quit-to-menu,
+# etc.) MUST set _leaving = true before it tears anything down. (v0.6.3: it no longer mutes a
+# departure log — departures ride transport truth now, see _on_peer_departed — but the guard stands.)
 var _leaving: bool = false
-# Host-only round-reset mute (v0.5.4 dev key): silences the child_exiting_tree "X left." hook
-# while _reset_round's mass despawn runs — the same role _leaving plays for session teardown.
-# That is its ONLY job: the reset body is fully synchronous (v0.5.5), so there is no async window
-# to lock against. Set at _reset_round's head, cleared at its tail.
-var _resetting: bool = false
 
 # Client-only: how many peer_ready sends we've made this session (see _send_peer_ready).
 var _peer_ready_attempts: int = 0
+# Kill-prior slot for the local hurt vignette pulse (v0.6.3), so rapid hits replace rather than stack.
+var _vignette_tween: Tween = null
 
 
 func _ready() -> void:
@@ -129,16 +131,15 @@ func _ready() -> void:
 	_game_log = GAME_LOG_SCENE.instantiate()
 	add_child(_game_log)
 
-	# Departure lines on EVERY peer: the host frees a leaver directly; clients see the same
-	# node removed by the MultiplayerSpawner's despawn. Both paths exit the Players container,
-	# so this one hook covers all peers with no double-logging. _leaving guards the client's
-	# own teardown (returning to menu removes every player at once — that's not "X left.").
-	# _resetting mutes this the same way _leaving does: a host round-reset (v0.5.4) despawns every
-	# living player at once — that's a world re-seed, not a peer leaving, so no "X left." line.
-	_players.child_exiting_tree.connect(func(node: Node):
-		if node is Player and not _leaving and not _resetting and is_instance_valid(_game_log):
-			print("[peer %d] %s left" % [multiplayer.get_unique_id(), node.player_name])
-			_game_log.add_line("%s left." % node.player_name))
+	# Departure lines come from TRANSPORT truth now (v0.6.3), NOT node-exit. The old
+	# _players.child_exiting_tree "X left." hook fired on death AND on F5 reset too — both keep the
+	# peer connected — so those produced phantom "left." lines (the v0.5.6 open item). A real transport
+	# disconnect is the only true departure, so it is logged from NetworkManager.peer_disconnected.
+	# Connected here on EVERY peer and BEFORE the host's _on_peer_disconnected cleanup (below, in the
+	# is_server branch), so the logger resolves the leaver's name while it still exists: signal
+	# callbacks fire in connection order, and _on_peer_disconnected erases _peer_names, so this must
+	# run first. (This is also why _resetting no longer exists — muting node-exit was its only job.)
+	NetworkManager.peer_disconnected.connect(_on_peer_departed)
 
 	# Runs on every peer with the same replicated config, so avatars match everywhere.
 	_spawner.spawn_function = func(data):
@@ -265,8 +266,8 @@ func _exit_tree() -> void:
 	GameManager.debug_fake_version = ""
 
 
-## Window close fires BEFORE node teardown, so we flip _leaving here to keep the departure hook
-## quiet while the whole app quits (otherwise every player's exit would log a bogus "X left.").
+## Window close fires BEFORE node teardown, so we flip _leaving here so a client mid-join stops
+## resending peer_ready and any _end_session becomes a no-op while the whole app quits.
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		_leaving = true
@@ -358,8 +359,15 @@ func _handle_attack_event(event: Dictionary) -> void:
 			# swing = high short whoosh, impact = low thud; pitch-separated in the scenes).
 			attacker.play_attack(dir, true)
 		if target != null:
-			target.play_hurt()
+			# dir passed through so the victim's slash streak reads directional (v0.6.3), derived
+			# per-peer from this same event — no new wire data.
+			target.play_hurt(dir)
 			target.set_hp_display(int(data.get("hp_after", 0)), int(data.get("target_max", 0)))
+		# LOCAL-only red hit vignette (v0.6.3 juice): fires ONLY when it's OUR OWN avatar being struck
+		# (landed — we're already past the whiff branch). Pure local presentation off the same attack
+		# event every peer receives; the target's slash streak + flash still render on every peer.
+		if target_id == multiplayer.get_unique_id():
+			_flash_hurt_vignette()
 	# Local attacker's swing-busy mirror for a bump (decision 2) — players only (positive id), so
 	# commit_in_place is Player surface: deliberate narrow cast, not cruft.
 	if kind == "bump" and attacker_id == multiplayer.get_unique_id():
@@ -390,6 +398,18 @@ func _handle_windup_event(event: Dictionary) -> void:
 ## and the node's disappearance is the visual.
 func _handle_died_event(_event: Dictionary) -> void:
 	_death_sfx.play()
+
+
+## LOCAL-only red hit vignette (§2.3.4 hit juice, v0.6.3): a brief full-screen red pulse when OUR OWN
+## avatar is the one struck. Called by _handle_attack_event gated on target_id == our peer id, so each
+## peer runs it only for itself — it never shows for a hit on someone else. Kill-prior slot so rapid
+## hits replace rather than stack. Alpha snaps to 0.35 then tweens to 0 over ~0.25s.
+func _flash_hurt_vignette() -> void:
+	if _vignette_tween != null and _vignette_tween.is_valid():
+		_vignette_tween.kill()
+	_hurt_vignette.modulate.a = 0.35
+	_vignette_tween = create_tween()
+	_vignette_tween.tween_property(_hurt_vignette, "modulate:a", 0.0, 0.25)
 
 
 ## Host-only: a new PLAYER node just entered — mend autonomous-mover state for a possible late joiner.
@@ -445,6 +465,28 @@ func _on_intent_rejected(action: String, reason: String) -> void:
 	var me := _players.get_node_or_null(str(multiplayer.get_unique_id())) as Player
 	if me != null:
 		me.play_bonk()
+
+
+## All peers: log a departure from TRANSPORT truth (v0.6.3), connected on EVERY peer in _ready and
+## BEFORE the host's _on_peer_disconnected cleanup so the name still resolves. The host reads the
+## leaver's name from _peer_names (its authoritative roster, which _on_peer_disconnected erases right
+## after this); a client reads it off the still-present avatar node's display_name. Fallback "A player"
+## covers the race where neither source resolves. This REPLACES the old child_exiting_tree hook — node
+## exit fired on death and on F5 reset (both keep the peer connected), producing phantom "left." lines;
+## only a transport disconnect is a true departure, so the death and reset spam are gone by construction.
+func _on_peer_departed(peer_id: int) -> void:
+	var who := ""
+	if multiplayer.is_server():
+		who = str(_peer_names.get(peer_id, ""))
+	else:
+		var node := _node_for_peer(peer_id)
+		if node != null:
+			who = node.display_name
+	if who.is_empty():
+		who = "A player"
+	print("[peer %d] %s left" % [multiplayer.get_unique_id(), who])
+	if is_instance_valid(_game_log):
+		_game_log.add_line("%s left." % who)
 
 
 func _on_peer_connected(peer_id: int) -> void:
@@ -544,10 +586,9 @@ func _on_server_disconnected() -> void:
 ## (the proven disconnect/death paths), and stale wind-up/glide timers no-op through the existing
 ## token / is_alive / freed-node guards. The spawn path (_spawn_config, _spawn_goblin) is reused as-is.
 func _reset_round() -> void:
-	# Arm the "left."-mute for the synchronous frees below; cleared at the FUNCTION TAIL — no early
-	# return may sit between (GDScript has no exceptions; the spawn calls warn-and-continue on
-	# failure), so the tail always runs and the mute can never stick.
-	_resetting = true
+	# No departure-mute is armed here anymore (v0.6.3): departures ride transport truth
+	# (_on_peer_departed), and a reset fires no transport event, so the mass frees below are silent by
+	# construction — the old _resetting flag that muted the node-exit "left." hook is gone with the hook.
 
 	# a. Roster is already captured live in _peer_names (written at both spawn sites, erased on
 	# disconnect), so there is nothing to scrape from the about-to-die nodes — names die with them, and
@@ -556,14 +597,12 @@ func _reset_round() -> void:
 	# b/c. Despawn every player + monster SYNCHRONOUSLY (free, not queue_free) — the v0.5.5 race fix.
 	# v0.5.4 queue_freed then awaited process_frame, but the awaited resume's ordering vs the deletion
 	# flush is engine-internal and phase-dependent: observed in the wild (Jon, first manual F5), the
-	# exit hooks fired AFTER the respawn had seeded and AFTER _resetting cleared — unmuted "left."
-	# lines, and the late hooks erased the NEW nodes' referee state by entity id ("not in session"
-	# forever). free() collapses the window instead of tuning the wait: every exit hook (they only
-	# erase the exiting node's own dict keys) completes INLINE, before the respawn seeds anything,
-	# while _resetting is still true (the mute holds). Legal because nothing freed is on the current
-	# call stack — this body runs as the deferred call, outside input dispatch and entity callbacks;
-	# get_children() returns a fresh array, so the iteration is inherently a snapshot. The spawners
-	# replicate the despawns from tree-exit exactly as before.
+	# late exit hooks erased the NEW nodes' referee state by entity id ("not in session" forever).
+	# free() collapses the window instead of tuning the wait: every exit hook (they only erase the
+	# exiting node's own dict keys) completes INLINE, before the respawn seeds anything. Legal because
+	# nothing freed is on the current call stack — this body runs as the deferred call, outside input
+	# dispatch and entity callbacks; get_children() returns a fresh array, so the iteration is
+	# inherently a snapshot. The spawners replicate the despawns from tree-exit exactly as before.
 	for node in _players.get_children():
 		node.free()
 	for node in _monsters.get_children():
@@ -588,9 +627,6 @@ func _reset_round() -> void:
 	# §2.3.4): host-authored, peer 0 (server-originated, no validator). game_log renders "— Round reset —".
 	# Named specifically (not bare "reset") so M6's real run start/end events have namespace room.
 	NetEvents.post_event("round_reset", {})
-
-	# Tail clear — always reached (no early return sits above this since _resetting was set). Key armed.
-	_resetting = false
 
 
 ## Host-only. Spawn M3's single goblin at its map-coupled tile, guarded so a future room edit that

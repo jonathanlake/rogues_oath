@@ -80,6 +80,10 @@ var tile: Vector2i
 # (attack = commit_sent low, hit = bonk high) — flagged placeholder, real SFX arrive later.
 @onready var _attack_audio: AudioStreamPlayer = $Attack
 @onready var _hit_audio: AudioStreamPlayer = $Hit
+# Red slash streak drawn over the sprite when this entity takes a hit (§2.3.4 hit juice, v0.6.3).
+# A child on both scenes; play_hurt drives it with the strike direction so the streak reads
+# directional, and it rides the same attack event on every peer.
+@onready var _slash_fx: SlashFx = $SlashFx
 
 # The glide's position tween, held so a newer server event can kill it and catch up (never to
 # cancel a commitment — see glide_to). The flash/shake tweens are tracked separately so a real
@@ -94,7 +98,7 @@ func _ready() -> void:
 	# Contract guard: the shared presentation requires these exact child names. An @onready miss
 	# resolves silently to null and only explodes at first use — name the missing node NOW instead.
 	for missing in [["Sprite2D", _sprite], ["NameLabel", _name_label], ["HpLabel", _hp_label],
-			["Attack", _attack_audio], ["Hit", _hit_audio]]:
+			["Attack", _attack_audio], ["Hit", _hit_audio], ["SlashFx", _slash_fx]]:
 		if missing[1] == null:
 			push_error("[Entity] %s (entity %d) scene is missing required child '%s'" % [
 				name, entity_id, missing[0]])
@@ -150,11 +154,15 @@ func play_attack(dir: Vector2i, with_sound := true) -> void:
 
 
 ## Target feedback for taking a hit (§2.3.4), played on every peer from the referee's `attack`
-## event: a distinct red flash + the impact sound. Never confusable with the attacker's swing or a
-## rejected commit — this is "I got hit."
-func play_hurt() -> void:
+## event: a distinct red flash + the impact sound + a directional red slash streak (v0.6.3 juice).
+## Never confusable with the attacker's swing or a rejected commit — this is "I got hit." `dir` is
+## the 8-way step from attacker toward this victim (main derives it per-peer from the same event);
+## Vector2i.ZERO leaves the streak on its default diagonal.
+func play_hurt(dir: Vector2i = Vector2i.ZERO) -> void:
 	_flash(_HURT_FLASH_COLOR)
 	_hit_audio.play()
+	if _slash_fx != null:
+		_slash_fx.show_streak(dir)
 
 
 ## Update the under-feet HP readout ("hp/max") from an `attack` event's hp_after. Presentation

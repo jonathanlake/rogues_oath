@@ -5,6 +5,7 @@
 [ext_resource type="PackedScene" path="res://ui/debug_overlay/debug_overlay.tscn" id="3_overlay"]
 [ext_resource type="Script" uid="uid://bxwx82w24gbfp" path="res://world/combat_referee.gd" id="4_combat"]
 [ext_resource type="AudioStream" uid="uid://bgobemuhppy00" path="res://assets/audio/bonk.wav" id="5_bonk"]
+[ext_resource type="AudioStream" uid="uid://dflvxqnrggpxg" path="res://assets/audio/impact.wav" id="6_impact"]
 
 [node name="Main" type="Node2D" unique_id=931510869]
 script = ExtResource("1_main")
@@ -30,8 +31,8 @@ script = ExtResource("2_referee")
 script = ExtResource("4_combat")
 
 [node name="DeathSfx" type="AudioStreamPlayer" parent="." unique_id=2085852180]
-stream = ExtResource("5_bonk")
-pitch_scale = 0.5
+stream = ExtResource("6_impact")
+pitch_scale = 0.8
 
 [node name="MultiplayerSpawner" type="MultiplayerSpawner" parent="." unique_id=1663269909]
 spawn_path = NodePath("../Players")
@@ -40,3 +41,16 @@ spawn_path = NodePath("../Players")
 spawn_path = NodePath("../Monsters")
 
 [node name="DebugOverlay" parent="." unique_id=1569819114 instance=ExtResource("3_overlay")]
+
+[node name="HurtVignette" type="CanvasLayer" parent="." unique_id=771029384]
+layer = 10
+
+[node name="Overlay" type="ColorRect" parent="HurtVignette" unique_id=660183472]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.7, 0, 0, 1)
+modulate = Color(1, 1, 1, 0)

@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.6.2)
+# Rogue's Oath — Design Doc (v0.6.3)
 
 ## Part 1 — The Game
 
@@ -359,6 +359,19 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.6.3 (2026-07-19)** — Hit juice, honest bonk, 2-beat windup, transport-truth
+  departures (Jon's v0.6.2 notes). Two GENERATED placeholder sounds (script committed):
+  slash.wav (swept-noise swish) and impact.wav (110Hz thud) — hits/swings/death leave
+  the bonk family; bonk now means exactly "the world refused your move." Red hurt
+  vignette (local-only screen flash when YOUR avatar is hit) + red slash streak across
+  any victim (deterministic 4-angle table off the attack dir). **Windup = 0.5s (2
+  beats, FLAGGED FOR JEFF):** Jon's second readability test confirmed 0.25s is below
+  the perceptual floor for any tell — the coil/blink approach wasn't wrong, it was
+  starved; grid-aligned at 2 beats, one .tres number to revert; movement/swing stay
+  0.25. Departure lines moved from node-exit to TRANSPORT truth (peer_disconnected,
+  relayed to all peers — server_relay default): death no longer prints "X left.", F5
+  reset no longer spams the client log, real quits still log everywhere (verified all
+  three). _resetting removed (its mute job vanished with the node-exit hook).
 - **v0.6.2 (2026-07-19)** — Sound grammar + blink tell (Jon's v0.6.1 verdict: flash
   "too much — needs to be a blink"; too many noises). Movement is SILENT (the §2.2.8
   ack is the flash alone; the tick is gone); combat is exactly swing + impact, pitch-
