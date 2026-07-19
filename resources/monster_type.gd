@@ -39,3 +39,11 @@ const DEFAULT_WINDUP_SEC := 0.8
 ## Movement speed tier — a shared GlideSpeed resource, same mechanism players use. The referee
 ## reads glide_duration_sec from here when it stamps each monster step's duration.
 @export var glide_speed: GlideSpeed
+
+## Aggro range in Chebyshev tiles (king-move distance): the brain chases/attacks only while the
+## nearest player is within this many tiles; farther, it idles on its re-poll. Checked EVERY think,
+## so it is BOTH the acquire gate and the leash — a chase drops the instant the target breaks range.
+## 0 = UNLIMITED (whole-room aggro — the pre-rhythm default): two entities can never share a tile,
+## so distance is always >= 1 and 0 is dead value-space, a safe "no limit" sentinel. Read HOST-side
+## by MonsterBrain._think.
+@export var aggro_range_tiles: int = 0

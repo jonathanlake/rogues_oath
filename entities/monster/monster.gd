@@ -61,7 +61,10 @@ func _ready() -> void:
 ## parent: it connects its OWN glide_finished to the brain's boundary hook here. Inert on clients.
 func activate_brain(referee: Node, combat: Node) -> void:
 	glide_finished.connect(_brain.on_boundary)
-	_brain.activate(referee, combat, entity_id)
+	# Hand the brain this monster's own fields (id + authored type) alongside the referees — the
+	# parent reads them off itself and injects them, so the brain never reaches up (component pattern).
+	# monster_type carries the aggro-range leash the brain reads each think (v0.6.0 rhythm build).
+	_brain.activate(referee, combat, entity_id, monster_type)
 
 
 ## Hostility test (DESIGN §2.2.6, plan decision 6), read HOST-side. A monster is hostile to any
@@ -81,9 +84,10 @@ func play_windup() -> void:
 	_windup_audio.play()
 
 
-## Whiff feedback (§2.3.4): the wind-up resolved against an empty/vacated tile — a distinct
-## swing-into-nothing sound (no target flash, no hit). Keeps "the attack missed" audibly separate
-## from "it landed" under deterministic damage.
+## Whiff feedback (§2.3.4): the wind-up resolved against an empty/vacated tile — the SAME bowstring
+## lunge the landed strike uses, plus a distinct swing-into-nothing sound (no target flash, no hit).
+## On a whiff the swing STAYS audible: the v0.6.0 audio-trim rule suppresses the attacker's sound only
+## on a LANDED hit, so "the attack missed" reads audibly separate from "it landed" under deterministic damage.
 func play_whiff(dir: Vector2i) -> void:
-	_shake(dir)
+	_bowstring(dir)
 	_whiff_audio.play()

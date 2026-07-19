@@ -233,6 +233,30 @@ func _unhandled_input(event: InputEvent) -> void:
 	# Viewport coords → world via the canvas transform inverse (camera/stretch-safe), → tile.
 	var world_pos: Vector2 = get_viewport().get_canvas_transform().affine_inverse() * mouse.position
 	var tile := WorldGrid.world_to_tile(world_pos)
+	# Adjacent-only click mode (§2.2.9 provisionally on via config, Jon/Jeff 2026-07-19): with
+	# click_pathing_enabled=false the mouse can only step to one of the 8 neighbors of _current_tile —
+	# no target, no A*, no marker, no "Can't reach that.". A click that IS a Chebyshev neighbor
+	# submits ONE fresh step through the SAME latch/gates a key press uses (cue fires, §2.2.8); the
+	# server verdicts walkability, so we do NOT pre-validate walls here (§2.2.8 — identical to a key
+	# press into a wall, which bonks). Any non-neighbor click (including the own tile, distance 0) does
+	# nothing at all (Jeff: "if you click 8 spaces ahead nothing happens"). State gate: a click is a
+	# FRESH press, so it bypasses COOLDOWN exactly as a re-tap does, but it is dropped in AWAITING and
+	# — deliberately — while _blocked (mid-glide): a click has no 0.18s hold to satisfy the tap/hold
+	# pipeline gate, so one click = exactly one step from IDLE/COOLDOWN, never a buffered mid-glide
+	# step (the discrete-tap semantics of v0.3.5). No walk can ever stand in this mode (nothing sets
+	# _has_target), so the key-sampling gates in _process are the only submit-path interplay.
+	if not GameManager.config.click_pathing_enabled:
+		if maxi(absi(tile.x - _current_tile.x), absi(tile.y - _current_tile.y)) != 1:
+			return
+		if _blocked or _state == State.AWAITING:
+			return
+		var dir := tile - _current_tile
+		_last_dir = dir
+		# A click step is not a target step: clear the pending-step stamp (mirrors the key path) so
+		# its reject can never be attributed to a walk.
+		_has_pending_step = false
+		_submit(dir, true)
+		return
 	if tile == _current_tile:
 		return
 	# Reachability check WITHOUT the avoid tile: a body might vacate, that's what per-step

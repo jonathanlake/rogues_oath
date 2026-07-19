@@ -397,6 +397,12 @@ func _begin_bump(attacker_id: int, attacker, target_id: int, target) -> Dictiona
 ## then apply in order, stopping the instant the mover is dead. Occupants resolve via _node_of_id, so
 ## a monster deals AoO and a monster mover takes it (both guards lifted from chunk 1).
 func _trigger_attacks_of_opportunity(from: Vector2i, mover_peer_id: int, mover) -> bool:
+	# §2.2.6 provisionally OFF via config (Jon/Jeff 2026-07-19): the spec and this scan both stand —
+	# this early return IS the playtest switch. Read HOST-side (server-authoritative), so no client
+	# grants itself free strikes; with AoO disabled a glide simply never triggers one (no occupancy
+	# touched — the false return leaves the caller's mutation path exactly as if no hostile were near).
+	if not GameManager.config.attacks_of_opportunity_enabled:
+		return false
 	if _combat == null:
 		return false
 	# Snapshot phase: collect the eligible attacker ids from CURRENT occupancy, touching nothing.

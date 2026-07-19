@@ -19,3 +19,19 @@ extends Resource
 ## frees the instant the glide STARTS (conga-line movement — Jeff leans this); when false, the
 ## origin stays held until the glide finishes. A playtest toggle, flip without touching code.
 @export var origin_frees_at_glide_start: bool = true
+
+## Provisional playtest toggle (DESIGN §2.2.6): attacks of opportunity — a hostile adjacent to a
+## tile a mover glides OUT of gets a free strike. Default true = the ORIGINAL shipped behavior (AoO
+## on); resources/game_config.tres ships it false for the v0.6.0 rhythm experiment (Jon/Jeff wire
+## notes, 2026-07-19 — "toggle it, don't remove it"). Read HOST-side in MoveReferee's AoO scan, so
+## no client can grant itself free strikes; the §2.2.6 spec and code both stand — this parks the
+## mechanic, nothing more. Flip in the .tres, no code.
+@export var attacks_of_opportunity_enabled: bool = true
+
+## Provisional playtest toggle (DESIGN §2.2.9): click-to-move pathing. Default true = the ORIGINAL
+## shipped behavior (A* click-to-anywhere); resources/game_config.tres ships it false, which drops
+## MoveInput into adjacent-only click mode — a click on one of the 8 neighbor tiles submits one
+## step, any farther click does nothing (Jeff: "if you click 8 spaces ahead nothing happens").
+## Client-side INPUT convenience only: the same authored file ships in every build and the server
+## never reads it for adjudication (§2.2.9's client-side framing). Jon/Jeff 2026-07-19.
+@export var click_pathing_enabled: bool = true

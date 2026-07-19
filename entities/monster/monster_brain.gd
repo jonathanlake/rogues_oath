@@ -43,17 +43,23 @@ var _combat = null
 # This monster's negative entity id, handed in with the referees so every query/submit is keyed
 # correctly.
 var _entity_id: int = 0
+# This monster's authored template, handed in alongside the referees + id so the brain can read
+# behavioral tuning (aggro_range_tiles) WITHOUT reaching up to the parent node — same injection
+# shape as _referee/_combat/_entity_id (component pattern; the parent wires the child in
+# activate_brain). Null on a client's inert brain, which never thinks.
+var _monster_type: MonsterType = null
 
 
 # ── Public methods ────────────────────────────────────────────────────────────
 
-## Host-only switch-on, called by the parent monster's activate_brain(). Stores the referees + id
-## and kicks off the first think DEFERRED — so the referees' spawn-enter hooks have already seeded
-## this monster's occupancy + HP and the node's _ready has run before we query anything.
-func activate(referee: Node, combat: Node, entity_id: int) -> void:
+## Host-only switch-on, called by the parent monster's activate_brain(). Stores the referees + id +
+## authored type and kicks off the first think DEFERRED — so the referees' spawn-enter hooks have
+## already seeded this monster's occupancy + HP and the node's _ready has run before we query anything.
+func activate(referee: Node, combat: Node, entity_id: int, monster_type: MonsterType) -> void:
 	_referee = referee
 	_combat = combat
 	_entity_id = entity_id
+	_monster_type = monster_type
 	_active = true
 	_think.call_deferred()
 
@@ -91,6 +97,21 @@ func _think() -> void:
 		# No players to chase RIGHT NOW (all dead/disconnected). Keep watching: nothing else
 		# wakes this brain (on_boundary needs our own glide), so a joiner would otherwise meet
 		# a permanently dormant monster.
+		_reschedule()
+		return
+
+	# Aggro-range leash (monster_type.aggro_range_tiles, DESIGN §2.2.6-behavior): nearest player by
+	# Chebyshev (king-move) distance; if the type caps the range (>0) and the nearest sits beyond it,
+	# idle on the SAME 0.25s re-poll instead of chasing/attacking. Runs EVERY think, so it is both the
+	# acquire gate AND the leash — a chase drops the moment the target breaks range. 0 = unlimited
+	# (whole-room aggro), so an un-ranged monster skips the gate entirely. Type is null only on a
+	# client's inert brain, which never reaches here; the guard keeps a misconfig from crashing.
+	var nearest_dist: int = -1
+	for t in targets:
+		var d: int = maxi(absi(t.x - my_tile.x), absi(t.y - my_tile.y))
+		if nearest_dist < 0 or d < nearest_dist:
+			nearest_dist = d
+	if _monster_type != null and _monster_type.aggro_range_tiles > 0 and nearest_dist > _monster_type.aggro_range_tiles:
 		_reschedule()
 		return
 

@@ -5,3 +5,5 @@
 [resource]
 script = ExtResource("1_config")
 diagonal_step_multiplier = 1.0
+attacks_of_opportunity_enabled = false
+click_pathing_enabled = false
