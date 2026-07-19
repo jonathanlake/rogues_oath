@@ -166,7 +166,7 @@ func _process(delta: float) -> void:
 				_state = State.IDLE
 			else:
 				_cooldown_elapsed += delta
-				if _cooldown_elapsed < held_retry_beats * GameManager.current_beat_sec:
+				if _cooldown_elapsed < GameManager.beats_to_sec(held_retry_beats):
 					return
 				_state = State.IDLE
 				_cooldown_elapsed = 0.0

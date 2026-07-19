@@ -13,6 +13,16 @@ extends Resource
 ## start on commit and share only their unit (§2.4.1 stands).
 @export var beat_sec: float = 0.25
 
+## Tempo-knob bounds (seconds/beat) for the runtime tempo control (DESIGN §2.8.3). The host's
+## set_tempo validator reads these — they are the sole authority on the knob's range and grid, so a
+## designer widens/narrows the tempo band or changes its granularity HERE, no code. tempo_min_sec is
+## the fastest allowed beat (smaller = faster), tempo_max_sec the slowest; tempo_step_sec is both the
+## snap grid every accepted beat is quantized to AND the size of one +/- nudge. Defaults: 0.05s steps
+## across [0.10, 1.00] around the 0.25 default (240 BPM), each step a clearly audible cadence change.
+@export var tempo_min_sec: float = 0.10
+@export var tempo_max_sec: float = 1.00
+@export var tempo_step_sec: float = 0.05
+
 ## Rest beats appended to every movement step's committed window (go-stop-go, DESIGN §2.8/§2.2):
 ## a step is a 1-beat glide + this many beats of rhythmic pause, the whole thing one committed
 ## action. Server-authored and identical on every peer (not RTT jitter — the pipeline makes it

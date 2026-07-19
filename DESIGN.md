@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.7.0)
+# Rogue's Oath — Design Doc (v0.7.1)
 
 ## Part 1 — The Game
 
@@ -167,6 +167,9 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    only — once aggroed, a monster stays aggroed (`aggro_persists`, MonsterType, default
    true; Jon: "he shouldn't turn off aggro"). The v0.6.0 range-as-leash behavior (chase
    drops the moment range breaks, re-polled every beat) is the flag's false branch.
+   *Clarified v0.7.1:* the latch is per-monster "AWAKE", not per-target — an awakened
+   monster hunts the NEAREST hostile, including one that never personally entered its
+   range (roguelike-standard; per-target threat tables are a future design if wanted).
 4. Every distinct outcome (hit, whiff, free attack, death) has a distinct, unambiguous
    feedback signal (sound + visual + combat log line). A player must never confuse "the
    attack missed" with "my input didn't register." *(This rule extends to movement
@@ -413,6 +416,23 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.7.1 (2026-07-19)** — Post-milestone review pass (8-angle review + GLM, overnight).
+  REAL BUG FIXED: M3.5's screen-space Background ColorRect defaulted to mouse_filter
+  STOP and ate EVERY mouse click — found by file-probe after scripted clicks never
+  reached MoveInput; now IGNORE like its vignette/tempo-label siblings, and adjacent-
+  click stepping works again (verified end-to-end: scripted client click → host-accepted
+  glide onto the exact tile, under the follow camera). Harness click= synthesis composes
+  the canvas transform (the camera made it load-bearing). Hardening + tidy: set_tempo
+  refuses malformed/non-positive beats (wire is refused, never coerced); tempo
+  bounds/step → GameConfig @exports (designer-editable rule); ONE beats→seconds site
+  (GameManager.beats_to_sec) and one tempo formatter replace ~11 scattered copies;
+  late-join tempo sync unconditional (same-frame race closed); monster brain rest-wake
+  is one scheduled timer, not an epsilon poll; camera follow single-path. Recorded, NOT
+  fixed (design venues): a move-into-hostile during the REST half is refused as
+  still-committed — CORRECT per the Commitment Rule, the parked queued-attack-slot is
+  the venue if it feel-tests as lag; the parked hold-origin toggle branch
+  (origin_frees_at_glide_start=false) now lags occupancy behind the visual by the rest
+  beat (ROADMAP Q4 note); aggro latch semantics clarified in §2.3.3.
 - **v0.7.0 (2026-07-19)** — M3.5: THE BEAT BECOMES A VARIABLE (Jon+Jeff Discord/voice
   notes, post-v0.6.4 test). New §2.8: global `beat_sec` (default 0.25); every action
   duration authored in beats (`glide_beats`/`windup_beats`/`recovery_beats`/

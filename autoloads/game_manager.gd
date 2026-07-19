@@ -120,3 +120,26 @@ func build_version() -> String:
 			_warned_missing_version = true
 		return "?"
 	return raw
+
+
+## THE one beats→seconds conversion (DESIGN §2.8), paired with current_beat_sec above. Always a LIVE
+## read of the current beat: because a referee stamps-and-bakes a verdict's seconds at commit time
+## (§2.8.2), callers convert ONLY at verdict/stamp time (or for client-side pacing) — never caching a
+## seconds value that a later tempo change would strand. Every open-coded `beats * current_beat_sec`
+## routes through here so the conversion can't drift or be applied at the wrong moment.
+func beats_to_sec(beats: float) -> float:
+	return beats * current_beat_sec
+
+
+## Beats-per-minute for a given beat (seconds), rounded to a whole number for display. Guards a
+## non-positive beat (returns 0) so a mid-seed 0.0 or a garbage value can't divide-by-zero. The one
+## BPM derivation the readouts (top-center label, F3 overlay, game log) share.
+func bpm_of(beat_sec: float) -> int:
+	return int(round(60.0 / beat_sec)) if beat_sec > 0.0 else 0
+
+
+## The shared "%.2fs/beat (%d BPM)" fragment for the game log + sync lines, so every tempo log line
+## reads identically. The top-center label keeps its own "beat %.2fs · %d BPM" layout (it computes
+## BPM via bpm_of above); this is the sentence form used in the combat/system log.
+func tempo_log_text(beat_sec: float) -> String:
+	return "%.2fs/beat (%d BPM)" % [beat_sec, bpm_of(beat_sec)]

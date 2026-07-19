@@ -293,8 +293,12 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# Destination must not be held by another body (resting, gliding-onto, or reserved). From IDLE
 	# ONLY (decision 1), a dest held by a hostile LIVING entity becomes a BUMP attack instead of a
 	# reject: move-into-enemy = attack. A PIPELINED intent into a held tile keeps the plain reject —
-	# the held slot never holds an attack, so there is no dead-target-at-boundary problem (and
-	# `is_pipelined` here is exactly "mid-glide", since the third-intent case already bonked above).
+	# the held slot never holds an attack, so there is no dead-target-at-boundary problem. Under
+	# go-stop-go `is_pipelined` now spans the WHOLE committed window (glide AND rest — _gliding persists
+	# through both), not just the glide; so a move-into-hostile issued during the REST half is likewise
+	# refused rather than promoted to a bump, because the mover is still committed to this step
+	# (Commitment Rule — the parked queued-attack-slot follow-up in ROADMAP is the design venue for
+	# letting a mid-commit attack be queued).
 	if not is_tile_free(to):
 		# sender > 0: only PLAYERS bump (M3 monsters attack solely via the telegraphed wind-up; the
 		# brain's adjacency branch fires before any step toward a player could be chosen — this is
@@ -379,7 +383,7 @@ func _step_duration(mover, dir: Vector2i) -> float:
 			_warned_null_speed = true
 	else:
 		glide_beats = mover.glide_speed.glide_beats
-	var base := glide_beats * GameManager.current_beat_sec
+	var base := GameManager.beats_to_sec(glide_beats)
 	if GameManager.debug_glide_override_sec > 0.0:
 		base = GameManager.debug_glide_override_sec
 	if dir.x != 0 and dir.y != 0:
@@ -392,7 +396,7 @@ func _step_duration(mover, dir: Vector2i) -> float:
 ## scale the rest (a diagonal step glides longer but rests the same). Baked into busy_sec alongside
 ## the glide at stamp time (stamp-and-bake): a later tempo change never re-derives this window.
 func _rest_duration() -> float:
-	return GameManager.config.move_rest_beats * GameManager.current_beat_sec
+	return GameManager.beats_to_sec(GameManager.config.move_rest_beats)
 
 
 ## Begin a BUMP attack (host-only, decision 1+2). The idle mover moves INTO a hostile living tile:

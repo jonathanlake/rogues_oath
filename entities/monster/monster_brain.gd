@@ -23,9 +23,9 @@ extends Node
 ## Re-think delay in BEATS after a refused/blocked action (a contested tile back-off) — converted at
 ## the live beat when used, not cached (DESIGN §2.8; matches MoveInput's held-retry cadence so a
 ## monster and a player back off a contested tile together). 1 beat = one movement rest. NOTE: the
-## BUSY-gate retry (the referee still showing this monster mid glide+rest) uses the tight
-## windup_rethink_epsilon_sec poll instead, so a monster resumes right as its rest ends rather than a
-## whole beat later — go-stop-go stays uniform (see _think).
+## BUSY-gate case (the referee still showing this monster mid glide+rest) does NOT use this delay — it
+## schedules ONE wake at exactly the remaining rest (move_rest_beats + a small epsilon), so the monster
+## resumes right as its rest ends rather than a whole back-off beat later — go-stop-go stays uniform (see _think).
 @export var rethink_beats: float = 1.0
 
 ## Small margin (seconds) added past a wind-up's duration when the brain schedules its own
@@ -89,13 +89,14 @@ func on_boundary() -> void:
 func _think() -> void:
 	if not _active:
 		return
-	# Busy gate: only ever act between committed steps. Under go-stop-go the referee holds this
-	# monster busy for glide + REST, but the node's glide_finished (which woke us via on_boundary)
-	# fires at the glide boundary — so a post-glide think lands mid-rest and sees busy. Poll on the
-	# tight epsilon (not the full rethink beat) so the monster resumes right as its rest ends and the
-	# cadence stays uniform. Self-healing, never a lockup.
+	# Busy gate: only ever act between committed steps. Under go-stop-go the referee holds this monster
+	# busy for glide + REST, but the node's glide_finished (which woke us via on_boundary) fires at the
+	# GLIDE boundary — so a post-glide think lands mid-rest and sees busy. The remaining busy is then
+	# exactly the rest, so schedule ONE wake at rest + epsilon rather than polling: the monster resumes
+	# right as its rest ends, no busy loop. Should the gate ever trip from a rarer mid-glide wake, the
+	# same delay simply re-checks a little later and converges — self-healing, never a lockup.
 	if _referee.is_entity_moving(_entity_id):
-		_reschedule_after(windup_rethink_epsilon_sec)
+		_reschedule_after(GameManager.beats_to_sec(GameManager.config.move_rest_beats) + windup_rethink_epsilon_sec)
 		return
 	var my_tile: Vector2i = _referee.tile_of_entity(_entity_id)
 	# tile_of_entity returns a wall-sentinel tile when the entity is untracked (e.g. despawned
@@ -190,7 +191,7 @@ func _think() -> void:
 ## Schedule one re-think rethink_beats from now (the refused/blocked/no-target back-off cadence),
 ## converted at the LIVE beat — not cached, so a tempo change is picked up on the next back-off.
 func _reschedule() -> void:
-	_reschedule_after(rethink_beats * GameManager.current_beat_sec)
+	_reschedule_after(GameManager.beats_to_sec(rethink_beats))
 
 
 ## Schedule one re-think `sec` from now. A get_tree() SceneTreeTimer (not a Timer child) so it

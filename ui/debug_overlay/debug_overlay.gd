@@ -89,8 +89,7 @@ func _compose_stats() -> String:
 			_percentile(0.5) * 1000.0, _percentile(0.95) * 1000.0]
 	# Live tempo (§2.8.3), read straight from GameManager so it tracks a set_tempo event within a refresh.
 	var beat := GameManager.current_beat_sec
-	var bpm := int(round(60.0 / beat)) if beat > 0.0 else 0
-	text += "\nbeat %.2fs · %d BPM" % [beat, bpm]
+	text += "\nbeat %.2fs · %d BPM" % [beat, GameManager.bpm_of(beat)]
 	return text
 
 

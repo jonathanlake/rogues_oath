@@ -160,7 +160,14 @@ Not scheduled — pulled in when their moment comes:
 - Death design — Q1's real answer replaces the M3 spectate placeholder
 - Host disconnect policy (Q2): accept run-loss vs. save/resume story
 - Origin-tile timing during a glide (Q4) — *(provisional shipped in M2: frees at glide start —
-  `origin_frees_at_glide_start` GameConfig toggle; final call awaits playtest)*
+  `origin_frees_at_glide_start` GameConfig toggle; final call awaits playtest. v0.7.1 note:
+  the FALSE branch now frees occupancy at busy end (glide + rest), so authoritative position
+  lags the visual arrival by one rest beat — the branch was already semi-parked (pipeline off
+  there, per Q7); fix belongs to whichever design pass un-parks it)*
+- Queued attack slot (M3 follow-up, amplified by v0.7.0 go-stop-go): an attack input during
+  the REST half of a step is refused as still-committed — CORRECT per the Commitment Rule,
+  but a held key now bumps one beat later and a tap mid-rest bonks. If Jon+Jeff feel-test
+  this as lag/unresponsiveness, the parked queued-attack-slot design is the venue.
 - AFK / rest zones (Q5)
 - Ranged combat & LoS design pass (Q6) — alongside the build system pass; include whether
   AoO adjacency should respect walls/corners (M2 wires pure 8-adjacency per §2.2.6 — a

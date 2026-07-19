@@ -50,14 +50,6 @@ const WALL_ATLAS := Vector2i(0, 1)   # tiles.txt row 2a — "rough stone wall (t
 const PEER_READY_RETRY_INTERVAL_SEC := 0.5
 const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN_TIMEOUT_SEC
 
-# Tempo knob bounds (DESIGN §2.8.3). The HOST clamps every requested beat to [TEMPO_MIN, TEMPO_MAX]
-# and snaps it to TEMPO_STEP, so a client's +/- request can never drive the beat out of range or off
-# the grid — the authority owns the value; the client's request is only a nudge direction. 0.05s
-# steps around the 0.25 default (240 BPM) are each a clearly audible/visible cadence change.
-const TEMPO_MIN_SEC := 0.10
-const TEMPO_MAX_SEC := 1.00
-const TEMPO_STEP_SEC := 0.05
-
 ## Server-side clamp on chat body length (chars). The referee never trusts the wire; the
 ## client's LineEdit does no length limiting, so the host is the only guard.
 @export var chat_max_chars: int = 200
@@ -332,10 +324,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	# = slower. Handled here (like dev_reset_round) so a focused chat LineEdit consumes its own +/- keys
 	# first. The step is applied by the HOST authority — we only submit a request.
 	elif event.is_action_pressed("tempo_up"):
-		_request_tempo(-TEMPO_STEP_SEC)
+		_request_tempo(-GameManager.config.tempo_step_sec)
 		get_viewport().set_input_as_handled()
 	elif event.is_action_pressed("tempo_down"):
-		_request_tempo(TEMPO_STEP_SEC)
+		_request_tempo(GameManager.config.tempo_step_sec)
 		get_viewport().set_input_as_handled()
 
 
@@ -473,8 +465,7 @@ func _handle_died_event(_event: Dictionary) -> void:
 ## added by game_log off this same event; in-flight commits keep their baked seconds (stamp-and-bake).
 func _handle_tempo_changed_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
-	GameManager.current_beat_sec = float(data.get("beat_sec", GameManager.current_beat_sec))
-	_update_tempo_display()
+	_apply_tempo(float(data.get("beat_sec", GameManager.current_beat_sec)))
 
 
 ## Per-peer local camera follow (M3.5). Track OUR OWN avatar's position each frame; the avatar's glide
@@ -483,32 +474,46 @@ func _handle_tempo_changed_event(event: Dictionary) -> void:
 ## first spawn, late join, and F5 respawn — and snap the camera on (re)acquire. On our death the avatar
 ## frees, re-acquire finds nothing, and the camera simply HOLDS its last position (no snap to origin).
 func _update_camera() -> void:
+	var acquired := false
 	if not is_instance_valid(_local_avatar):
-		var mine := _players.get_node_or_null(str(multiplayer.get_unique_id())) as Node2D
-		if mine == null:
+		_local_avatar = _players.get_node_or_null(str(multiplayer.get_unique_id())) as Node2D
+		# Nothing to follow (pre-first-spawn, or after our death) — hold the last position, no snap.
+		if _local_avatar == null:
 			return
-		_local_avatar = mine
-		_camera.global_position = _local_avatar.global_position
-		_camera.reset_smoothing()
-		return
+		acquired = true
+	# One unconditional follow assignment for both the acquire frame and every steady-state frame.
 	_camera.global_position = _local_avatar.global_position
+	if acquired:
+		# Snap on (re)acquire: the camera uses position_smoothing (main.tscn), so without this the view
+		# would ease in from its held position instead of snapping onto the freshly (re)acquired avatar.
+		_camera.reset_smoothing()
 
 
-## Refresh the top-center tempo readout from the LOCAL GameManager beat (each peer's own). Format
-## "beat 0.25s · 240 BPM" (§2.8.3); BPM = 60 / beat, rounded for display.
+## The one adopt-beat chokepoint (§2.8.3): set the LOCAL GameManager beat, then refresh the readout.
+## BOTH tempo-adoption paths route through here — a broadcast set_tempo event (_handle_tempo_changed_event)
+## and a late joiner's targeted sync_tempo — so a new beat is never adopted without its display updating,
+## and there is one place to extend when adoption grows a side effect. Adjudication stays host-side by
+## construction (only the host stamps verdicts); a client's local beat drives display + pacing only.
+func _apply_tempo(beat_sec: float) -> void:
+	GameManager.current_beat_sec = beat_sec
+	_update_tempo_display()
+
+
+## Refresh the top-center tempo readout from the LOCAL GameManager beat (each peer's own). This label
+## keeps its own "beat 0.25s · 240 BPM" layout (distinct from the log's sentence form), but derives BPM
+## through GameManager.bpm_of so the 0-guard and rounding match every other readout (§2.8.3).
 func _update_tempo_display() -> void:
 	var beat := GameManager.current_beat_sec
-	var bpm := int(round(60.0 / beat)) if beat > 0.0 else 0
-	_tempo_label.text = "beat %.2fs · %d BPM" % [beat, bpm]
+	_tempo_label.text = "beat %.2fs · %d BPM" % [beat, GameManager.bpm_of(beat)]
 
 
-## Any peer: request a tempo nudge of `delta` seconds/beat (negative = faster). Computed from OUR OWN
-## displayed beat and pre-clamped locally for a sane value, then submitted on the ordinary intent pipe —
-## the HOST re-clamps/snaps and is the sole authority (§2.8.3). We never change our own beat here; it
+## Any peer: request a tempo nudge of `delta` seconds/beat (negative = faster; delta = ±config.tempo_step_sec).
+## Submit our OWN displayed beat + delta RAW on the ordinary intent pipe — DELIBERATELY no client-side
+## clampf/snap: the host's set_tempo validator is the SOLE owner of the bounds and grid (§2.8.3), so a
+## second clamp here would only be a place for the two to drift. We never change our own beat here; it
 ## changes only when the host's accepted set_tempo event returns.
 func _request_tempo(delta: float) -> void:
-	var requested := clampf(GameManager.current_beat_sec + delta, TEMPO_MIN_SEC, TEMPO_MAX_SEC)
-	NetEvents.submit_intent("set_tempo", { "beat_sec": requested })
+	NetEvents.submit_intent("set_tempo", { "beat_sec": GameManager.current_beat_sec + delta })
 
 
 ## LOCAL-only red hit vignette (§2.3.4 hit juice, v0.6.3): a brief full-screen red pulse when OUR OWN
@@ -885,15 +890,24 @@ func _validate_chat(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	return { "ok": true, "data": { "text": text, "name": player_node.player_name } }
 
 
-## Host-only tempo referee (DESIGN §2.8.3), registered with NetEvents in _ready. Snaps the requested
-## beat to the 0.05s grid and clamps it to [0.10, 1.00] — the authority owns the value; a client's
-## request is only a direction. Ignores a no-op (unchanged) request so the log/display don't churn (its
-## silent reject is by design — game_log ignores set_tempo rejects). Applies to current_beat_sec
-## HOST-side and returns the stamped beat + the requester's server-resolved name; every peer (host too,
-## via call_local) then adopts it in _handle_tempo_changed_event. Only FUTURE verdicts read the new
-## beat — in-flight commits keep their baked seconds (stamp-and-bake, §2.8.2). No re-derivation here.
+## Host-only tempo referee (DESIGN §2.8.3), registered with NetEvents in _ready. The intent carries an
+## ABSOLUTE requested beat (the client's displayed beat ± one step, submitted RAW, §2.8.3); this host is
+## the SOLE authority that validates it, then snaps it to the config grid and clamps it to
+## [tempo_min_sec, tempo_max_sec] — the client's request is only a proposal, never a nudge the host
+## trusts. The wire is never coerced: a malformed beat_sec (wrong type or non-positive) is REFUSED, not
+## clamped (mirrors _validate_glide's type-guard). Ignores a no-op (unchanged) request so the log/display
+## don't churn (its silent reject is by design — game_log ignores set_tempo rejects). Applies to
+## current_beat_sec HOST-side and returns the stamped beat + the requester's server-resolved name; every
+## peer (host too, via call_local) then adopts it in _handle_tempo_changed_event. Only FUTURE verdicts read
+## the new beat — in-flight commits keep their baked seconds (stamp-and-bake, §2.8.2). No re-derivation here.
 func _validate_set_tempo(sender_peer_id: int, data: Dictionary) -> Dictionary:
-	var beat := clampf(snappedf(float(data.get("beat_sec", 0.0)), TEMPO_STEP_SEC), TEMPO_MIN_SEC, TEMPO_MAX_SEC)
+	# Type/range guard first — the wire is never trusted. Reject anything that isn't a positive number
+	# (a bad type, or to_float garbage → 0.0) rather than snapping/clamping nonsense into a valid beat.
+	var raw = data.get("beat_sec")
+	if (typeof(raw) != TYPE_FLOAT and typeof(raw) != TYPE_INT) or float(raw) <= 0.0:
+		return { "ok": false, "reason": "malformed" }
+	var cfg := GameManager.config
+	var beat := clampf(snappedf(float(raw), cfg.tempo_step_sec), cfg.tempo_min_sec, cfg.tempo_max_sec)
 	if is_equal_approx(beat, GameManager.current_beat_sec):
 		return { "ok": false, "reason": "no change" }
 	# Membership: only a peer with a live player node is in the session (mirrors _validate_chat) —
@@ -979,12 +993,14 @@ func peer_ready(p_name: String, client_version: String) -> void:
 		# peer never spawns), so a later re-seed can respawn this client by name even after its
 		# player node — the only other name source — is gone (dead or despawned).
 		_spawner.spawn(_spawn_config(peer_id, p_name))
-		# Late-join tempo sync (§2.8.3): the joiner seeded its beat from its OWN config default, so if the
-		# live beat differs (a beatsec= override or a runtime tempo change) hand it the host's current
-		# value over a targeted host->client RPC. Same-build guarantee makes config.beat_sec the value it
-		# seeded, so an equal beat needs no sync — which also spares existing peers a redundant broadcast.
-		if not is_equal_approx(GameManager.current_beat_sec, GameManager.config.beat_sec):
-			sync_tempo.rpc_id(peer_id, GameManager.current_beat_sec)
+		# Late-join tempo sync (§2.8.3): ALWAYS hand the admitted joiner the host's current beat over a
+		# targeted host->client RPC. Unconditional by design — sync_tempo just adopts the host's live value
+		# (idempotent when it already matches), so the old "only if it differs from config.beat_sec" gate
+		# bought nothing and left two races open: a tempo change landing the SAME frame this peer is
+		# admitted, and drift between the host's config default and the joiner's (a mismatched .tres).
+		# Syncing every join closes both; a redundant equal-beat adopt is a no-op display refresh, and this
+		# is targeted rpc_id so existing peers see nothing regardless.
+		sync_tempo.rpc_id(peer_id, GameManager.current_beat_sec)
 	else:
 		# Symmetric with the version branch: host-side visibility before the refusal, so a full-server
 		# rejection shows in the host's log/console too (not just on the refused client's menu).
@@ -1009,8 +1025,8 @@ func session_refused(reason: String) -> void:
 ## line — no "set by", since nobody just changed it; this is the standing tempo the joiner walked into.
 @rpc("authority", "call_remote", "reliable")
 func sync_tempo(beat_sec: float) -> void:
-	GameManager.current_beat_sec = beat_sec
-	_update_tempo_display()
+	# Same adopt-beat chokepoint as a broadcast set_tempo (_apply_tempo), but its OWN neutral log line —
+	# no "set by", since nobody just changed it; this is the standing tempo the joiner walked into.
+	_apply_tempo(beat_sec)
 	if is_instance_valid(_game_log):
-		var bpm := int(round(60.0 / beat_sec)) if beat_sec > 0.0 else 0
-		_game_log.add_line("Tempo: %.2fs/beat (%d BPM)." % [beat_sec, bpm])
+		_game_log.add_line("Tempo: %s." % GameManager.tempo_log_text(beat_sec))

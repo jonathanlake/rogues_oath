@@ -297,7 +297,7 @@ func _windup_duration_of(node: Node) -> float:
 	var beats := MonsterType.DEFAULT_WINDUP_BEATS
 	if node is Monster and node.monster_type != null:
 		beats = node.monster_type.windup_beats
-	return beats * GameManager.current_beat_sec
+	return GameManager.beats_to_sec(beats)
 
 
 ## The attacker's recovery tail (seconds) — its authored recovery beats stamped at the live beat
@@ -306,7 +306,7 @@ func _windup_duration_of(node: Node) -> float:
 ## missing-type node reads 0 (no recovery).
 func _recovery_duration_of(node: Node) -> float:
 	if node is Player:
-		return node.attack_recovery_beats * GameManager.current_beat_sec
+		return GameManager.beats_to_sec(node.attack_recovery_beats)
 	if node is Monster and node.monster_type != null:
-		return node.monster_type.recovery_beats * GameManager.current_beat_sec
+		return GameManager.beats_to_sec(node.monster_type.recovery_beats)
 	return 0.0

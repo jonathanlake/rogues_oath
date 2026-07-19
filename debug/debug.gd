@@ -169,7 +169,9 @@ func _ready() -> void:
 	# two-instance demo of the attack-of-opportunity wiring before monsters exist (M3).
 	var all_hostile := false
 	# goblin=N: -1 = knob absent (autostart default: monster-free); 0 = none; N>0 = up to N goblins
-	# from main.gd's GOBLIN_SPAWN_TILES. Menu play (not autostart) spawns all goblins by default.
+	# from main.gd's GOBLIN_SPAWN_TILES. Menu play (not autostart) spawns all goblins by default. Note the
+	# M3.5 map places those spawn tiles in the FAR rooms (B/C/E), so a scripted COMBAT run wanting immediate
+	# aggro should pair goblin=N with hostile=1 (players are adjacent at spawn) or expect no aggro at range.
 	var goblin_count := -1
 	for arg in args:
 		if arg.begins_with("screenshot="):
@@ -513,16 +515,19 @@ func _parse_click_list(spec: String) -> void:
 ## into MoveInput._unhandled_input — the genuine click-to-move path, not a shortcut around it.
 ## Position must be in WINDOW coordinates: parse_input_event treats the event as if it came from
 ## the OS, so the engine applies the canvas_items stretch transform (2× here) window → viewport
-## INBOUND before delivery. Design-pixel coords would land at half scale (tile (3,7) → (1,3)).
-## get_screen_transform() maps design pixels → window at fire time, staying correct under
-## maximized/letterboxed windows rather than hardcoding the 2× override scale.
+## INBOUND before delivery, and MoveInput then inverts get_canvas_transform() viewport → world. So the
+## synthesis must compose the FULL round-trip its inverse expects: world → viewport via the canvas
+## transform (the M3.5 follow Camera2D makes this NON-identity — without this term scripted clicks land
+## on the wrong tile), then viewport → window via get_screen_transform(). get_screen_transform() and
+## get_canvas_transform() are both read at fire time, so this stays correct under a maximized/letterboxed
+## window AND a moving camera rather than hardcoding any offset or scale.
 func _schedule_clicks(delay_sec: float) -> void:
 	await get_tree().create_timer(delay_sec).timeout
 	for i in _click_tiles.size():
 		if i > 0:
 			await get_tree().create_timer(_click_delay_sec).timeout
 		var tile := _click_tiles[i]
-		var window_pos: Vector2 = get_viewport().get_screen_transform() * WorldGrid.tile_to_world(tile)
+		var window_pos: Vector2 = get_viewport().get_screen_transform() * get_viewport().get_canvas_transform() * WorldGrid.tile_to_world(tile)
 		print("[Debug] click: pressing at tile %s" % tile)
 		Input.parse_input_event(_click_event(window_pos, true))
 		await get_tree().create_timer(0.1).timeout
