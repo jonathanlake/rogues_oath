@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.5.5)
+# Rogue's Oath — Design Doc (v0.5.6)
 
 ## Part 1 — The Game
 
@@ -331,6 +331,20 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.5.6 (2026-07-18)** — Post-wire-session review hygiene on the reset key (5-angle
+  code review of v0.5.4/v0.5.5; verified against the first Jon+Jeff combat wire session
+  running live). Field + screenshot evidence REFUTED the one scary candidate (client-side
+  despawn/respawn name collision — the client renders post-reset movement correctly; the
+  spawner orders same-batch despawn-before-spawn). Landed: reset event named
+  `round_reset` (namespace room for M6); `_peer_names` roster written in `_spawn_config`
+  — the one chokepoint every player spawn passes; respawn iterates the roster directly
+  (insertion-ordered, host-first by construction); `_resetting` re-documented as
+  mute-only and its unreachable re-entry return removed (body is synchronous); redundant
+  `is_echo` filter dropped (`is_action_pressed` filters echoes by default, per docs).
+  CONFIRMED and still OPEN (Jon to triage): each reset spams the CLIENT's log with bogus
+  "X left./joined." lines — the mute is host-side only; the right-altitude fix is moving
+  departure lines from node-exit to transport truth (`peer_disconnected`), which would
+  also fix the pre-existing "X dies." + "X left." death double-line.
 - **v0.5.5 (2026-07-18)** — F5 reset race fix, found by Jon's FIRST manual press (the
   humbling kind): v0.5.4's queue_free + awaited process_frame let the old nodes' exit
   hooks fire AFTER the respawn had seeded — erasing the new round's referee state by

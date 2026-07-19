@@ -125,7 +125,7 @@ func _on_event_received(event: Dictionary) -> void:
 				add_line("You died.")
 			else:
 				add_line("%s dies." % str(data.get("name", "")))
-		"reset":
+		"round_reset":
 			# The host-authored dev round-reset (v0.5.4, disposable — M6's run flow replaces it).
 			# One distinct line on BOTH peers' logs so the re-seed is legible, never confusable with
 			# the "X joined." spam the respawn also produces (feedback rule §2.3.4).

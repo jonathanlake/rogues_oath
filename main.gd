@@ -109,10 +109,10 @@ var _next_monster_id: int = -1
 # INVARIANT: any deliberate session-teardown path added later (host quit-to-menu, etc.) MUST
 # set _leaving = true before it tears anything down. Also the client's one-shot host-left guard.
 var _leaving: bool = false
-# Host-only round-reset guard (v0.5.4 dev key). Does double duty: (a) mutes the child_exiting_tree
-# "X left." hook while the mass despawn runs (the same role _leaving plays for session teardown), and
-# (b) is the re-entry lock so an F5 mash during the awaited frame boundary can't despawn a half-spawned
-# new round. Set at _reset_round's head, cleared at its TAIL — no early return sits between (see there).
+# Host-only round-reset mute (v0.5.4 dev key): silences the child_exiting_tree "X left." hook
+# while _reset_round's mass despawn runs — the same role _leaving plays for session teardown.
+# That is its ONLY job: the reset body is fully synchronous (v0.5.5), so there is no async window
+# to lock against. Set at _reset_round's head, cleared at its tail.
 var _resetting: bool = false
 
 # Client-only: how many peer_ready sends we've made this session (see _send_peer_ready).
@@ -235,12 +235,9 @@ func _ready() -> void:
 		# display name server-side (never from the payload) into the broadcast event's data.
 		NetEvents.register_handler("chat", _validate_chat)
 		print("[HOST] server started (peer %d) — spawning host player" % multiplayer.get_unique_id())
-		# Reset roster (v0.5.4): record the host's own name at its spawn site — the same value the spawn
-		# config carries — so a later F5 re-seed can respawn the host even while its player node is dead.
-		var host_id := multiplayer.get_unique_id()
-		_peer_names[host_id] = GameManager.player_name
-		# Spawn the host's own player immediately — no RPC needed.
-		_spawner.spawn(_spawn_config(host_id, GameManager.player_name))
+		# Spawn the host's own player immediately — no RPC needed. (_spawn_config records the reset
+		# roster entry as a side effect — the one chokepoint every spawn path shares.)
+		_spawner.spawn(_spawn_config(multiplayer.get_unique_id(), GameManager.player_name))
 		# Host-only: seed the world with M3's single goblin, AFTER the host player so occupancy is
 		# already populated for the is_tile_free guard. Off by default in the autostart harness
 		# (goblin= knob); on by default for menu play (GameManager.spawn_monsters).
@@ -284,10 +281,9 @@ func _notification(what: int) -> void:
 ## call_deferred, not a direct call: the reset frees nodes synchronously, and doing that from
 ## inside input dispatch could perturb the same frame's input iteration — deferring runs the whole
 ## reset in the idle deferred-flush phase, where the reset body is the only thing on the stack.
-## is_echo filter: a held F5 auto-repeats; each echo would queue a full (benign but wasteful)
-## re-seed, so only the initial press fires.
+## (Held-key echoes are already filtered: is_action_pressed defaults to allow_echo=false.)
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("dev_reset_round") and not event.is_echo():
+	if event.is_action_pressed("dev_reset_round"):
 		if multiplayer.is_server():
 			_reset_round.call_deferred()
 		get_viewport().set_input_as_handled()
@@ -535,14 +531,9 @@ func _on_server_disconnected() -> void:
 ## (the proven disconnect/death paths), and stale wind-up/glide timers no-op through the existing
 ## token / is_alive / freed-node guards. The spawn path (_spawn_config, _spawn_goblin) is reused as-is.
 func _reset_round() -> void:
-	# d2. _resetting's job is the child_exiting_tree "left."-MUTE during the synchronous frees below
-	# (the body is await-free since v0.5.5, so there is no interleaving to re-enter — back-to-back
-	# deferred resets would each run to completion, benignly). The early-return is belt-and-braces.
-	# Cleared at the FUNCTION TAIL — no early return may sit between here
-	# and there (GDScript has no exceptions; the spawn calls warn-and-continue on failure), so the
-	# tail always runs and the key can never brick.
-	if _resetting:
-		return
+	# Arm the "left."-mute for the synchronous frees below; cleared at the FUNCTION TAIL — no early
+	# return may sit between (GDScript has no exceptions; the spawn calls warn-and-continue on
+	# failure), so the tail always runs and the mute can never stick.
 	_resetting = true
 
 	# a. Roster is already captured live in _peer_names (written at both spawn sites, erased on
@@ -569,22 +560,21 @@ func _reset_round() -> void:
 	# run to completion, so referee occupancy is provably empty HERE, no wait of any kind.
 	_slots.clear()
 
-	# e. Re-seed: respawn each CONNECTED peer that still has a roster entry — host 1 FIRST, then the
-	# rest, in that order — then the goblin if monsters are enabled. _peer_names.has guards the mid-join
-	# edge (a peer connected but not yet spawned has no entry; it joins the fresh round normally). Note
-	# _next_monster_id is deliberately NOT reset (see its declaration): the goblin gets a fresh negative
-	# id so a stale timer from the OLD goblin can never match the new one.
-	var reset_ids: Array = [1]
-	reset_ids.append_array(multiplayer.get_peers())
-	for id in reset_ids:
-		if _peer_names.has(id):
-			_spawner.spawn(_spawn_config(id, _peer_names[id]))
+	# e. Re-seed: respawn every roster entry. _peer_names IS the "connected + spawned, host first"
+	# set by construction — a GDScript Dictionary is insertion-ordered, the host's entry is written
+	# at its own spawn (before any client can peer_ready), and disconnect erases — so iterating it
+	# needs no [1]+get_peers() reconstruction and inherently skips mid-join peers (no entry yet;
+	# they join the fresh round normally). Note _next_monster_id is deliberately NOT reset (see its
+	# declaration): the goblin gets a fresh negative id so a stale timer can never match it.
+	for id in _peer_names:
+		_spawner.spawn(_spawn_config(id, _peer_names[id]))
 	if GameManager.spawn_monsters:
 		_spawn_goblin()
 
 	# f. One marker on the shared pipe so BOTH peers' logs show the reset distinctly (feedback rule
 	# §2.3.4): host-authored, peer 0 (server-originated, no validator). game_log renders "— Round reset —".
-	NetEvents.post_event("reset", {})
+	# Named specifically (not bare "reset") so M6's real run start/end events have namespace room.
+	NetEvents.post_event("round_reset", {})
 
 	# Tail clear — always reached (no early return sits above this since _resetting was set). Key armed.
 	_resetting = false
@@ -609,8 +599,12 @@ func _spawn_goblin() -> void:
 
 
 ## Host-only. Builds the replicated spawn config. spawn_index is the server-assigned slot;
-## every peer derives the same position from it in the spawn_function above.
+## every peer derives the same position from it in the spawn_function above. Also records the
+## F5-reset roster entry (_peer_names) — this is the one chokepoint EVERY player spawn passes
+## (host self-spawn, admitted peer_ready, reset respawn), so a future spawn site can't forget
+## the roster and silently drop that peer from later resets. Idempotent on respawn.
 func _spawn_config(peer_id: int, p_name: String) -> Dictionary:
+	_peer_names[peer_id] = p_name
 	var slot := _assign_slot(peer_id)
 	return {
 		"peer_id": peer_id,
@@ -794,10 +788,9 @@ func peer_ready(p_name: String, client_version: String) -> void:
 	# node is freed DEFERRED (queue_free), but its slot is erased immediately — so _slots never
 	# over-counts and a join arriving the same frame as a disconnect isn't falsely refused.
 	if _slots.size() < GameManager.config.max_players:
-		# Reset roster (v0.5.4): record the sanitized name at the spawn site (only admitted peers get an
-		# entry — a refused peer never spawns), so a later F5 re-seed can respawn this client by name even
-		# after its player node — the only other name source — is gone (dead or despawned).
-		_peer_names[peer_id] = p_name
+		# _spawn_config records the F5-reset roster entry (only admitted peers reach it — a refused
+		# peer never spawns), so a later re-seed can respawn this client by name even after its
+		# player node — the only other name source — is gone (dead or despawned).
 		_spawner.spawn(_spawn_config(peer_id, p_name))
 	else:
 		# Symmetric with the version branch: host-side visibility before the refusal, so a full-server
