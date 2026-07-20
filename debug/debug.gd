@@ -80,6 +80,15 @@ var _tempo_beat: float = 0.0
 var _has_tempo: bool = false
 var _tempo_wait_sec: float = -1.0
 
+# Tactical-tempo harness (tactical=/tacticalwait=, v0.9.2): fire ONE set_tactical_tempo intent through
+# the REAL pipe from EITHER role, testing the second tempo dial (§2.8.3 groundwork) end-to-end — the
+# host validates/clamps against the shared band and broadcasts, both peers adopt + display it. Exact
+# mirror of tempo=; bypasses the [ / ] key sampling like tempo= bypasses +/-. Fires mid-sequence by
+# default (move anchor + 2s); tacticalwait= overrides.
+var _tactical_beat: float = 0.0
+var _has_tactical: bool = false
+var _tactical_wait_sec: float = -1.0
+
 # Weapon-swap harness (swap=/swapwait=): fire ONE swap_weapon intent through the REAL pipe from
 # EITHER role, testing the M3.7 swap control end-to-end — the host validates (busy → reject) and, on
 # accept, toggles the sender's weapon within the roster and broadcasts. Bypasses the Tab key like
@@ -112,11 +121,14 @@ const _MOVE_DIRS := {
 # out to both actions itself, which is exactly what the harness verifies. No KP5 (no wait action).
 # "enter" scripts the chat-focus flow (game_log grabs focus on Enter) — the focus-release
 # regression test needs it, and it's generally useful. "f5" scripts the host round-reset key
-# (dev_reset_round) so reset verification runs two-instance without a hand on the keyboard.
+# (dev_reset_round); "f6" the any-peer goblin summon (dev_spawn_goblin, v0.9.2) — both run
+# two-instance without a hand on the keyboard. "lbracket"/"rbracket" script the tactical tempo dial
+# ([ / ], v0.9.2) for binding-level tests, mirroring the +/- explore keys.
 const _TAP_KEYS := {
 	"kp1": KEY_KP_1, "kp2": KEY_KP_2, "kp3": KEY_KP_3, "kp4": KEY_KP_4,
 	"kp6": KEY_KP_6, "kp7": KEY_KP_7, "kp8": KEY_KP_8, "kp9": KEY_KP_9,
-	"enter": KEY_ENTER, "f5": KEY_F5,
+	"enter": KEY_ENTER, "f5": KEY_F5, "f6": KEY_F6,
+	"lbracket": KEY_BRACKETLEFT, "rbracket": KEY_BRACKETRIGHT,
 }
 const _TAP_BUTTONS := {
 	"dpup": JOY_BUTTON_DPAD_UP, "dpdown": JOY_BUTTON_DPAD_DOWN,
@@ -237,6 +249,11 @@ func _ready() -> void:
 			_has_tempo = true
 		elif arg.begins_with("tempowait="):
 			_tempo_wait_sec = arg.trim_prefix("tempowait=").to_float()
+		elif arg.begins_with("tacticalwait="):
+			_tactical_wait_sec = arg.trim_prefix("tacticalwait=").to_float()
+		elif arg.begins_with("tactical="):
+			_tactical_beat = arg.trim_prefix("tactical=").to_float()
+			_has_tactical = true
 		elif arg.begins_with("overlay="):
 			# Both roles: show the F3 overlay from startup (scripted screenshots). Applied via a
 			# GameManager flag the overlay reads in its _ready — set here at parse time, before
@@ -387,6 +404,9 @@ func _schedule_input_knobs(default_anchor_sec: float) -> void:
 	# durations change across the tempo boundary; tempowait= pins it (e.g. early, for a late-join test).
 	if _has_tempo:
 		_schedule_tempo(_tempo_wait_sec if _tempo_wait_sec >= 0.0 else move_anchor + 2.0)
+	# tactical= fires mid-sequence by default (move anchor + 2s), like tempo=; tacticalwait= pins it.
+	if _has_tactical:
+		_schedule_tactical(_tactical_wait_sec if _tactical_wait_sec >= 0.0 else move_anchor + 2.0)
 	# swap= fires mid-sequence by default (move anchor + 2s) so a concurrent hold=/move= shows the
 	# subsequent attacks carrying the new weapon; swapwait= pins it (e.g. mid-busy for the reject test).
 	if _swap_requested:
@@ -429,6 +449,15 @@ func _schedule_tempo(delay_sec: float) -> void:
 	await get_tree().create_timer(delay_sec).timeout
 	print("[Debug] tempo: submitting set_tempo beat_sec=%.2f" % _tempo_beat)
 	NetEvents.submit_intent("set_tempo", { "beat_sec": _tempo_beat })
+
+
+## Fire one set_tactical_tempo intent through the real pipe after a delay (v0.9.2). Exact mirror of
+## _schedule_tempo for the second dial — submit_intent is the single public entry point, no role branch.
+## The host validates, clamps/snaps against the shared band, applies, and broadcasts; both peers adopt.
+func _schedule_tactical(delay_sec: float) -> void:
+	await get_tree().create_timer(delay_sec).timeout
+	print("[Debug] tactical: submitting set_tactical_tempo beat_sec=%.2f" % _tactical_beat)
+	NetEvents.submit_intent("set_tactical_tempo", { "beat_sec": _tactical_beat })
 
 
 ## Parse a comma-separated compass list (e.g. "e,ne,sw") into _move_dirs. Unknown tokens are

@@ -87,9 +87,13 @@ func _compose_stats() -> String:
 		text += "\nmove verdict (ms, last %d): last %.1f | med %.1f | p95 %.1f" % [
 			_samples.size(), _samples.back() * 1000.0,
 			_percentile(0.5) * 1000.0, _percentile(0.95) * 1000.0]
-	# Live tempo (§2.8.3), read straight from GameManager so it tracks a set_tempo event within a refresh.
-	var beat := GameManager.current_beat_sec
-	text += "\nbeat %.2fs · %d BPM" % [beat, GameManager.bpm_of(beat)]
+	# Live tempo (§2.8.3), both dials, read straight from GameManager so they track a set_tempo /
+	# set_tactical_tempo event within a refresh (the tactical dial is v0.9.2 groundwork — displayed, not
+	# yet read for stamping).
+	var explore := GameManager.current_beat_sec
+	var tactical := GameManager.tactical_beat_sec
+	text += "\nexplore %.2fs · %d BPM  |  tactical %.2fs · %d BPM" % [
+		explore, GameManager.bpm_of(explore), tactical, GameManager.bpm_of(tactical)]
 	return text
 
 

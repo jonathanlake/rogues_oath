@@ -153,18 +153,15 @@ func play_whiff(dir: Vector2i) -> void:
 
 ## Release override for the coiled tell (v0.6.1). Both strike paths route here — play_attack (a
 ## landed windup) and play_whiff (a resolved windup against empty ground) — so this is the SINGLE
-## site where the windup RESOLVES, and it does two things the base can't. (1) It cuts the white
-## flash to 0 (~50ms, not a fade-during-hold): the release IS the flash ending. (2) It fixes the
-## lunge base to TILE CENTRE, NEVER the rendered position. WHY: with the coil held, `position` is
-## offset ~5px away from the target; a base captured there (Entity's default) would settle the
-## sprite 4-6px off-centre forever, until the next glide re-bases it. The monster is stationary
-## through the windup (busy record), so tile-centre is the exact truth. super() then runs Jeff's
-## bowstring FROM the coiled position (no pre-snap) THROUGH centre toward the target — the spring
-## release — and settles at that centre base.
-func _bowstring(dir: Vector2i, base_override = null) -> void:
+## site where the windup RESOLVES, and it does the one thing the base can't: cut the white flash to
+## 0 (~50ms, not a fade-during-hold) — the release IS the flash ending. super() then runs Jeff's
+## bowstring, which as of v0.9.2 always bases on TILE CENTRE itself (the settle-at-centre invariant
+## now lives in Entity._bowstring, so this override no longer re-bases): the lunge springs FROM the
+## coiled position THROUGH centre toward the target and settles at that centre. The monster is
+## stationary through the windup (busy record), so tile-centre is the exact truth even mid-coil.
+func _bowstring(dir: Vector2i) -> void:
 	_set_flash(0.0, 0.05)
-	var base: Vector2 = base_override if base_override != null else WorldGrid.tile_to_world(tile)
-	super(dir, base)
+	super(dir)
 
 
 ## Drive the Sprite2D's white-flash shader param to `amount` over `duration_sec` on its own tween

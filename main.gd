@@ -34,16 +34,24 @@ const DUMMY_TYPE_PATH := "res://resources/monsters/training_dummy.tres"
 # player spawn slots, so a player can hit it the moment the round starts.
 const DUMMY_SPAWN_TILE := Vector2i(12, 4)
 
-# Goblin spawn tiles, one per far room so the multi-room map (M3.5) is populated and cross-room
-# aggro/chase gets exercised: B (top-right), C (centre), E (bottom-right). Map-coupled: each spawn
-# is guarded by is_walkable + is_tile_free, so a future room edit that walls a tile skips that goblin
-# instead of dropping it into a wall. The autostart goblin=N knob caps how many actually spawn
+# Goblin spawn tiles, populating the far rooms so the multi-room map (M3.5) exercises cross-room
+# aggro/chase: room C (centre) gets a TRIO for the chaos test (v0.9.2), B (top-right) and E
+# (bottom-right) keep one each — five total. Each C tile is verified '.' floor in WorldGrid.ROOM_LAYOUT
+# (cols 19–30 / rows 12–18) and clear of C's pillar (24,15)/(25,15). Map-coupled: each spawn is guarded
+# by is_walkable + is_tile_free, so a future room edit that walls a tile skips that goblin instead of
+# dropping it into a wall. The autostart goblin=N knob caps how many actually spawn
 # (GameManager.monster_spawn_cap); menu play spawns them all.
 const GOBLIN_SPAWN_TILES: Array[Vector2i] = [
 	Vector2i(38, 6),   # room B
-	Vector2i(23, 14),  # room C
+	Vector2i(21, 13),  # room C — trio, NW
+	Vector2i(27, 13),  # room C — trio, NE
+	Vector2i(24, 16),  # room C — trio, S
 	Vector2i(39, 21),  # room E
 ]
+
+# Sentinel for _pick_room_spawn_tile (F6 summon): out-of-bounds, so it can never collide with a real
+# free tile. Returned when a room has no free walkable tile at all, so the validator refuses cleanly.
+const _NO_SPAWN_TILE := Vector2i(-1, -1)
 
 # Room presentation. The $Room TileMapLayer is painted at runtime FROM WorldGrid (the logical
 # truth) — no authored TileSet .tres, since the room is a disposable prototype fixture. Atlas
@@ -154,8 +162,12 @@ func _ready() -> void:
 	# knob (§2.8.3) rebroadcasts a new value. Same value on host and client at start (same authored
 	# config, same build), so client-side pacing matches until the knob ships.
 	GameManager.current_beat_sec = GameManager.debug_beat_override_sec if GameManager.debug_beat_override_sec > 0.0 else GameManager.config.beat_sec
-	# Seed the always-on tempo readout from that same value, on EVERY peer, so it is correct before any
-	# set_tempo event (§2.8.3). A late joiner's host-supplied beat (sync_tempo below) refreshes it.
+	# Seed the TACTICAL beat (the second dial, DESIGN §2.8.3 groundwork, v0.9.2) from config on EVERY
+	# peer, alongside the explore beat. No debug override for it (no gameplay reads it yet — groundwork
+	# only); the [ / ] keys nudge it live via set_tactical_tempo, a late joiner adopts it via sync_tempo.
+	GameManager.tactical_beat_sec = GameManager.config.tactical_beat_sec
+	# Seed the always-on tempo readout from those values, on EVERY peer, so it is correct before any
+	# set_tempo event (§2.8.3). A late joiner's host-supplied beats (sync_tempo below) refresh it.
 	_update_tempo_display()
 
 	# Paint the room first, on EVERY peer, so players spawn onto a visible floor. Deterministic
@@ -279,6 +291,16 @@ func _ready() -> void:
 		# a set_tempo event (intent-name == event-name, like "chat") that every peer adopts. Gameplay only
 		# ever reads GameManager.current_beat_sec, which no client can write (§2.5 stands).
 		NetEvents.register_handler("set_tempo", _validate_set_tempo)
+		# Host-only: the tactical-tempo referee (DESIGN §2.8.3 groundwork, v0.9.2). Mirrors set_tempo
+		# exactly — ANY peer submits set_tactical_tempo, this validator clamps/snaps against the SAME
+		# tempo band and broadcasts, every peer adopts. Groundwork: it stores GameManager.tactical_beat_sec
+		# and refreshes the readout, but no verdict reads it for stamping yet (the mode design is open).
+		NetEvents.register_handler("set_tactical_tempo", _validate_set_tactical_tempo)
+		# Host-only: the F6 dev-summon referee (v0.9.2). ANY peer submits dev_spawn_goblin; this
+		# validator resolves the SENDER's room, picks a free tile in it, and spawns a goblin
+		# authoritatively (host single-threaded — the spawn happens in-validator, like swap_weapon),
+		# then broadcasts so both logs show "X summoned a goblin." A corridor presser is refused.
+		NetEvents.register_handler("dev_spawn_goblin", _validate_dev_spawn_goblin)
 		# Host-only: the weapon-swap referee (M3.7, DESIGN §2.3.7). A peer submits swap_weapon for its
 		# OWN player; this validator refuses it while the player is busy, otherwise toggles within the
 		# roster host-side and broadcasts. A dev-era control (M5's inventory replaces the hardwired roster).
@@ -348,6 +370,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		if multiplayer.is_server():
 			_reset_round.call_deferred()
 		get_viewport().set_input_as_handled()
+	# Dev summon (F6, v0.9.2): ANY peer spawns a goblin in the room it is standing in. Unlike F5's
+	# host-only direct reset, this rides the intent pipe (submit_intent) so a CLIENT press works too —
+	# the host validator resolves the sender, picks a free tile in its room, and spawns authoritatively.
+	elif event.is_action_pressed("dev_spawn_goblin"):
+		NetEvents.submit_intent("dev_spawn_goblin", {})
+		get_viewport().set_input_as_handled()
 	# Tempo knob (DESIGN §2.8.3): +/- from ANY peer. tempo_up = faster (fewer seconds/beat), tempo_down
 	# = slower. Handled here (like dev_reset_round) so a focused chat LineEdit consumes its own +/- keys
 	# first. The step is applied by the HOST authority — we only submit a request.
@@ -356,6 +384,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 	elif event.is_action_pressed("tempo_down"):
 		_request_tempo(GameManager.config.tempo_step_sec)
+		get_viewport().set_input_as_handled()
+	# Tactical tempo dial ([ / ], v0.9.2 groundwork): ] = faster, [ = slower, from ANY peer. Same
+	# host-adjudicated request shape as the explore keys above, stepping by the SHARED tempo_step_sec
+	# (the tactical dial reuses the explore band pending the mode design). Groundwork — no gameplay
+	# reads the tactical beat for stamping yet; this only stores/displays it.
+	elif event.is_action_pressed("tactical_tempo_up"):
+		_request_tactical_tempo(-GameManager.config.tempo_step_sec)
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("tactical_tempo_down"):
+		_request_tactical_tempo(GameManager.config.tempo_step_sec)
 		get_viewport().set_input_as_handled()
 	# Weapon swap (M3.7, DESIGN 2.3.7): Tab / gamepad Y submits a swap intent for OUR OWN player.
 	# Handled here (like the tempo keys) so a focused chat LineEdit consumes Tab first. The HOST
@@ -390,6 +428,10 @@ func _on_net_event(event: Dictionary) -> void:
 			# An accepted set_tempo intent broadcasts under its own action name (like "chat"), NOT a
 			# separate "tempo_changed" — the whole party adopts the new beat from this one event.
 			_handle_tempo_changed_event(event)
+		"set_tactical_tempo":
+			# The tactical dial's twin of set_tempo (v0.9.2 groundwork): every peer adopts the new
+			# tactical beat for its display. No stamping reads it yet — the log line comes from game_log.
+			_handle_tactical_tempo_changed_event(event)
 		"swap_weapon":
 			# An accepted weapon swap broadcasts under its own action name; every peer repaints that
 			# player's rig + equipped weapon (the log line comes from game_log's own handler).
@@ -514,6 +556,16 @@ func _handle_tempo_changed_event(event: Dictionary) -> void:
 	_apply_tempo(float(data.get("beat_sec", GameManager.current_beat_sec)))
 
 
+## All peers: adopt a host-stamped TACTICAL tempo change (§2.8.3 groundwork, v0.9.2). The exact twin of
+## _handle_tempo_changed_event for the second dial — route the stamped beat through the _apply_tactical_tempo
+## chokepoint so the display updates. GROUNDWORK: no verdict reads tactical_beat_sec for stamping yet; this
+## only stores + displays it. On the HOST this also runs (call_local), re-applying the validator's value
+## (idempotent). The log line is added by game_log off this same event.
+func _handle_tactical_tempo_changed_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	_apply_tactical_tempo(float(data.get("beat_sec", GameManager.tactical_beat_sec)))
+
+
 ## All peers: adopt a host-stamped weapon swap (M3.7, DESIGN §2.3.7). Resolve the player by entity id
 ## and the weapon by name through the roster (shared config, so every peer maps the id to the same
 ## resource), then set_weapon — repainting the rig + equipped_weapon together. On the HOST this also
@@ -561,12 +613,24 @@ func _apply_tempo(beat_sec: float) -> void:
 	_update_tempo_display()
 
 
-## Refresh the top-center tempo readout from the LOCAL GameManager beat (each peer's own). This label
-## keeps its own "beat 0.25s · 240 BPM" layout (distinct from the log's sentence form), but derives BPM
-## through GameManager.bpm_of so the 0-guard and rounding match every other readout (§2.8.3).
+## The adopt-beat chokepoint for the TACTICAL dial (§2.8.3 groundwork, v0.9.2), the twin of _apply_tempo:
+## set the LOCAL GameManager.tactical_beat_sec, then refresh the readout. BOTH tactical-adoption paths
+## route through here — the broadcast set_tactical_tempo event and a late joiner's sync_tempo — so the
+## dial is never adopted without its display updating. GROUNDWORK: no adjudication reads this beat yet.
+func _apply_tactical_tempo(beat_sec: float) -> void:
+	GameManager.tactical_beat_sec = beat_sec
+	_update_tempo_display()
+
+
+## Refresh the top-center tempo readout from the LOCAL GameManager beats (each peer's own). Shows BOTH
+## dials since v0.9.2 — "explore 0.25s · 240 BPM   |   tactical 0.50s · 120 BPM" — so a player can see the
+## two paces at a glance (the tactical dial is groundwork; nothing stamps from it yet). BPM derives through
+## GameManager.bpm_of so the 0-guard and rounding match every other readout (§2.8.3).
 func _update_tempo_display() -> void:
-	var beat := GameManager.current_beat_sec
-	_tempo_label.text = "beat %.2fs · %d BPM" % [beat, GameManager.bpm_of(beat)]
+	var explore := GameManager.current_beat_sec
+	var tactical := GameManager.tactical_beat_sec
+	_tempo_label.text = "explore %.2fs · %d BPM   |   tactical %.2fs · %d BPM" % [
+		explore, GameManager.bpm_of(explore), tactical, GameManager.bpm_of(tactical)]
 
 
 ## Any peer: request a tempo nudge of `delta` seconds/beat (negative = faster; delta = ±config.tempo_step_sec).
@@ -576,6 +640,14 @@ func _update_tempo_display() -> void:
 ## changes only when the host's accepted set_tempo event returns.
 func _request_tempo(delta: float) -> void:
 	NetEvents.submit_intent("set_tempo", { "beat_sec": GameManager.current_beat_sec + delta })
+
+
+## Any peer: request a TACTICAL tempo nudge of `delta` seconds/beat (v0.9.2 groundwork), the twin of
+## _request_tempo. Submit our OWN displayed tactical beat + delta RAW on the intent pipe — the host's
+## set_tactical_tempo validator is the SOLE owner of the (shared) bounds and grid, so no client-side
+## clamp/snap. We never change our own tactical beat here; it changes only when the host's event returns.
+func _request_tactical_tempo(delta: float) -> void:
+	NetEvents.submit_intent("set_tactical_tempo", { "beat_sec": GameManager.tactical_beat_sec + delta })
 
 
 ## LOCAL-only red hit vignette (§2.3.4 hit juice, v0.6.3): a brief full-screen red pulse when OUR OWN
@@ -1022,6 +1094,81 @@ func _validate_set_tempo(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	return { "ok": true, "data": { "beat_sec": beat, "by": player_node.player_name } }
 
 
+## Host-only TACTICAL-tempo referee (DESIGN §2.8.3 groundwork, v0.9.2), registered in _ready. A byte-for-byte
+## MIRROR of _validate_set_tempo for the second dial: same type/range guard, the SAME clamp/snap band
+## (cfg.tempo_step_sec / tempo_min_sec / tempo_max_sec — deliberately shared pending the mode design), the
+## same no-op reject, the same server-resolved sender name and broadcast. The ONLY differences: it reads and
+## writes GameManager.tactical_beat_sec, not current_beat_sec. GROUNDWORK: this stores the value and every
+## peer displays it, but no verdict reads the tactical beat for stamping — that awaits the open mode design.
+func _validate_set_tactical_tempo(sender_peer_id: int, data: Dictionary) -> Dictionary:
+	# Type/range guard first — the wire is never trusted (mirrors _validate_set_tempo).
+	var raw = data.get("beat_sec")
+	if (typeof(raw) != TYPE_FLOAT and typeof(raw) != TYPE_INT) or float(raw) <= 0.0:
+		return { "ok": false, "reason": "malformed" }
+	var cfg := GameManager.config
+	var beat := clampf(snappedf(float(raw), cfg.tempo_step_sec), cfg.tempo_min_sec, cfg.tempo_max_sec)
+	if is_equal_approx(beat, GameManager.tactical_beat_sec):
+		return { "ok": false, "reason": "no change" }
+	# Membership: only a peer with a live player node is in the session — name resolved server-side.
+	var player_node := _players.get_node_or_null(str(sender_peer_id))
+	if player_node == null:
+		return { "ok": false, "reason": "not in session" }
+	GameManager.tactical_beat_sec = beat
+	return { "ok": true, "data": { "beat_sec": beat, "by": player_node.player_name } }
+
+
+## Host-only F6 dev-summon referee (v0.9.2), registered in _ready. ANY peer submits dev_spawn_goblin
+## (empty data — the host resolves everything). Resolve the SENDER's player, find the room it stands in
+## (WorldGrid.room_rect_of); REFUSE if it is in a corridor (no room). Pick a spawn tile: a random FREE
+## walkable tile in that room, preferring one ≥ 3 tiles (Chebyshev) from the presser so the goblin isn't
+## right on top of them, falling back to any free tile. Spawn synchronously IN the validator (host
+## single-threaded — no validate-vs-apply gap, same as swap_weapon) with the next dedicated negative id,
+## and return the resolved sender name so the broadcast event's log line reads "X summoned a goblin."
+## Accepted risk: no spawn cap — it's a dev key; F5 reset is the cleanup lever.
+func _validate_dev_spawn_goblin(sender_peer_id: int, _data: Dictionary) -> Dictionary:
+	var player_node := _players.get_node_or_null(str(sender_peer_id)) as Player
+	if player_node == null:
+		return { "ok": false, "reason": "not in session" }
+	var room := WorldGrid.room_rect_of(player_node.tile)
+	if not room.has_area():
+		return { "ok": false, "reason": "not in a room" }
+	var spawn_tile := _pick_room_spawn_tile(room, player_node.tile)
+	if spawn_tile == _NO_SPAWN_TILE:
+		return { "ok": false, "reason": "room full" }
+	var entity_id := _next_monster_id
+	_next_monster_id -= 1
+	_monster_spawner.spawn({
+		"entity_id": entity_id,
+		"type_path": GOBLIN_TYPE_PATH,
+		"tile": spawn_tile,
+	})
+	return { "ok": true, "data": { "name": player_node.display_name } }
+
+
+## Host-only. Pick a spawn tile for the F6 summon inside `room` (a Rect2i): a RANDOM free walkable tile,
+## preferring those ≥ 3 Chebyshev from `presser` (so the goblin isn't right on top of the summoner), and
+## falling back to ANY free tile if the room is too small/crowded for the preference. Returns the
+## _NO_SPAWN_TILE sentinel when no free tile exists at all (a fully occupied/walled room). Free means
+## WorldGrid.is_walkable AND the referee's authoritative occupancy is clear (host-side, never client).
+func _pick_room_spawn_tile(room: Rect2i, presser: Vector2i) -> Vector2i:
+	var far: Array[Vector2i] = []
+	var any: Array[Vector2i] = []
+	for y in range(room.position.y, room.end.y):
+		for x in range(room.position.x, room.end.x):
+			var t := Vector2i(x, y)
+			if not WorldGrid.is_walkable(t) or not _referee.is_tile_free(t):
+				continue
+			any.append(t)
+			# Chebyshev distance (max of the axis deltas) — the 8-way step metric this grid uses.
+			if maxi(absi(t.x - presser.x), absi(t.y - presser.y)) >= 3:
+				far.append(t)
+	if not far.is_empty():
+		return far[randi() % far.size()]
+	if not any.is_empty():
+		return any[randi() % any.size()]
+	return _NO_SPAWN_TILE
+
+
 ## Host-only weapon-swap referee (M3.7, DESIGN §2.3.7), registered with NetEvents in _ready. A dev-era
 ## control (the tempo-keys spirit): a peer submits swap_weapon for its OWN player (empty data — the
 ## host resolves everything). Refused while the player is BUSY (is_entity_moving — the referee's ONE
@@ -1129,14 +1276,15 @@ func peer_ready(p_name: String, client_version: String) -> void:
 		# peer never spawns), so a later re-seed can respawn this client by name even after its
 		# player node — the only other name source — is gone (dead or despawned).
 		_spawner.spawn(_spawn_config(peer_id, p_name))
-		# Late-join tempo sync (§2.8.3): ALWAYS hand the admitted joiner the host's current beat over a
-		# targeted host->client RPC. Unconditional by design — sync_tempo just adopts the host's live value
-		# (idempotent when it already matches), so the old "only if it differs from config.beat_sec" gate
-		# bought nothing and left two races open: a tempo change landing the SAME frame this peer is
-		# admitted, and drift between the host's config default and the joiner's (a mismatched .tres).
-		# Syncing every join closes both; a redundant equal-beat adopt is a no-op display refresh, and this
-		# is targeted rpc_id so existing peers see nothing regardless.
-		sync_tempo.rpc_id(peer_id, GameManager.current_beat_sec)
+		# Late-join tempo sync (§2.8.3): ALWAYS hand the admitted joiner the host's current beats over a
+		# targeted host->client RPC — BOTH the explore beat AND the tactical beat (v0.9.2), so a joiner's
+		# two-dial readout matches a mid-session change to either. Unconditional by design — sync_tempo just
+		# adopts the host's live values (idempotent when they already match), so the old "only if it differs
+		# from config.beat_sec" gate bought nothing and left two races open: a tempo change landing the SAME
+		# frame this peer is admitted, and drift between the host's config default and the joiner's (a
+		# mismatched .tres). Syncing every join closes both; a redundant equal-beat adopt is a no-op display
+		# refresh, and this is targeted rpc_id so existing peers see nothing regardless.
+		sync_tempo.rpc_id(peer_id, GameManager.current_beat_sec, GameManager.tactical_beat_sec)
 		# Late-join weapon sync (M3.7, DESIGN §2.3.7): hand the joiner every EXISTING player's CURRENT
 		# weapon over a targeted host->client RPC, so a non-default weapon (someone swapped, or the host's
 		# weapon= knob) shows on the joiner's rig immediately instead of the scene default. Same
@@ -1164,17 +1312,20 @@ func session_refused(reason: String) -> void:
 	_end_session(reason)
 
 
-## Host -> one late-joining client (§2.8.3). Adopt the host's current beat so the joiner's display and
-## client-side pacing match a mid-session tempo. Host-authored (authority) and TARGETED (no broadcast,
-## so existing peers see no redundant line). Applied to the LOCAL beat + readout, with one neutral log
-## line — no "set by", since nobody just changed it; this is the standing tempo the joiner walked into.
+## Host -> one late-joining client (§2.8.3). Adopt the host's current beats so the joiner's display and
+## client-side pacing match a mid-session tempo. Carries BOTH dials since v0.9.2 — the explore beat AND
+## the tactical beat — each through its own adopt chokepoint. Host-authored (authority) and TARGETED (no
+## broadcast, so existing peers see no redundant line). One neutral log line per dial — no "set by", since
+## nobody just changed it; this is the standing tempo the joiner walked into.
 @rpc("authority", "call_remote", "reliable")
-func sync_tempo(beat_sec: float) -> void:
-	# Same adopt-beat chokepoint as a broadcast set_tempo (_apply_tempo), but its OWN neutral log line —
-	# no "set by", since nobody just changed it; this is the standing tempo the joiner walked into.
+func sync_tempo(beat_sec: float, tactical_beat_sec: float) -> void:
+	# Same adopt chokepoints as the broadcast events (_apply_tempo / _apply_tactical_tempo), but their OWN
+	# neutral log lines — no "set by", since nobody just changed it; this is the standing tempo walked into.
 	_apply_tempo(beat_sec)
+	_apply_tactical_tempo(tactical_beat_sec)
 	if is_instance_valid(_game_log):
 		_game_log.add_line("Tempo: %s." % GameManager.tempo_log_text(beat_sec))
+		_game_log.add_line("Tactical: %s." % GameManager.tempo_log_text(tactical_beat_sec))
 
 
 ## Host -> one late-joining client (M3.7, DESIGN §2.3.7). Adopt one existing player's CURRENT weapon so

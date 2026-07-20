@@ -232,15 +232,17 @@ func _flash(color: Color) -> void:
 ## two never fire on one entity at once), so glide_to's kill of _shake_tween pre-empts it exactly as
 ## before, and it touches position ONLY, never modulate. `dir` is the 8-way step toward the target;
 ## Vector2i.ZERO falls back to a horizontal lunge.
-## `base_override` (v0.6.1): the settle point the lunge springs from and returns to. Defaults to the
-## current rendered `position` (the historical behaviour, correct for the player bump). Monster
-## overrides _bowstring to pass its TILE CENTER here — a held windup coil offsets `position`, so a
-## base captured there would settle the sprite off-centre forever (see Monster._bowstring). Untyped
-## null default so the caller can omit it; when omitted, position stands in.
-func _bowstring(dir: Vector2i, base_override = null) -> void:
+## SETTLE-AT-CENTRE INVARIANT (v0.9.2): the lunge always springs from and returns to the entity's
+## TILE CENTRE, never the live rendered `position`. An attacker is stationary at its tile (busy
+## record) for the whole strike, so tile-centre is the exact truth — and capturing `position` instead
+## let repeated cues that share this _shake_tween slot compound their displacement (a bonk killing a
+## bonk mid-flight adopting the offset as its new base → monotonic drift into a wall). Basing on the
+## tile removes that class of bug for BOTH kinds (the Monster override no longer needs to re-base — a
+## held windup coil offsets position, which tile-centre ignores by construction).
+func _bowstring(dir: Vector2i) -> void:
 	if _shake_tween != null and _shake_tween.is_valid():
 		_shake_tween.kill()
-	var base: Vector2 = base_override if base_override != null else position
+	var base := WorldGrid.tile_to_world(tile)
 	var unit := Vector2(dir.x, dir.y).normalized() if dir != Vector2i.ZERO else Vector2(1, 0)
 	_shake_tween = create_tween()
 	_shake_tween.tween_property(self, "position", base - unit * 4.0, 0.10)
@@ -248,14 +250,19 @@ func _bowstring(dir: Vector2i, base_override = null) -> void:
 	_shake_tween.tween_property(self, "position", base, 0.09)
 
 
-## A quick 2px position wobble that returns exactly to where it started. If a real glide pre-empts
-## it, glide_to kills this tween and tweens from wherever the shake left the node — self-correcting.
-## `dir` (an 8-way step) makes the wobble lunge TOWARD the struck tile for an attack; the default
-## Vector2i.ZERO is the symmetric horizontal jitter used by the rejection bonk.
+## A quick 2px position wobble that settles back to the entity's TILE CENTRE (v0.9.2 — the
+## settle-at-centre invariant, same as _bowstring). `dir` (an 8-way step) makes the wobble lunge
+## TOWARD the struck tile for an attack; the default Vector2i.ZERO is the symmetric horizontal jitter
+## used by the rejection bonk. SKIPPED ENTIRELY while a glide tween is active: a bonk can fire
+## mid-glide from an "already moving" reject, and re-basing to the tile centre mid-glide would
+## teleport the sprite off its running tween — so the position shake is suppressed there and the
+## modulate flash (play_bonk) carries the reject on its own (§2.3.4, still a distinct visual).
 func _shake(dir: Vector2i = Vector2i.ZERO) -> void:
+	if _glide_tween != null and _glide_tween.is_valid():
+		return
 	if _shake_tween != null and _shake_tween.is_valid():
 		_shake_tween.kill()
-	var base := position
+	var base := WorldGrid.tile_to_world(tile)
 	# A directional lunge for an attack (toward → back), or the two-sided jitter for a bonk.
 	var offset := Vector2(dir.x, dir.y).normalized() * 3.0 if dir != Vector2i.ZERO else Vector2(2, 0)
 	_shake_tween = create_tween()

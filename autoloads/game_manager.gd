@@ -23,6 +23,13 @@ var config: GameConfig = _load_config()
 ## host-side. Seeded inline from config so it is never 0 before a session opens.
 var current_beat_sec: float = config.beat_sec
 
+## The session's live TACTICAL beat (seconds) — the second tempo dial (DESIGN §2.8.3 groundwork,
+## v0.9.2). Seeded from GameConfig.tactical_beat_sec at session start by main.gd, on EVERY peer, and
+## nudged live by the [ / ] keys via the set_tactical_tempo intent (host-adjudicated like set_tempo).
+## GROUNDWORK ONLY: adjustable and displayed, but NOTHING reads it for stamping yet — the mode design
+## (when tactical pace applies) is still open with Jeff. Seeded inline from config so it is never 0.
+var tactical_beat_sec: float = config.tactical_beat_sec
+
 ## Set from the main menu before host_game() / join_game(). Flows into the spawn
 ## dict so all peers know each player's display name independently of peer ID.
 var player_name: String = ""

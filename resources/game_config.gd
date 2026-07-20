@@ -23,6 +23,15 @@ extends Resource
 @export var tempo_max_sec: float = 1.00
 @export var tempo_step_sec: float = 0.05
 
+## The TACTICAL beat (seconds) — the second tempo dial (DESIGN §2.8.3 groundwork, v0.9.2). Stored,
+## adjustable ([ / ] keys → set_tactical_tempo) and displayed today, but NOT yet read for stamping:
+## which pace applies when (mode entry/exit, per-player combat state, healer rules) is still an open
+## design discussion with Jeff, so this is groundwork only — gameplay keeps stamping from beat_sec.
+## Its clamp/snap bounds are DELIBERATELY SHARED with the explore dial (tempo_min_sec / tempo_max_sec /
+## tempo_step_sec above) pending that mode design; when tactical earns its own band, split them here.
+## Seeded into GameManager.tactical_beat_sec at session start on every peer. Default 0.50s (120 BPM).
+@export var tactical_beat_sec: float = 0.5
+
 ## Rest beats appended to every movement step's committed window (DESIGN §2.8/§2.2). A step is now
 ## 1 beat TOTAL — this defaults to 0.0. Kept as a reversible, now-ANSWERED experiment: the v0.7.0
 ## committed rest (go-stop-go) read as lag in feel-testing, so the pause moved out of the action

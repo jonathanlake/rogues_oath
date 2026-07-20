@@ -63,9 +63,34 @@ const ROOM_LAYOUT: Array[String] = [
 ]
 
 
+## The five rooms as tile rectangles (name → Rect2i), transcribed from the ROOM_LAYOUT ranges
+## documented above. Rect2i is (position, size): size = span-inclusive count, so has_point(tile) is
+## true for the whole authored range (e.g. A spans cols 2–13 → x in [2, 14), i.e. 2–13). Corridors
+## belong to NO room and match none of these. Read by main.gd's F6 dev-summon (room_rect_of) to
+## resolve which room a presser stands in. Query/presentation data like everything here — never
+## adjudication truth; a spawn still filters by is_walkable + the referee's occupancy.
+const ROOMS := {
+	"A": Rect2i(2, 2, 12, 7),    # start room, top-left  (cols 2–13,  rows 2–8)
+	"B": Rect2i(32, 2, 14, 8),   # top-right             (cols 32–45, rows 2–9)
+	"C": Rect2i(19, 12, 12, 7),  # centre                (cols 19–30, rows 12–18)
+	"D": Rect2i(2, 19, 12, 7),   # bottom-left           (cols 2–13,  rows 19–25)
+	"E": Rect2i(33, 18, 13, 8),  # bottom-right          (cols 33–45, rows 18–25)
+}
+
+
 ## Grid extent in tiles: Vector2i(columns, rows).
 static func size() -> Vector2i:
 	return Vector2i(ROOM_LAYOUT[0].length(), ROOM_LAYOUT.size())
+
+
+## The room rectangle CONTAINING `tile`, or a ZERO-SIZE Rect2i when the tile lies in a corridor (or
+## otherwise in no room). Callers test the result with `has_area()` / `size == Vector2i.ZERO` for
+## "not in a room". Pure static query over ROOMS, like every function here.
+static func room_rect_of(tile: Vector2i) -> Rect2i:
+	for rect in ROOMS.values():
+		if rect.has_point(tile):
+			return rect
+	return Rect2i()
 
 
 ## True if the tile coordinate lies within the grid rectangle.

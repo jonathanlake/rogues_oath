@@ -137,6 +137,15 @@ func _on_event_received(event: Dictionary) -> void:
 			# add_line's sink escape like every other system line.
 			var beat := float(data.get("beat_sec", GameManager.current_beat_sec))
 			add_line("Tempo: %s — set by %s." % [GameManager.tempo_log_text(beat), str(data.get("by", "someone"))])
+		"set_tactical_tempo":
+			# The tactical dial's twin of set_tempo (v0.9.2 groundwork): one line naming who changed it,
+			# on every peer, so the second dial is legible in the log alongside the always-on readout.
+			var tactical := float(data.get("beat_sec", GameManager.tactical_beat_sec))
+			add_line("Tactical: %s — set by %s." % [GameManager.tempo_log_text(tactical), str(data.get("by", "someone"))])
+		"dev_spawn_goblin":
+			# The F6 dev-summon outcome (v0.9.2): one line on every peer naming who summoned, so the spawn
+			# is legible in the log (feedback rule §2.3.4). Name goes through add_line's sink escape.
+			add_line("%s summoned a goblin." % str(data.get("name", "Someone")))
 		"swap_weapon":
 			# The weapon-swap referee outcome (M3.7, §2.3.7): one line naming who drew which weapon, on
 			# every peer, so a live swap is legible in the log. Names go through add_line's sink escape.
