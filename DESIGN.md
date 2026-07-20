@@ -491,6 +491,19 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.9.2 (2026-07-20)** — Feedback pass 2 (Jon+Jeff playtest of v0.9.1). NUDGE-DRIFT FIX:
+  `Entity._bowstring`/`_shake` now base on tile-centre, never the live rendered position — the
+  settle-at-centre invariant moves from the Monster override into Entity, killing the sender-only
+  drift that walked an attacker's own sprite into the wall under sustained bump-spam (interleaved
+  occupied-rejects compounded the captured base). F6 DEV SUMMON (any peer): a `dev_spawn_goblin`
+  intent; the host resolves the presser's room (new `WorldGrid.ROOMS` rects) and spawns a goblin
+  at a free tile ≥3 away, logged per the feedback rule; F5 reset is the cleanup lever. Room C now
+  fields THREE goblins (chaos feel test). DUAL TEMPO DIALS (groundwork for Jeff's two-dial model):
+  `tactical_beat_sec` (default 0.50s) alongside the explore beat — `[`/`]` adjust it via a
+  `set_tactical_tempo` intent (same clamps as explore by design, pending the mode discussion),
+  late-join synced, displayed beside explore everywhere tempo shows. Nothing stamps from the
+  tactical beat yet: explore/tactical MODE-SWITCHING (per-player combat state, who gets pulled
+  into combat pace, the healer question) is deliberately still open with Jeff.
 - **v0.9.1 (2026-07-20)** — Feedback pass on M3.7: BIG ARC SWING + TRAINING DUMMY. Jon's verdict
   on the v0.9.0 rig: the swing read as a tiny nudge. The weapon rig is reworked to a
   pivot-at-avatar-center ORBIT — the sprite rides at `orbit_radius_px` and the rig rotates through
