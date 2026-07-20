@@ -137,6 +137,10 @@ func _on_event_received(event: Dictionary) -> void:
 			# add_line's sink escape like every other system line.
 			var beat := float(data.get("beat_sec", GameManager.current_beat_sec))
 			add_line("Tempo: %s — set by %s." % [GameManager.tempo_log_text(beat), str(data.get("by", "someone"))])
+		"swap_weapon":
+			# The weapon-swap referee outcome (M3.7, §2.3.7): one line naming who drew which weapon, on
+			# every peer, so a live swap is legible in the log. Names go through add_line's sink escape.
+			add_line("%s draws the %s." % [str(data.get("by", "Someone")), str(data.get("weapon", "weapon"))])
 
 
 ## Compose the combat-log line for one `attack` event, one distinct phrasing per outcome (§2.3.4):

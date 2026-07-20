@@ -267,10 +267,26 @@ func _ready() -> void:
 		# a set_tempo event (intent-name == event-name, like "chat") that every peer adopts. Gameplay only
 		# ever reads GameManager.current_beat_sec, which no client can write (§2.5 stands).
 		NetEvents.register_handler("set_tempo", _validate_set_tempo)
+		# Host-only: the weapon-swap referee (M3.7, DESIGN §2.3.7). A peer submits swap_weapon for its
+		# OWN player; this validator refuses it while the player is busy, otherwise toggles within the
+		# roster host-side and broadcasts. A dev-era control (M5's inventory replaces the hardwired roster).
+		NetEvents.register_handler("swap_weapon", _validate_swap_weapon)
 		print("[HOST] server started (peer %d) — spawning host player" % multiplayer.get_unique_id())
 		# Spawn the host's own player immediately — no RPC needed. (_spawn_config records the reset
 		# roster entry as a side effect — the one chokepoint every spawn path shares.)
 		_spawner.spawn(_spawn_config(multiplayer.get_unique_id(), GameManager.player_name))
+		# Host-only weapon= knob (M3.7): apply the debug starting weapon to the host's OWN player,
+		# host-side + authoritative (like beatsec=/hostile=, this knob is host-only). Resolved through
+		# the roster (shared config). A joiner later syncs it via sync_weapon; an F5 reset deliberately
+		# does NOT re-apply it (respawn restores the player.tscn default — the defined reset behavior).
+		if not GameManager.debug_starting_weapon.is_empty():
+			var start_weapon := GameManager.config.weapon_by_name(GameManager.debug_starting_weapon)
+			if start_weapon != null:
+				var host_player := _players.get_node_or_null(str(multiplayer.get_unique_id())) as Player
+				if host_player != null:
+					host_player.set_weapon(start_weapon)
+			else:
+				push_warning("[Main] weapon=%s not in the roster — host keeps its default" % GameManager.debug_starting_weapon)
 		# Host-only: seed the world with the map's goblins, AFTER the host player so occupancy is
 		# already populated for the is_tile_free guard. Off by default in the autostart harness
 		# (goblin= knob); on by default for menu play (GameManager.spawn_monsters).
@@ -329,6 +345,13 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("tempo_down"):
 		_request_tempo(GameManager.config.tempo_step_sec)
 		get_viewport().set_input_as_handled()
+	# Weapon swap (M3.7, DESIGN 2.3.7): Tab / gamepad Y submits a swap intent for OUR OWN player.
+	# Handled here (like the tempo keys) so a focused chat LineEdit consumes Tab first. The HOST
+	# authority toggles the sender weapon within the roster and broadcasts; we only request. A swap
+	# while busy is refused (bonk). Empty data: the host resolves the sender and the next weapon.
+	elif event.is_action_pressed("weapon_swap"):
+		NetEvents.submit_intent("swap_weapon", {})
+		get_viewport().set_input_as_handled()
 
 
 ## Per-peer local camera follow (M3.5), every frame on every peer. Pure presentation — reads only our
@@ -355,6 +378,10 @@ func _on_net_event(event: Dictionary) -> void:
 			# An accepted set_tempo intent broadcasts under its own action name (like "chat"), NOT a
 			# separate "tempo_changed" — the whole party adopts the new beat from this one event.
 			_handle_tempo_changed_event(event)
+		"swap_weapon":
+			# An accepted weapon swap broadcasts under its own action name; every peer repaints that
+			# player's rig + equipped weapon (the log line comes from game_log's own handler).
+			_handle_swap_weapon_event(event)
 
 
 ## Play back an accepted glide. Resolve the mover by entity id: positive is a player, negative a
@@ -426,6 +453,13 @@ func _handle_attack_event(event: Dictionary) -> void:
 	# host's busy record on the wire — no new sync, same event the whole party already receives.
 	if attacker != null:
 		attacker.play_recovery(float(data.get("duration_sec", 0.0)))
+	# Weapon rig swing (M3.7, DESIGN §2.3.7): played on EVERY peer for a weapon-bearing PLAYER attacker.
+	# Gate on FIELD PRESENCE + non-empty (a defaulted string never triggers it) AND the attacker having
+	# a rig (Player) — monster attacks carry no weapon field, so their existing cues stay untouched. It
+	# rides the SAME stamped duration_sec as the recovery tell, so the choreography auto-aligns to the
+	# occupied window; the rig normalizes the phase fractions inside it.
+	if attacker is Player and data.has("weapon") and str(data.get("weapon", "")) != "":
+		attacker.play_weapon_swing(dir, float(data.get("duration_sec", 0.0)))
 	# Local attacker's swing-busy mirror for a bump (decision 2) — players only (positive id), so
 	# commit_in_place is Player surface: deliberate narrow cast, not cruft.
 	if kind == "bump" and attacker_id == multiplayer.get_unique_id():
@@ -466,6 +500,22 @@ func _handle_died_event(_event: Dictionary) -> void:
 func _handle_tempo_changed_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
 	_apply_tempo(float(data.get("beat_sec", GameManager.current_beat_sec)))
+
+
+## All peers: adopt a host-stamped weapon swap (M3.7, DESIGN §2.3.7). Resolve the player by entity id
+## and the weapon by name through the roster (shared config, so every peer maps the id to the same
+## resource), then set_weapon — repainting the rig + equipped_weapon together. On the HOST this also
+## runs (call_local), re-applying the value the validator already set (idempotent). The log line is
+## added by game_log off this same event.
+func _handle_swap_weapon_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var player := _players.get_node_or_null(str(int(data.get("entity_id", 0)))) as Player
+	if player == null:
+		return
+	var weapon := GameManager.config.weapon_by_name(str(data.get("weapon", "")))
+	if weapon == null:
+		return
+	player.set_weapon(weapon)
 
 
 ## Per-peer local camera follow (M3.5). Track OUR OWN avatar's position each frame; the avatar's glide
@@ -595,7 +645,9 @@ func _node_for_peer(entity_id: int) -> Entity:
 ## the game log adds the line via its own connection). Rejects reach only the sender, so the
 ## local player is always the right target.
 func _on_intent_rejected(action: String, reason: String) -> void:
-	if action != "glide_to":
+	# glide_to and swap_weapon (M3.7) both bonk the sender's own player: a refused swap (busy) gets the
+	# same distinct sound+flash as a refused move, so "the host refused" is never a silent no-op (§2.3.4).
+	if action != "glide_to" and action != "swap_weapon":
 		return
 	var me := _players.get_node_or_null(str(multiplayer.get_unique_id())) as Player
 	if me != null:
@@ -938,6 +990,39 @@ func _validate_set_tempo(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	return { "ok": true, "data": { "beat_sec": beat, "by": player_node.player_name } }
 
 
+## Host-only weapon-swap referee (M3.7, DESIGN §2.3.7), registered with NetEvents in _ready. A dev-era
+## control (the tempo-keys spirit): a peer submits swap_weapon for its OWN player (empty data — the
+## host resolves everything). Refused while the player is BUSY (is_entity_moving — the referee's ONE
+## occupancy predicate, which covers glides AND attack commit_in_place records, so a swap can never
+## interrupt a committed action — the Commitment Rule). Otherwise it toggles within the fixed roster
+## (GameConfig.weapon_roster — the ONE authoring site), applies HOST-side authoritatively (so the
+## referee's next damage/attack_beats read is the new weapon), and broadcasts under its own action
+## name; every peer adopts it in _handle_swap_weapon_event. Late-join is handled separately (sync_weapon
+## in peer_ready). Returns the entity id + the new weapon name + the requester's server-resolved name.
+func _validate_swap_weapon(sender_peer_id: int, _data: Dictionary) -> Dictionary:
+	var player_node := _players.get_node_or_null(str(sender_peer_id)) as Player
+	if player_node == null:
+		return { "ok": false, "reason": "not in session" }
+	# BUSY refusal — is_entity_moving covers a glide AND an attack's commit_in_place busy record, so a
+	# swap mid-commit is refused (bonk), state unchanged (Commitment Rule).
+	if _referee.is_entity_moving(sender_peer_id):
+		return { "ok": false, "reason": "busy" }
+	var next: WeaponType = GameManager.config.next_weapon(player_node.equipped_weapon)
+	if next == null or next == player_node.equipped_weapon:
+		# Empty/single-weapon roster (a misconfiguration) — nothing to swap to. Silent to the log; the
+		# sender still gets the bonk so the input isn't a silent no-op.
+		return { "ok": false, "reason": "no weapon" }
+	# Apply host-side FIRST (authoritative), then broadcast (mirrors _validate_set_tempo). set_weapon
+	# (not a raw field write) so the HOST's rig repaints at validator time too — correct even if the
+	# broadcast path ever stopped being call_local; the call_local re-apply stays idempotent.
+	player_node.set_weapon(next)
+	return { "ok": true, "data": {
+		"entity_id": sender_peer_id,
+		"weapon": next.display_name,
+		"by": player_node.player_name,
+	} }
+
+
 ## Host-only. Refuse a peer that was NEVER admitted (version mismatch or capacity). Used by BOTH
 ## refusal paths: mark it refused, send the reason over the transient host->client channel, then
 ## kick IMMEDIATELY — no grace timer. The RPC is enqueued synchronously onto the peer's reliable
@@ -1020,6 +1105,15 @@ func peer_ready(p_name: String, client_version: String) -> void:
 		# Syncing every join closes both; a redundant equal-beat adopt is a no-op display refresh, and this
 		# is targeted rpc_id so existing peers see nothing regardless.
 		sync_tempo.rpc_id(peer_id, GameManager.current_beat_sec)
+		# Late-join weapon sync (M3.7, DESIGN §2.3.7): hand the joiner every EXISTING player's CURRENT
+		# weapon over a targeted host->client RPC, so a non-default weapon (someone swapped, or the host's
+		# weapon= knob) shows on the joiner's rig immediately instead of the scene default. Same
+		# targeted-sync spirit as sync_tempo. Single-threaded host ordering: these RPCs are enqueued here,
+		# BEFORE any later attack event, so the joiner has the right weapon before it must animate one. The
+		# joiner's own just-spawned player carries the scene default already, so it needs no sync.
+		for existing in _players.get_children():
+			if existing is Player and existing.entity_id != peer_id and existing.equipped_weapon != null:
+				sync_weapon.rpc_id(peer_id, existing.entity_id, existing.equipped_weapon.display_name)
 	else:
 		# Symmetric with the version branch: host-side visibility before the refusal, so a full-server
 		# rejection shows in the host's log/console too (not just on the refused client's menu).
@@ -1049,3 +1143,23 @@ func sync_tempo(beat_sec: float) -> void:
 	_apply_tempo(beat_sec)
 	if is_instance_valid(_game_log):
 		_game_log.add_line("Tempo: %s." % GameManager.tempo_log_text(beat_sec))
+
+
+## Host -> one late-joining client (M3.7, DESIGN §2.3.7). Adopt one existing player's CURRENT weapon so
+## the joiner's rig shows it (not the scene default). Host-authored (authority) and TARGETED (no
+## broadcast — existing peers already show it). Resolves the weapon through the shared roster and
+## repaints the rig via set_weapon. A not-yet-replicated player node (the spawn race — this RPC can
+## outrun the spawner's replication of EXISTING players) gets ONE deferred retry half a second later,
+## which outlasts that window by orders of magnitude; only a genuinely absent player (left during the
+## join) drops the sync, and its weapon corrects on any later swap/attack anyway (the §2.7 dev-facility
+## mend, not full mid-run join support). No log line: this is silent state sync, like a join snap.
+@rpc("authority", "call_remote", "reliable")
+func sync_weapon(entity_id: int, weapon_name: String, is_retry: bool = false) -> void:
+	var player := _players.get_node_or_null(str(entity_id)) as Player
+	if player == null:
+		if not is_retry:
+			get_tree().create_timer(0.5).timeout.connect(sync_weapon.bind(entity_id, weapon_name, true))
+		return
+	var weapon := GameManager.config.weapon_by_name(weapon_name)
+	if weapon != null:
+		player.set_weapon(weapon)

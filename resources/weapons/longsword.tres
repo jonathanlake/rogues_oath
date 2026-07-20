@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="WeaponType" format=3 uid="uid://b7lqx8n0swrd1"]
+
+[ext_resource type="Script" path="res://resources/weapon_type.gd" id="1_weapon"]
+
+[resource]
+script = ExtResource("1_weapon")
+display_name = "longsword"
+attack_beats = 2.0
+damage = 5
+windup_beats = 0.0
+atlas_coords = Vector2i(3, 0)
+attack_style = "slash"
+startup_frac = 0.12
+active_frac = 0.18
+recovery_frac = 0.7
+arc_degrees = 90.0
+reach_px = 12.0
+lean_degrees = 5.0
+recoil_px = 3.0

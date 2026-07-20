@@ -82,6 +82,14 @@ var debug_windup_override_sec: float = 0.0
 ## in-session toggle is always F3 regardless; gameplay code never reads this.
 var debug_overlay_start_visible: bool = false
 
+## DEBUG ONLY. When non-empty, the host applies this weapon (by display_name, resolved through
+## GameConfig.weapon_roster) to its OWN player at session start — set host-side via debug.gd's
+## `weapon=` arg so a scripted run can start on the dagger vs the longsword without a swap. Host-only
+## (like beatsec=/hostile=); a client seeds from the scene default and a joiner syncs from the host.
+## Read ONCE at the host's own spawn; an F5 reset deliberately does NOT re-apply it. Never touched by
+## gameplay code.
+var debug_starting_weapon: String = ""
+
 ## DEBUG ONLY. When non-empty, overrides the version string this CLIENT sends in peer_ready — set
 ## client-side via debug.gd's `fakever=` arg so the version-mismatch refusal path is scriptable
 ## two-instance without building a second binary. A send-path override ONLY: never a comparison

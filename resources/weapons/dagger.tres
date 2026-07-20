@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="WeaponType" format=3 uid="uid://c2yq6v8kh4mxr"]
+
+[ext_resource type="Script" path="res://resources/weapon_type.gd" id="1_weapon"]
+
+[resource]
+script = ExtResource("1_weapon")
+display_name = "dagger"
+attack_beats = 1.0
+damage = 2
+windup_beats = 0.0
+atlas_coords = Vector2i(0, 0)
+attack_style = "stab"
+startup_frac = 0.1
+active_frac = 0.2
+recovery_frac = 0.7
+arc_degrees = 40.0
+reach_px = 14.0
+lean_degrees = 5.0
+recoil_px = 3.0

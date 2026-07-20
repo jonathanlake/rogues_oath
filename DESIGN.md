@@ -193,6 +193,40 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    randomness low-magnitude. Replayability comes from input randomness — dungeon gen,
    loot, encounters — not from swingy rolls. A bad outcome should always leave the player
    a real next decision, never just erase a correct one.
+7. **§2.3.7 — Weapons as objects; actions as beats (v0.9.0, M3.7).** A player's weapon is a
+   designer resource (`WeaponType`, `resources/weapons/*.tres`) — add a weapon by dropping a
+   `.tres`, never by touching code (the §2.5 designer rule). Two field groups:
+   - **Gameplay** (read HOST-side by the combat referee; never the wire): `attack_beats` (the
+     BEATS this attack OCCUPIES on the attacker's one timeline — the whole action window, no
+     separate cooldown, per Part 4 Q9), `damage` (deterministic), and `windup_beats` (0 = the
+     instant strike at commit — today's default for both weapons; > 0 = the preserved
+     telegraph/whiff machinery for a future heavy weapon). HONEST STATUS (v0.9.0): the
+     referee reads the equipped weapon's `damage` and `attack_beats` when it stamps a bump;
+     `windup_beats` is AUTHORED-BUT-NOT-YET-WIRED for players — the player-side referee hookup
+     (bump-with-windup through the proven monster machinery) ships with the first windup
+     weapon, a deliberate M3.7 scope cut. The legacy player exports
+     (`melee_damage`/`attack_recovery_beats`) are the no-weapon fallback only.
+   - **Animation** (presentation-only; gameplay NEVER reads these): `atlas_coords` into
+     items.png, `attack_style` (stab | slash, v1), the phase fractions
+     `startup_frac`/`active_frac`/`recovery_frac`, and the small tween knobs
+     (`arc_degrees`/`reach_px`/`lean_degrees`/`recoil_px`). The client-side **weapon rig** plays
+     the three phases as fractions of the STAMPED window (it NORMALIZES them at playback, so a
+     `.tres` authoring error can never push a phase past the window — the referee's
+     slide_fraction-clamp spirit).
+   **DOCTRINE — animation explains state.** Phases (startup/active/recovery) are
+   ANIMATION-INTERNAL slices of the occupied window; gameplay counts only beats. **The
+   anticipation cap:** for a `windup_beats == 0` weapon the damage is instant-at-commit, so the
+   pose must LOOK simultaneous with its damage flash — `startup` is ANTICIPATION ONLY and is
+   kept ≤ ~0.15 of the window (the strike lands within the causality-perception threshold). A
+   readable pre-hit windup is exactly what `windup_beats > 0` is for, where the damage genuinely
+   lands later and a long startup is honest. The first two authored weapons — dagger (1 beat,
+   quick, `damage` 2) and longsword (2 beats, today's feel, `damage` 5) — carry equal-ish DPS
+   with a chunk/quick contrast, all Feel=-tunable in the `.tres`.
+   **Weapon swap** is a dev-era control this milestone (the tempo-keys spirit): refused while
+   busy (the Commitment Rule — no swapping out of a committed action), otherwise instant,
+   host-validated, broadcast, over a hardwired 2-weapon roster (`GameConfig.weapon_roster`). The
+   real game costs beats to swap once inventory exists — **M5 owns acquisition and replaces the
+   hardwired roster.** Monsters keep their MonsterType attack fields this pass (unify later).
 
 ### 2.4 Periodic Effects (DoTs / HoTs / regen / buffs)
 
@@ -437,19 +471,45 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    relative timings the way per-action tuning could — but very fast beats start testing
    reflexes, which brushes the "never tests your reflexes" pillar (Part 1).
 
-9. **Attack shape vs the 1-beat step (the NEXT feel milestone).** After v0.8.0 movement is
-   1 beat/tile but an attack is still `recovery_beats=2` on both sides, so the attack cycle
-   is now 2× a step — deliberate interim, flagged for feel-testing. Two candidate models to
-   weigh once movement feels right: keep the PLANTED 2-beat recovery (an attack roots you —
-   weight as cost), or an internal-cooldown / move-during-recovery model (you may step while
-   the strike cools, hit-and-run enabled). Whichever way, it is PAIRED with re-enabling
-   attacks of opportunity (§2.2.6, currently off) — hit-and-run needs its cost, or the
-   kiting the pillar forbids returns. This is the next movement/combat feel pass.
+9. **Attack shape vs the 1-beat step. ANSWERED (Jeff via ChatGPT + Fable converging,
+   2026-07-20): unified occupancy — NO separate cooldowns, ever.** An entity has ONE timeline;
+   every action (move, attack, item) RESERVES beats on it and plays to completion (the
+   Commitment Rule), and nothing runs a second parallel timer. The rejected alternative was an
+   internal-cooldown / move-during-recovery model: decoupled attack and move timers breed
+   orb-walking / stutter-step play that rewards dexterity over tactics — the anti-pillar (Part 1
+   "never tests your reflexes"). So the PLANTED recovery stays: a multi-beat action roots you,
+   weight as cost. Movement remains the fastest action (1 beat). Counterplay to a long attack is
+   POSITIONAL (the whiff machinery, stepping out of a telegraphed tile) or lethal, never a free
+   input-cancel. This is what M3.7 (v0.9.0) builds on: `WeaponType.attack_beats` IS the occupied
+   window (§2.3.7), dagger 1 beat vs longsword 2 beats — a weapon's whole cost is the beats it
+   locks, not a cooldown bolted beside it. Still PAIRED with the §2.2.6 AoO re-enable as the next
+   feel pass: once the beat-cost contrast reads well, turn AoO back on so stepping away from a
+   committed attacker carries its intended risk (and re-test the telegraphed `windup_beats > 0`
+   heavy weapon in that configuration — the one where dodging finally costs something).
 
 ---
 
 ### Changelog
 
+- **v0.9.0 (2026-07-20)** — M3.7: ARMS & THE ACTION TIMELINE. v0.8.0's movement is APPROVED
+  (Jon+Jeff feel-verdict: "so much better") — the responsive-beat step is the shipped baseline.
+  Part 4 **Q9 ANSWERED** (Jeff via ChatGPT + Fable converging): unified occupancy — one timeline,
+  actions reserve beats, NO separate cooldowns ever (decoupled attack/move timers breed
+  orb-walking/stutter-step, the anti-pillar; the planted recovery stays, counterplay is positional
+  or lethal). New **§2.3.7**: weapons are designer resources (`WeaponType` — gameplay fields
+  `attack_beats`/`damage`/`windup_beats`, animation fields for the client-side rig), with the
+  action-timeline animator (the weapon as its own tweened object, three phases as NORMALIZED
+  fractions of the stamped window) and the ANTICIPATION-CAP doctrine (for `windup_beats == 0`,
+  startup ≤ ~0.15 so the strike reads simultaneous with its instant damage — a real pre-hit windup
+  is what `windup_beats > 0` is for). Two authored weapons: dagger (1 beat, `damage` 2, stab) and
+  longsword (2 beats, `damage` 5, slash, today's feel) over a hardwired `GameConfig.weapon_roster`;
+  a live dev swap control (Tab / gamepad Y) — refused while busy (Commitment Rule), else instant,
+  host-validated, broadcast, with a late-join weapon sync. The combat referee reads the equipped
+  weapon for a player's damage + occupied window (legacy `melee_damage`/`attack_recovery_beats` =
+  the no-weapon fallback); the `attack` event gains a `weapon` field so every peer animates the
+  right rig (monster attack events unchanged — no weapon field). Harness: `weapon=`/`swap=`/
+  `swapwait=`. **M5 note:** inventory acquisition replaces the hardwired roster (swap will cost
+  beats then). Monsters keep their MonsterType attack fields this pass (unify later).
 - **v0.8.0 (2026-07-20)** — M3.6: RESPONSIVE BEAT. Feel-testing v0.7.1 found two things:
   go-stop-go's committed rest read as lag (the pause was in the wrong layer and doubled
   movement's cost), and the tap/hold double-step bug (any press >~0.18s committed two

@@ -54,6 +54,11 @@ overlay=). Their semantics change; the parser doesn't lie.
 - Referee cadence is server-paced: submitting `move=` faster than the busy window
   just produces rejects; space scripted moves ≥ the current step cycle
   (glide + rest at the live beat) or read the accepts, not the submits.
+- Intent REJECTS print on the SENDER's stdout (reject-to-sender, §2.2.8), NOT the
+  host's — a host-log-only capture sees accepted events but misses every reject. To
+  observe rejects from a client-submitted intent, capture the CLIENT's stdout
+  (headless client + cmd-redirect works; intent knobs need no rendering). A "missing"
+  event with no reject in the host log usually means the reject went to the sender.
 
 ## Assertion patterns
 

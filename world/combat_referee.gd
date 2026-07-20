@@ -89,7 +89,7 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 	var target_name := _name_of(target)
 	# Author the hit on the shared pipe (as_peer = attacker, positive for a player or negative for a
 	# monster — negative ids are fine on the wire). Posted BEFORE any `died` so hp_after 0 lands first.
-	NetEvents.post_event("attack", {
+	var attack_data := {
 		"attacker_id": attacker_id,
 		"attacker_name": _name_of(attacker),
 		"target_id": target_id,
@@ -100,7 +100,13 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 		"kind": kind,
 		"whiff": false,
 		"duration_sec": duration_sec,
-	}, attacker_id)
+	}
+	# M3.7: a PLAYER attacker with a weapon stamps its `weapon` id so every peer animates the right
+	# rig (the guard is field-presence + non-empty in playback). Monster attacks carry NO weapon
+	# field — they keep their existing cues untouched.
+	if attacker is Player and attacker.equipped_weapon != null:
+		attack_data["weapon"] = attacker.equipped_weapon.display_name
+	NetEvents.post_event("attack", attack_data, attacker_id)
 	if new_hp <= 0:
 		_kill_entity(target_id, target_name)
 		return true
@@ -170,6 +176,9 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 ## own names and this accessor stays the one translation point.
 func damage_of(node: Node) -> int:
 	if node is Player:
+		# M3.7: the equipped weapon's damage wins; melee_damage is the no-weapon fallback only.
+		if node.equipped_weapon != null:
+			return node.equipped_weapon.damage
 		return node.melee_damage
 	if node is Monster and node.monster_type != null:
 		return node.monster_type.attack_damage
@@ -306,6 +315,10 @@ func _windup_duration_of(node: Node) -> float:
 ## missing-type node reads 0 (no recovery).
 func _recovery_duration_of(node: Node) -> float:
 	if node is Player:
+		# M3.7: the equipped weapon's attack_beats IS the bump's occupied window (the whole action
+		# window — no separate cooldown, Part 4 Q9); attack_recovery_beats is the no-weapon fallback.
+		if node.equipped_weapon != null:
+			return GameManager.beats_to_sec(node.equipped_weapon.attack_beats)
 		return GameManager.beats_to_sec(node.attack_recovery_beats)
 	if node is Monster and node.monster_type != null:
 		return GameManager.beats_to_sec(node.monster_type.recovery_beats)

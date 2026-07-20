@@ -10,12 +10,16 @@
 [ext_resource type="AudioStream" uid="uid://by8wkshbhc6rw" path="res://assets/audio/slash.wav" id="8_slash"]
 [ext_resource type="AudioStream" uid="uid://dflvxqnrggpxg" path="res://assets/audio/impact.wav" id="9_impact"]
 [ext_resource type="Script" uid="uid://nngt3qv36bvj" path="res://entities/slash_fx.gd" id="10_slashfx"]
+[ext_resource type="Script" path="res://entities/player/weapon_rig.gd" id="11_rig"]
+[ext_resource type="Texture2D" uid="uid://5r3hjjukcluj" path="res://assets/32rogues/items.png" id="12_items"]
+[ext_resource type="Resource" uid="uid://b7lqx8n0swrd1" path="res://resources/weapons/longsword.tres" id="13_weapon_ls"]
 
 [node name="Player" type="Node2D" unique_id=1171168158]
 script = ExtResource("1_player")
 glide_speed = ExtResource("3_speed")
 melee_damage = 2
 attack_recovery_beats = 2.0
+equipped_weapon = ExtResource("13_weapon_ls")
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=401734505]
 texture_filter = 1
@@ -64,3 +68,13 @@ stream = ExtResource("9_impact")
 
 [node name="SlashFx" type="Node2D" parent="." unique_id=815263497]
 script = ExtResource("10_slashfx")
+
+[node name="WeaponRig" type="Node2D" parent="." unique_id=920144371]
+position = Vector2(7, 1)
+script = ExtResource("11_rig")
+
+[node name="Sprite2D" type="Sprite2D" parent="WeaponRig" unique_id=920144372]
+texture_filter = 1
+texture = ExtResource("12_items")
+region_enabled = true
+region_rect = Rect2(96, 0, 32, 32)

@@ -139,6 +139,30 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   2-beat planted attack recovery vs 1-beat movement — deliberate weight or sticky? (→ decides
   the attack-cooldown + AoO re-enable milestone, DESIGN Part 4 Q9).
 
+- [x] **M3.7 — Arms & the Action Timeline** *(2026-07-20)* **[size M]** *(plan: 2026-07-20; v0.8.0 movement
+  approved by Jon+Jeff)*
+  Weapons become designer objects and actions become the animation system's beats (DESIGN §2.3.7).
+  Part 4 Q9 answered — unified occupancy, no separate cooldowns (orb-walking is the anti-pillar).
+  New `WeaponType` resource (gameplay: `attack_beats`/`damage`/`windup_beats`; animation: atlas +
+  style + phase fractions + tween knobs); the client-side weapon RIG plays the three phases as
+  NORMALIZED fractions of the stamped window (anticipation-cap doctrine: startup ≤ ~0.15 for the
+  instant strike, so a telegraphed greatsword — `windup_beats > 0` — stays a `.tres` away). Two
+  authored weapons (dagger 1 beat/2 dmg, longsword 2 beats/5 dmg) over a hardwired
+  `GameConfig.weapon_roster`; a live dev swap (Tab / gamepad Y) — refused while busy, else instant,
+  host-validated, broadcast, late-join synced. The combat referee reads the equipped weapon for a
+  player's damage + occupied window; the `attack` event carries a `weapon` field (monsters
+  unchanged). Harness knobs `weapon=`/`swap=`/`swapwait=`. **M5 replaces the hardwired roster with
+  inventory acquisition (swap costs beats then).**
+  **Done =** two-instance: `weapon=dagger` auto-bumps a goblin at ~1/beat for 2 dmg then steps onto
+  the vacated tile; default longsword ~1/2 beats for 5; the dagger's free-beat KITE (attack-step-
+  step-attack) the longsword's 2-beat lock forbids; a mid-run swap broadcasts + logs on both peers
+  and subsequent attacks carry the new weapon (swap-while-busy rejected, bonk, unchanged); a late
+  joiner sees the host's current weapon on its rig; mid-active-phase screenshot shows the weapon
+  extended toward the target; cadence scales with `beatsec=`; movement/goblin/tempo/F5 unregressed.
+  **Feel =** dagger-vs-longsword contrast (does 1 vs 2 beats read?); damage numbers (equal DPS vs
+  chunky); per-weapon phase fractions; idle weapon pose; Tab as the swap key; then the telegraphed
+  greatsword (`windup_beats > 0`) paired with the AoO re-enable (Part 4 Q9).
+
 - [ ] **M4a — Dungeon Generation** **[size M]**
   Room-and-corridor generation (its own design pass first, per DESIGN §2.7); a goal/stairs
   placeholder (hardcoded scene is fine — disposable; M5's resource pipeline doesn't

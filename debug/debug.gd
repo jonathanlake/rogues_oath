@@ -80,6 +80,16 @@ var _tempo_beat: float = 0.0
 var _has_tempo: bool = false
 var _tempo_wait_sec: float = -1.0
 
+# Weapon-swap harness (swap=/swapwait=): fire ONE swap_weapon intent through the REAL pipe from
+# EITHER role, testing the M3.7 swap control end-to-end — the host validates (busy → reject) and, on
+# accept, toggles the sender's weapon within the roster and broadcasts. Bypasses the Tab key like
+# tempo= bypasses +/-, so it exercises the SERVER path. Fires mid-sequence by default (move anchor +
+# 2s) so a concurrent hold=/move= can show subsequent attacks carrying the new weapon; swapwait=
+# overrides (e.g. fire while busy to test the reject). The starting weapon is the separate host-only
+# weapon= knob (applied pre-session to the host's own player, GameManager.debug_starting_weapon).
+var _swap_requested: bool = false
+var _swap_wait_sec: float = -1.0
+
 # Tap harness (tap=/tapsec=): synthesizes press/release EVENTS via Input.parse_input_event(),
 # which routes through the REAL InputMap bindings — one layer deeper than hold=, which presses
 # actions directly and therefore cannot test the bindings themselves (numpad dual-bound
@@ -176,6 +186,9 @@ func _ready() -> void:
 	# M3.5 map places those spawn tiles in the FAR rooms (B/C/E), so a scripted COMBAT run wanting immediate
 	# aggro should pair goblin=N with hostile=1 (players are adjacent at spawn) or expect no aggro at range.
 	var goblin_count := -1
+	# host-only starting-weapon knob (M3.7): weapon=dagger|longsword resolves through the roster
+	# and applies to the host own player at session start (GameManager.debug_starting_weapon).
+	var starting_weapon := ""
 	for arg in args:
 		if arg.begins_with("screenshot="):
 			_schedule_screenshot(arg.trim_prefix("screenshot="))
@@ -233,6 +246,12 @@ func _ready() -> void:
 			all_hostile = arg.trim_prefix("hostile=").to_int() != 0
 		elif arg.begins_with("goblin="):
 			goblin_count = arg.trim_prefix("goblin=").to_int()
+		elif arg.begins_with("weapon="):
+			starting_weapon = arg.trim_prefix("weapon=").strip_edges().to_lower()
+		elif arg.begins_with("swapwait="):
+			_swap_wait_sec = arg.trim_prefix("swapwait=").to_float()
+		elif arg.begins_with("swap="):
+			_swap_requested = arg.trim_prefix("swap=").to_int() != 0
 
 	if not (is_host or is_client):
 		return
@@ -271,6 +290,11 @@ func _ready() -> void:
 		# the moment it adjudicates the first glide. Inert on the client and without the arg.
 		if all_hostile:
 			GameManager.all_hostile = true
+		# weapon= is host-only (M3.7): stash the starting weapon so main.gd applies it to the host
+		# own player at session start (resolved through the roster). Set before host_game(); inert
+		# on the client and without the arg. The swap=/swapwait= knobs fire the swap intent mid-run.
+		if not starting_weapon.is_empty():
+			GameManager.debug_starting_weapon = starting_weapon
 		# goblin= is host-only: the autostart run is monster-free unless opted in, so movement
 		# harness runs (move=/hold=/tap=/click=) keep their clean occupancy. goblin=N caps the count
 		# (0 = none, N>0 = up to N); knob absent (-1) stays monster-free. Set before host_game() so Main
@@ -363,6 +387,10 @@ func _schedule_input_knobs(default_anchor_sec: float) -> void:
 	# durations change across the tempo boundary; tempowait= pins it (e.g. early, for a late-join test).
 	if _has_tempo:
 		_schedule_tempo(_tempo_wait_sec if _tempo_wait_sec >= 0.0 else move_anchor + 2.0)
+	# swap= fires mid-sequence by default (move anchor + 2s) so a concurrent hold=/move= shows the
+	# subsequent attacks carrying the new weapon; swapwait= pins it (e.g. mid-busy for the reject test).
+	if _swap_requested:
+		_schedule_swap(_swap_wait_sec if _swap_wait_sec >= 0.0 else move_anchor + 2.0)
 
 
 ## Fire one chat intent through the real pipe after a settle delay. Works identically on host
@@ -383,6 +411,15 @@ func _schedule_moves(delay_sec: float) -> void:
 		if i > 0:
 			await get_tree().create_timer(_move_delay_sec).timeout
 		NetEvents.submit_intent("glide_to", { "dir": _move_dirs[i] })
+
+
+## Fire one swap_weapon intent through the real pipe after a delay (M3.7). Works identically on host
+## and client — submit_intent is the single public entry point. The host validates (busy → reject)
+## and, on accept, toggles the sender's weapon within the roster and broadcasts.
+func _schedule_swap(delay_sec: float) -> void:
+	await get_tree().create_timer(delay_sec).timeout
+	print("[Debug] swap: submitting swap_weapon")
+	NetEvents.submit_intent("swap_weapon", {})
 
 
 ## Fire one set_tempo intent through the real pipe after a delay. Works identically on host and

@@ -70,3 +70,32 @@ extends Resource
 ## Client-side INPUT convenience only: the same authored file ships in every build and the server
 ## never reads it for adjudication (§2.2.9's client-side framing). Jon/Jeff 2026-07-19.
 @export var click_pathing_enabled: bool = true
+
+## The hardwired weapon roster (M3.7, DESIGN §2.3.7). ONE authoring site for the swap-cycle order:
+## the swap validator (main.gd) and the debug weapon= knob (debug.gd) both resolve a weapon THROUGH
+## this array — by display_name for a lookup, by index for the swap toggle. Designer-editable (add /
+## reorder .tres here, no code). M5's inventory acquisition REPLACES this hardwired list — until
+## then swapping just cycles it. Read HOST-side for adjudication resolution; also read client-side to
+## repaint a rig from a swap/sync event's weapon name.
+@export var weapon_roster: Array[WeaponType] = []
+
+
+# ── Weapon roster helpers ─────────────────────────────────────────────────────
+
+## Resolve a weapon by its display_name through the roster, or null if absent. The single lookup the
+## swap validator, the late-join weapon sync, and the debug weapon= knob share, so the roster stays
+## the one place a weapon id maps to a resource.
+func weapon_by_name(name: String) -> WeaponType:
+	for w in weapon_roster:
+		if w != null and w.display_name == name:
+			return w
+	return null
+
+## The next weapon in the roster after `current` — the swap TOGGLE (cycles; a 2-weapon roster just
+## alternates). An unknown / null current (not in the roster) starts at the first entry. Returns
+## `current` unchanged when the roster is empty (a misconfiguration — nothing to swap to).
+func next_weapon(current: WeaponType) -> WeaponType:
+	if weapon_roster.is_empty():
+		return current
+	var idx := weapon_roster.find(current)  # -1 when absent → (idx + 1) wraps to the first entry
+	return weapon_roster[(idx + 1) % weapon_roster.size()]
