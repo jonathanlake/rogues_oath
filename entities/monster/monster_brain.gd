@@ -22,10 +22,11 @@ extends Node
 
 ## Re-think delay in BEATS after a refused/blocked action (a contested tile back-off) — converted at
 ## the live beat when used, not cached (DESIGN §2.8; matches MoveInput's held-retry cadence so a
-## monster and a player back off a contested tile together). 1 beat = one movement rest. NOTE: the
-## BUSY-gate case (the referee still showing this monster mid glide+rest) does NOT use this delay — it
-## schedules ONE wake at exactly the remaining rest (move_rest_beats + a small epsilon), so the monster
-## resumes right as its rest ends rather than a whole back-off beat later — go-stop-go stays uniform (see _think).
+## monster and a player back off a contested tile together). 1 beat = one movement step. NOTE: the
+## BUSY-gate case (the referee still showing this monster mid action window) does NOT use this delay — it
+## schedules ONE wake at exactly the remaining SETTLE ((1 - slide_fraction) of the glide term + any rest,
+## plus a small epsilon), so the monster resumes right as its action window ends rather than a whole
+## back-off beat later — cadence stays uniform, speed parity with players preserved (see _think).
 @export var rethink_beats: float = 1.0
 
 ## Small margin (seconds) added past a wind-up's duration when the brain schedules its own
@@ -36,6 +37,9 @@ extends Node
 
 # Set true by activate(); a client's brain stays false and every think early-returns.
 var _active: bool = false
+# Whether the last SUBMITTED step was diagonal — the settle wake scales its glide term by the
+# diagonal multiplier to mirror the referee's stamp (see the busy gate in _think).
+var _last_step_was_diagonal: bool = false
 # Aggro latch (DESIGN §2.8, aggro persistence). Set true the first think the nearest player is
 # within aggro_range_tiles; while latched AND monster_type.aggro_persists, the range check is
 # skipped so the chase never leash-drops. With aggro_persists false it tracks current in-range
@@ -89,14 +93,28 @@ func on_boundary() -> void:
 func _think() -> void:
 	if not _active:
 		return
-	# Busy gate: only ever act between committed steps. Under go-stop-go the referee holds this monster
-	# busy for glide + REST, but the node's glide_finished (which woke us via on_boundary) fires at the
-	# GLIDE boundary — so a post-glide think lands mid-rest and sees busy. The remaining busy is then
-	# exactly the rest, so schedule ONE wake at rest + epsilon rather than polling: the monster resumes
-	# right as its rest ends, no busy loop. Should the gate ever trip from a rarer mid-glide wake, the
-	# same delay simply re-checks a little later and converges — self-healing, never a lockup.
+	# Busy gate: only ever act between committed steps. The referee holds this monster busy for the whole
+	# ACTION window (glide term + rest), but the node's glide_finished (which woke us via on_boundary)
+	# fires at the SLIDE boundary — so a post-slide think lands mid-SETTLE and sees busy. The remaining
+	# busy is then the settle remainder, so schedule ONE wake there + epsilon rather than polling: the
+	# monster resumes right as its window ends, no busy loop. Should the gate ever trip from a rarer
+	# mid-slide wake, the same delay simply re-checks a little later and converges — self-healing, never a lockup.
 	if _referee.is_entity_moving(_entity_id):
-		_reschedule_after(GameManager.beats_to_sec(GameManager.config.move_rest_beats) + windup_rethink_epsilon_sec)
+		# glide_finished woke us at the SLIDE boundary, but the referee holds us busy for the whole
+		# ACTION window (glide term + rest). The remaining busy is the SETTLE: (1 - slide_fraction) of
+		# the glide term, plus any rest. Schedule ONE wake there (+ epsilon) so we resume right as the
+		# window ends — no poll. Under-shoot (e.g. a diagonal step's longer window) just re-checks and
+		# converges (self-healing); over-shoot wakes a hair late. Own tier read via the injected type.
+		var glide_beats := 1.0
+		if _monster_type != null and _monster_type.glide_speed != null:
+			glide_beats = _monster_type.glide_speed.glide_beats
+		# A diagonal step's glide term carries the multiplier (the referee stamps it the same way) —
+		# without it the wake fires early on diagonals and re-trips the gate, wasting a reschedule.
+		if _last_step_was_diagonal:
+			glide_beats *= GameManager.config.diagonal_step_multiplier
+		var slide_fraction := clampf(GameManager.config.slide_fraction, 0.05, 1.0)
+		var settle_beats := (1.0 - slide_fraction) * glide_beats + GameManager.config.move_rest_beats
+		_reschedule_after(GameManager.beats_to_sec(settle_beats) + windup_rethink_epsilon_sec)
 		return
 	var my_tile: Vector2i = _referee.tile_of_entity(_entity_id)
 	# tile_of_entity returns a wall-sentinel tile when the entity is untracked (e.g. despawned
@@ -180,6 +198,11 @@ func _think() -> void:
 		return
 
 	var dir := best_path[1] - my_tile
+	# Remember the step's shape for the settle wake: a DIAGONAL step's action window carries the
+	# diagonal multiplier (the referee stamps it), so the busy-gate's settle math must match or the
+	# wake fires early and burns an extra reschedule per diagonal step (speed-parity leak at any
+	# multiplier != 1.0).
+	_last_step_was_diagonal = dir.x != 0 and dir.y != 0
 	# Host-local submit through the referee's validator. On accept the referee broadcasts the
 	# glide_to itself (as_peer = this negative id), which drives the tween on every peer and, at
 	# this monster's boundary, fires glide_finished -> on_boundary -> the next think. So a SUCCESS

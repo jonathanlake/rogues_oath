@@ -118,6 +118,27 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   visible recovery; cross-room chase without aggro drop; camera follows through rooms;
   late joiner matches a mid-session tempo.
 
+- [x] **M3.6 — Responsive Beat** *(2026-07-20)* **[size S]** *(plan: 2026-07-20 v0.7.1 feel-test feedback)*
+  Movement back to 1 beat total (`move_rest_beats` default 0.0, kept as a reversible/answered
+  experiment); the visible slide authored to `slide_fraction` (0.7) of the beat so every step
+  ends with an on-tile SETTLE (the go-stop-go LOOK without the dead time — the committed rest
+  read as lag). Tap/hold threshold moved to beats (`key_repeat_min_hold_beats`, 1.2) and now
+  gates the settle phase too — the v0.7.1 double-step bug fix (any press >~0.18s used to commit
+  two tiles). Monster busy-wake re-pointed to the settle remainder (speed parity restored).
+  `glidesec=` now pins the action window; the broadcast slide is a fraction of it. Attacks
+  deliberately unchanged (attack cycle now 2× movement — intended interim, → the attack pass).
+  **Done =** two-instance: tap = one glide; `hold=e holdsec=0.3` = exactly one glide (v0.7.1
+  bug fixed); `hold=e holdsec=2` streams at one step per beat (broadcast `duration_sec` ≈ 0.175
+  = 0.7 beat); double-tap into the settle queues two glides on consecutive beat boundaries;
+  goblin steps at 1 beat/tile without stall over ≥10s; tempo scaling (`beatsec=0.4`) scales the
+  threshold + slide (`hold=0.3` still one glide, slide ≈ 0.28); `glidesec=1.0` → broadcast
+  `duration_sec` ≈ 0.7; mid-settle screenshot shows the avatar centered on a tile; attack trade
+  / late-join snap / F5 reset unregressed.
+  **Feel =** `slide_fraction` 0.7 — does the settle read as grid snap (raise toward 0.8 =
+  snappier, lower = floatier)? `key_repeat_min_hold_beats` 1.2 — any accidental doubles?
+  2-beat planted attack recovery vs 1-beat movement — deliberate weight or sticky? (→ decides
+  the attack-cooldown + AoO re-enable milestone, DESIGN Part 4 Q9).
+
 - [ ] **M4a — Dungeon Generation** **[size M]**
   Room-and-corridor generation (its own design pass first, per DESIGN §2.7); a goal/stairs
   placeholder (hardcoded scene is fine — disposable; M5's resource pipeline doesn't
@@ -193,8 +214,12 @@ Not scheduled — pulled in when their moment comes:
   if the multiplier moves off 2.0, paths become mildly time-suboptimal — revisit A* weights
   then (M2.1)
 - Rhythm-experiment reversions (v0.6.0, all single-value edits): speed-tier variation
-  (three .tres values), diagonal multiplier off 1.0, AoO re-enable, click pathing
-  re-enable, longer windup telegraph — each waits on Jon+Jeff playtest verdicts.
+  (three .tres values), diagonal multiplier off 1.0, AoO re-enable (now explicitly PAIRED
+  with the attack-cooldown milestone — DESIGN Part 4 Q9), click pathing re-enable, longer
+  windup telegraph — each waits on Jon+Jeff playtest verdicts.
+  *The go-stop-go REST is no longer a pending reversion — it was ANSWERED and retired in
+  v0.8.0 (read as lag; kept behind `move_rest_beats=0`); the visible-slide `slide_fraction`
+  (0.7) replaced it as the grid-tell knob.*
   *Telegraph readability: answered NO at both 0.25s attempts; the 0.5s retry was
   dodgeable-every-time (voice verdict 2026-07-19) — windup experiment CLOSED v0.7.0
   (instant strike + recovery, DESIGN §2.3.3); any future windup re-test should run WITH

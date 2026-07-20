@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.7.2)
+# Rogue's Oath — Design Doc (v0.8.0)
 
 ## Part 1 — The Game
 
@@ -50,10 +50,15 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    entity ("if I hold right and the goblin holds right, we reach the edge together" —
    Jeff). The tier structure stays; variation returns by editing .tres values.
    **v0.7.0:** tiers are now authored in BEATS (`glide_beats`, all 1.0) against the global
-   beat (§2.8); a step is a 1-beat glide + a 1-beat rest — go-stop-go (Jon 2026-07-19,
-   reversing his earlier continuous-hold call: "it makes it more appropriate for a
-   roguelike"). The rest is PART of the committed action — server-stamped, uniform on
-   every peer, all movers (players and monsters alike).
+   beat (§2.8). **v0.8.0 (Responsive Beat):** a step is back to **1 beat TOTAL**
+   (`move_rest_beats` default 0.0, kept as a reversible/ANSWERED experiment). The v0.7.0
+   committed rest read as lag in feel-testing (Jon+Jeff; Jeff's ChatGPT consult and Fable's
+   own analysis converged) — grid feel comes from ATOMICITY (whole-tile commits, snapping),
+   not inserted dead time. So the visible slide is now authored SHORTER than the beat
+   (`slide_fraction`, default 0.7) and every step ends with an on-tile SETTLE — the "go stop
+   go" look without the doubled movement cost. The slide is server-stamped and uniform on
+   every peer, all movers (players and monsters alike); occupancy is still the full action
+   window (visual-only change).
 4. A glide obeys the Commitment Rule: once started, it finishes. Being hit does not interrupt
    it.
 5. Tile reservation: on commit, the destination tile is reserved for the glide's duration. A
@@ -66,11 +71,19 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    which WIDENS the pipeline's RTT budget from one beat to two). A
    pipelined mover's next tile is therefore spoken for up to one step early — intended
    gameplay, not an artifact ("decisions carry risk": conga semantics one step sooner). No
-   cancel path exists; disconnect is the sole slot-clear. **Tap/hold rule (v0.3.5):** only a
-   key held ≥ `key_repeat_min_hold_sec` (~0.18s, client-side convenience in the §2.2.9
-   spirit) feeds the pipeline; a tap is exactly one committed step. The server contract is
-   unchanged — the threshold gates whether a next-step intent is submitted, never when a
-   committed step starts.
+   cancel path exists; disconnect is the sole slot-clear. **Tap/hold rule (v0.3.5, amended
+   v0.8.0):** the threshold is now in BEATS — `key_repeat_min_hold_beats` (default 1.5,
+   ~0.375s at the default tempo — 1.2 was a verified knife-edge where a 0.3s press doubled;
+   client-side convenience in the §2.2.9 spirit). A single
+   continuous press shorter than it = exactly ONE step; held longer, movement auto-repeats
+   one step per beat. Fresh presses use the EXPLICIT slide boundary (`glide_finished`):
+   during the visible SLIDE a fresh tap stays dropped (you are visibly mid-move); from slide
+   end to action-window end (the SETTLE — visibly standing) a fresh press queues via the
+   pipeline slot with the §2.2.8 commit-sent cue (inputs never silently vanish while you look
+   ready). A CONTINUING hold needs the threshold in ANY phase — so a hold that merely
+   outlasts the shorter slide no longer free-fires a second step (the v0.7.1 double-step bug
+   fix: any press >~0.18s used to become two tiles). The server contract is unchanged — the
+   threshold gates whether a next-step intent is submitted, never when a committed step starts.
 6. Attack of opportunity: starting a glide out of a tile adjacent to a hostile that is alive and
    able to act grants that hostile one free attack. **Provisionally DISABLED (v0.6.0, Jon,
    playtest):** `attacks_of_opportunity_enabled` in game_config.tres — spec and code stand;
@@ -278,6 +291,18 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
 4. Whether this knob ships as a player-facing game-speed setting (RimWorld / Dwarf
    Fortress precedent; Fisty's hare-and-tortoise icon) is an open product question —
    Part 4 Q8.
+5. **The beat is a UNIT, not a metronome (v0.8.0 clarification).** It is the shared
+   duration authored against — NOT a global tick everyone's actions snap to (§2.4.1
+   stands; item 1 already says so). NecroDancer-style enforced on-beat sync is explicitly
+   NOT the design — that would reintroduce the reflex/timing test the commitment pillar
+   removes. Steps still start on commit; they merely share a unit.
+6. **`slide_fraction` (GameConfig, default 0.7, v0.8.0)** — the visible slide is authored
+   as a UNITLESS fraction of a step's ACTION window; the remainder the avatar stands
+   SETTLED on the destination tile, which is the grid "snap" tell. It scales with any
+   tier's `glide_beats` and the diagonal multiplier automatically and can never exceed the
+   window. VISUAL ONLY — occupancy and adjudication read the full action window unchanged.
+   1.0 = no settle (continuous glide); low = teleport-y. The one knob that replaced the
+   retired committed-rest experiment as the grid-tell control.
 
 ## Part 3 — Appendix: Why (short version)
 
@@ -412,10 +437,42 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    relative timings the way per-action tuning could — but very fast beats start testing
    reflexes, which brushes the "never tests your reflexes" pillar (Part 1).
 
+9. **Attack shape vs the 1-beat step (the NEXT feel milestone).** After v0.8.0 movement is
+   1 beat/tile but an attack is still `recovery_beats=2` on both sides, so the attack cycle
+   is now 2× a step — deliberate interim, flagged for feel-testing. Two candidate models to
+   weigh once movement feels right: keep the PLANTED 2-beat recovery (an attack roots you —
+   weight as cost), or an internal-cooldown / move-during-recovery model (you may step while
+   the strike cools, hit-and-run enabled). Whichever way, it is PAIRED with re-enabling
+   attacks of opportunity (§2.2.6, currently off) — hit-and-run needs its cost, or the
+   kiting the pillar forbids returns. This is the next movement/combat feel pass.
+
 ---
 
 ### Changelog
 
+- **v0.8.0 (2026-07-20)** — M3.6: RESPONSIVE BEAT. Feel-testing v0.7.1 found two things:
+  go-stop-go's committed rest read as lag (the pause was in the wrong layer and doubled
+  movement's cost), and the tap/hold double-step bug (any press >~0.18s committed two
+  tiles). Diagnosis + fix converged from Jeff's ChatGPT consult and Fable's own analysis
+  on the same principle — grid feel comes from ATOMICITY (whole-tile commits, snapping),
+  NOT inserted dead time. Movement is back to 1 beat total (`move_rest_beats` default 0.0,
+  kept behind the field as an ANSWERED/reversible experiment). The visible slide is now
+  authored to `slide_fraction` (0.7) of the beat, so every step ends with an on-tile SETTLE
+  — the go-stop-go look without the dead time. Broadcast `duration_sec` carries the SLIDE
+  (fraction of the glide term, never of glide+rest — so a re-raised rest extends only the
+  settle: true reversibility). Tap/hold threshold moved to beats (`key_repeat_min_hold_beats`,
+  1.5 — the plan's 1.2 verified as a 0.30s knife-edge where a 0.3s press still doubled, so the
+  default landed above it) and now gates the SETTLE phase too, keyed on the explicit slide boundary
+  (`glide_finished`) — that is the double-step fix (a hold that merely outlasts the shorter
+  slide no longer free-fires). Monster busy-wake re-pointed from the rest to the SETTLE
+  remainder ((1 − slide_fraction) of the glide term + any rest), restoring speed parity —
+  "we reach the edge together." `glidesec=` now pins the ACTION window / glide term; the
+  broadcast slide follows as `slide_fraction ×` it (contract change — it used to pin the
+  tween directly). §2.8 gains the beat-is-a-UNIT-not-a-metronome clarification (NecroDancer
+  enforced-sync is explicitly not the design). Attacks DELIBERATELY unchanged (recovery_beats=2
+  both sides, so the attack cycle is now 2× movement — intended interim); the attack-cooldown
+  / move-during-recovery question PAIRED with the §2.2.6 AoO re-enable is the next feel
+  milestone (Part 4). No engine/tempo/camera/late-join changes.
 - **v0.7.2 (2026-07-19)** — Late-join player snap + the workflow layer (overnight-runbook
   pilot). Players now get the same 0.05s late-join micro-snap monsters got (main.gd
   `_on_player_spawned_host`): a joiner renders already-moved players at their TRUE tile

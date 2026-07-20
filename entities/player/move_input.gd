@@ -22,10 +22,11 @@ extends Node
 ## the pipelined step (§2.2.5 amendment, v0.3.4), sent at glide start so the client's steps arrive
 ## back-to-back instead of one-per-round-trip. AWAITING is the one-in-flight guard (the latch
 ## clears only at the held step's boundary verdict); the referee's slot-full "already moving"
-## reject is the backstop for a third intent. Only a genuinely HELD key feeds that pipeline
-## (v0.3.5): a mid-glide key submit fires only once the key has been down key_repeat_min_hold_sec,
-## so a discrete tap commits exactly one step. A tap that lands mid-glide is deliberately dropped —
-## identical to pre-pipeline behavior, where the _blocked guard swallowed any mid-glide sample.
+## reject is the backstop for a third intent. Only a genuinely HELD key auto-repeats (v0.3.5 /
+## v0.8.0): a CONTINUING hold submits its next step only once held past key_repeat_min_hold_beats,
+## so a discrete tap commits exactly one step even if the press outlasts the shorter visible slide.
+## A fresh tap that lands mid-SLIDE is deliberately dropped (you are visibly moving); from slide end
+## through the SETTLE (action window not yet closed) a fresh press submits and the referee slots it.
 ## The Commitment Rule stands at the input layer: no input path cancels, interrupts, or redirects
 ## the in-flight OR the held step — a mid-glide click only replaces the target the NEXT submission
 ## will path toward.
@@ -60,14 +61,16 @@ signal path_target_cleared
 ## tile as a transient obstacle and retries around it; a second in a row means the way is shut.
 @export var target_reject_cap: int = 2
 
-## How long a move key must be continuously held (seconds) before it may auto-continue into a
-## PIPELINED (mid-glide) submit — the tap/hold gate (v0.3.5). Bounded on both sides: it must stay
-## BELOW the fastest speed tier's cardinal step (speed_fast.tres = 0.25s — the binding case; the
-## 0.2 range cap enforces it) or a held fast-mover would show travel gaps, and ABOVE a human tap
-## (~0.10-0.15s) so a discrete press commits exactly one step instead of pipelining a second. The
-## threshold gates only WHETHER a pipelined submit fires, never WHEN the step starts — the server
-## holds every pipelined accept to the current glide's boundary, so cadence is never sped up by it.
-@export_range(0.05, 0.2, 0.01) var key_repeat_min_hold_sec: float = 0.18
+## Tap/hold threshold in BEATS: a single continuous press shorter than this = exactly ONE step;
+## held longer, movement auto-repeats one step per beat. Converted at the LIVE beat
+## (GameManager.beats_to_sec) at use, not cached (DESIGN §2.8) — client-side PACING only
+## (adjudication stays host-side). Default 1.2 beats (~0.3s at the 0.25 default): deliberately
+## ABOVE the 1-beat action window so a hold that merely outlasts the SHORTER visible slide does
+## not free-fire a second step (the v0.8.0 settle-phase double-step fix), yet low enough that a
+## sustained hold streams at one step per beat. 1.5 (not 1.2): verification found 1.2 = exactly
+## 0.30s at the default beat, a knife-edge where a "0.3s press" doubles frame-dependently — 1.5
+## puts the stated contract ("under ~0.3s = one step, always") safely inside the single-step zone.
+@export_range(0.5, 4.0, 0.1) var key_repeat_min_hold_beats: float = 1.5
 
 # ── Public state ──────────────────────────────────────────────────────────────
 
@@ -138,7 +141,11 @@ func _process(delta: float) -> void:
 	# key as held only under the SAME gates as the key-submit branch below (not typing, this window
 	# focused); anything else — zero dir or a gated one — resets it. A direction change while still
 	# held does NOT reset (hold-turn continuity: turning mid-hold is one continuous movement).
-	if not _chat_focused() and _window_focused() and _sample_dir() != Vector2i.ZERO:
+	var _sampling := not _chat_focused() and _window_focused() and _sample_dir() != Vector2i.ZERO
+	# A fresh press-EDGE: input resumed from idle this frame (accumulator still 0). A direction change
+	# mid-hold keeps the accumulator >0, so it reads as a CONTINUING hold, not a fresh edge.
+	var _fresh_edge := _sampling and _key_held_sec == 0.0
+	if _sampling:
 		_key_held_sec += delta
 	else:
 		_key_held_sec = 0.0
@@ -198,11 +205,16 @@ func _process(delta: float) -> void:
 			# One-shot per press (is_action_just_pressed only fires the one frame) — tells a
 			# confused player/tester why their key/pad input is doing nothing.
 			print("[MoveInput] input ignored: window not focused")
-	# The tap/hold gate applies ONLY to a pipelined (mid-glide) key submit: while _blocked, require
-	# the key to have been held key_repeat_min_hold_sec so a tap commits exactly one step. An idle
-	# submit (not _blocked) stays instant. Click-walk continuation (_step_toward_target above) is
-	# untouched — a click sets its target once, so it never buffers a phantom second step.
-	if dir != Vector2i.ZERO and (not _blocked or _key_held_sec >= key_repeat_min_hold_sec):
+	# v0.8.0 tap/hold gate (DESIGN §2.2.5). A FRESH press-edge submits unless we are visibly mid-SLIDE
+	# (the v0.3.5 drop — you are visibly moving); during the SETTLE (glide_finished fired, action
+	# window not yet closed) or when idle it submits immediately and the referee slots it (§2.2.8 cue
+	# fires). A CONTINUING hold auto-repeats only once held past the threshold, in ANY phase — so a
+	# hold that merely outlasts the shorter slide no longer free-fires a second step (the settle-phase
+	# double-step fix). The AWAITING latch + the referee's one pipeline slot pace the stream to one
+	# step per beat; a third intent while the slot is full is the unchanged "already moving" bonk.
+	var _may_submit := (not _blocked) if _fresh_edge \
+		else (_key_held_sec >= GameManager.beats_to_sec(key_repeat_min_hold_beats))
+	if dir != Vector2i.ZERO and _may_submit:
 		_last_dir = dir
 		# A key step is not a target step: clear the pending-step stamp so its reject can never
 		# count toward a walk (e.g. one clicked into existence before the verdict lands).
@@ -243,9 +255,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	# press into a wall, which bonks). Any non-neighbor click (including the own tile, distance 0) does
 	# nothing at all (Jeff: "if you click 8 spaces ahead nothing happens"). State gate: a click is a
 	# FRESH press, so it bypasses COOLDOWN exactly as a re-tap does, but it is dropped in AWAITING and
-	# — deliberately — while _blocked (mid-glide): a click has no 0.18s hold to satisfy the tap/hold
-	# pipeline gate, so one click = exactly one step from IDLE/COOLDOWN, never a buffered mid-glide
-	# step (the discrete-tap semantics of v0.3.5). No walk can ever stand in this mode (nothing sets
+	# — deliberately — while _blocked (mid-SLIDE): a click is a one-shot fresh edge with no held
+	# accumulator to satisfy the continuing-hold threshold, so one click = exactly one step from
+	# IDLE/COOLDOWN/settle, never a buffered mid-slide step (discrete-tap semantics, v0.3.5 /
+	# v0.8.0). No walk can ever stand in this mode (nothing sets
 	# _has_target), so the key-sampling gates in _process are the only submit-path interplay.
 	if not GameManager.config.click_pathing_enabled:
 		if maxi(absi(tile.x - _current_tile.x), absi(tile.y - _current_tile.y)) != 1:

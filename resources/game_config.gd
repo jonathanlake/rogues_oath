@@ -23,12 +23,22 @@ extends Resource
 @export var tempo_max_sec: float = 1.00
 @export var tempo_step_sec: float = 0.05
 
-## Rest beats appended to every movement step's committed window (go-stop-go, DESIGN §2.8/§2.2):
-## a step is a 1-beat glide + this many beats of rhythmic pause, the whole thing one committed
-## action. Server-authored and identical on every peer (not RTT jitter — the pipeline makes it
-## uniform). The diagonal multiplier scales the GLIDE portion only; this rest is a separate term.
+## Rest beats appended to every movement step's committed window (DESIGN §2.8/§2.2). A step is now
+## 1 beat TOTAL — this defaults to 0.0. Kept as a reversible, now-ANSWERED experiment: the v0.7.0
+## committed rest (go-stop-go) read as lag in feel-testing, so the pause moved out of the action
+## window and into the visible slide instead (see slide_fraction). If ever re-raised, this is a
+## SEPARATE term appended to the action window — the diagonal multiplier scales the glide term only,
+## never this rest — so the visible slide length is unchanged and the rest extends only the settle.
 ## Read HOST-side by MoveReferee when it stamps a step's busy window.
-@export var move_rest_beats: float = 1.0
+@export var move_rest_beats: float = 0.0
+
+## Fraction of a step's ACTION window that the visible slide occupies; the remainder the avatar
+## stands SETTLED on the destination tile — the grid "snap" tell (DESIGN §2.8, v0.8.0). Unitless,
+## so it scales with any tier's glide_beats and the diagonal multiplier automatically and can
+## never exceed the window. 1.0 = no settle (continuous glide); low = teleport-y. VISUAL ONLY —
+## occupancy/adjudication are unchanged (busy window is still the full action window). The referee
+## ALSO clamps this at stamp time, so a hand-edited .tres can't drive it out of range.
+@export_range(0.05, 1.0) var slide_fraction: float = 0.7
 
 ## Unitless duration multiplier applied to a glide's per-step time when the step is diagonal
 ## (DESIGN §2.2.7). Jeff's default is 2.0× — a diagonal costs twice an orthogonal step, so

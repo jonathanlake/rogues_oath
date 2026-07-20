@@ -158,7 +158,10 @@ func _ready() -> void:
 	# override a single FINAL duration), this scales EVERYTHING authored in beats together.
 	var beat_override := 0.0
 	# host-only glide-duration override (seconds); inert on the client and without the arg.
-	# Stretches every glide's base step time so conga/timing tests are scriptable + observable.
+	# Stretches every glide's base step time so timing tests are scriptable + observable. CONTRACT
+	# CHANGE (v0.8.0): this now pins the ACTION window / glide term (the whole step cycle, rest 0 by
+	# default); the visible slide broadcast follows as slide_fraction × it (pre-v0.8.0 it pinned the
+	# broadcast tween directly). So glidesec=1.0 → broadcast duration_sec ≈ 0.7 at the default 0.7 fraction.
 	var glide_override := 0.0
 	# host-only wind-up-duration override (seconds); inert on the client and without the arg.
 	# Exact mirror of glide_override: stretches every monster wind-up's telegraph window so the
@@ -255,7 +258,8 @@ func _ready() -> void:
 		if beat_override > 0.0:
 			GameManager.debug_beat_override_sec = beat_override
 		# glidesec= is host-only: the referee reads the override live when it stamps each glide,
-		# so setting it any time before the moves fire is enough. Inert on the client.
+		# so setting it any time before the moves fire is enough. Inert on the client. v0.8.0: pins the
+		# action window / glide term; the broadcast slide follows as slide_fraction × it (not the tween itself).
 		if glide_override > 0.0:
 			GameManager.debug_glide_override_sec = glide_override
 		# windupsec= is host-only: the combat referee reads the override live when it stamps each

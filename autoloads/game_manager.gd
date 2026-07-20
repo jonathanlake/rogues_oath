@@ -56,8 +56,10 @@ var all_hostile: bool = false
 
 ## DEBUG ONLY. When > 0, the movement referee uses this (seconds) as every glide's BASE per-step
 ## time instead of the mover's GlideSpeed tier — set host-side via debug.gd's `glidesec=` arg to
-## stretch glides long enough to script/observe conga timing. The diagonal multiplier still
-## applies on top. 0 = off (normal tier-driven pacing). Never touched by gameplay code.
+## stretch glides long enough to script/observe timing. The diagonal multiplier still applies on
+## top. v0.8.0: this pins the GLIDE TERM / action window (rest 0 by default); the broadcast slide
+## the client tweens is slide_fraction × it, NOT this value itself. 0 = off (normal tier-driven
+## pacing). Never touched by gameplay code.
 var debug_glide_override_sec: float = 0.0
 
 ## DEBUG ONLY. When > 0, main.gd seeds current_beat_sec from this (seconds) at session start
