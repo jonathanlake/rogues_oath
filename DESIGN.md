@@ -491,6 +491,18 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.9.1 (2026-07-20)** — Feedback pass on M3.7: BIG ARC SWING + TRAINING DUMMY. Jon's verdict
+  on the v0.9.0 rig: the swing read as a tiny nudge. The weapon rig is reworked to a
+  pivot-at-avatar-center ORBIT — the sprite rides at `orbit_radius_px` and the rig rotates through
+  `arc_degrees` (longsword 90° → 160°) centered on the attack direction; the stab thrusts from
+  center out to orbit + reach. The weapon is now visible ONLY during the swing (the body keeps its
+  nudge; the weapon carries the rotation). Presentation-only — the §2.3.7 doctrine (normalized
+  phase fractions of the stamped window, gameplay never reads animation timings) is unchanged.
+  New: the TRAINING DUMMY — an inert scenery-with-HP monster (`MonsterType.has_brain = false`
+  skips brain activation; new `atlas_texture`/`atlas_region` overrides for non-grid custom
+  sheets) in the starting room at (12,4), 1000 HP, never moves or attacks; spawns outside the
+  goblin=N cap and respawns at full HP on F5 reset. Two-instance verified: identical hp_after on
+  both peers, zero dummy-originated events, idle/mid-swing screenshots.
 - **v0.9.0 (2026-07-20)** — M3.7: ARMS & THE ACTION TIMELINE. v0.8.0's movement is APPROVED
   (Jon+Jeff feel-verdict: "so much better") — the responsive-beat step is the shipped baseline.
   Part 4 **Q9 ANSWERED** (Jeff via ChatGPT + Fable converging): unified occupancy — one timeline,
