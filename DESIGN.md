@@ -1,4 +1,4 @@
-# Rogue's Oath — Design Doc (v0.7.1)
+# Rogue's Oath — Design Doc (v0.7.2)
 
 ## Part 1 — The Game
 
@@ -416,7 +416,22 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
-- **v0.7.1 (2026-07-19)** — Post-milestone review pass (8-angle review + GLM, overnight).
+- **v0.7.2 (2026-07-19)** — Late-join player snap + the workflow layer (overnight-runbook
+  pilot). Players now get the same 0.05s late-join micro-snap monsters got (main.gd
+  `_on_player_spawned_host`): a joiner renders already-moved players at their TRUE tile
+  immediately instead of their stale spawn slot until their next step (visible under
+  go-stop-go, where players idle most of the time; still the §2.7 dev-facility mend, not
+  real mid-run-join support). Same guards as the monster path (living, idle,
+  wall-sentinel skip) + self-skip for the joiner's own node. Verified deterministically:
+  host walked (3,3)→(8,3), joiner spawned, host log shows peer-1 snap glide_to
+  (8,3)→(8,3) @0.05s, no self-snap; screenshot corroborates. FIRST RUN of the new
+  workflow layer (same commit): `.claude/skills/harness-verify/` (the two-instance
+  verification gate as a project skill), `docs/overnight-runbook.md` (unattended
+  build-verify protocol; cron gated on 3 clean manual runs), ROADMAP working-agreement
+  FUNCTION/FEEL split (harness-checkable Done= vs human Feel= from M4a on). The pilot's
+  pre-flight rule fired for real mid-task: Jon was live on 3000, the run refused to
+  join his game and waited. Port-watcher, GLM diff review (3 points, all adjudicated),
+  zero manual deviations from the runbook. (8-angle review + GLM, overnight).
   REAL BUG FIXED: M3.5's screen-space Background ColorRect defaulted to mouse_filter
   STOP and ate EVERY mouse click — found by file-probe after scripted clicks never
   reached MoveInput; now IGNORE like its vignette/tempo-label siblings, and adjacent-

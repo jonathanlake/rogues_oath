@@ -122,6 +122,11 @@ use it for all prototyping; re-check the license terms before any public release
 
 ## Status
 
+- Two-instance verification: recipes, knob gotchas, and assertion patterns live in the
+  `harness-verify` project skill (`.claude/skills/harness-verify/`) — use it for every
+  "prove it works" gate.
+- Unattended build-verify sessions follow **`docs/overnight-runbook.md`** — read it before
+  running a `/goal` night or anything cron-shaped.
 - Current status + the milestone chain live in **`ROADMAP.md`** — read it at session start;
   update its checkboxes in the milestone's final commit.
 - If **`HANDOFF.md`** exists, a milestone is mid-flight — read it right after ROADMAP.md.

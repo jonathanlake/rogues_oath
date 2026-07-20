@@ -219,6 +219,14 @@ One milestone per session-or-few. A milestone ends when its **Done =** criterion
 demonstrated, not when the code compiles. Update this file's checkboxes in the milestone's
 final commit.
 
+**FUNCTION vs FEEL split (from M4a onward):** every milestone's **Done =** lists only
+harness-checkable assertions (event traces, probe files, screenshots, assertion scripts —
+what the `harness-verify` skill can demonstrate without a human). Anything that needs a
+human judgment — does it *read* right, does it feel laggy, is the tell legible — goes on a
+separate **Feel =** line, flagged for the next Jon+Jeff session. Feel items never block a
+milestone or an overnight loop (docs/overnight-runbook.md); feel verdicts land the usual
+way (DESIGN changelog notes, .tres flips).
+
 Ending a session mid-milestone? Write `HANDOFF.md`, dated (what's done, what's in progress,
 next concrete step, surprises). Delete it in the milestone's final commit — a lingering
 HANDOFF.md means unfinished work; the date tells you how stale.

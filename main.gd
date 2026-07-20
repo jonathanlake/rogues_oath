@@ -532,8 +532,11 @@ func _flash_hurt_vignette() -> void:
 ## No late-join event replay exists (§2.7, by design), so a client that joined after the goblin moved
 ## renders it at its stale spawn-config tile. Post one micro snap glide_to per LIVING monster (from ==
 ## to == its authoritative tile, 0.05s) on the normal event path (as_peer = monster id): the joiner's
-## stale node glides to truth, everyone else no-ops a same-tile micro-glide. Players are NOT snapped
-## (out of scope — they sit at spawn during the join window by convention). Minimal §2.7-compliant mend.
+## stale node glides to truth, everyone else no-ops a same-tile micro-glide. Players get the SAME snap
+## (as_peer = their positive peer id) — under v0.7.0 go-stop-go a player is idle most of the time, so a
+## joiner would otherwise render every already-moved player at its stale spawn slot until that player's
+## next glide. The just-spawned node is skipped (it enters at its correct tile — snapping it is noise).
+## Minimal §2.7-compliant mend, not real mid-run join support (§2.7 still parks that).
 func _on_player_spawned_host(node: Node) -> void:
 	if not (node is Player):
 		return
@@ -552,6 +555,22 @@ func _on_player_spawned_host(node: Node) -> void:
 		if _referee.is_entity_moving(m.entity_id):
 			continue
 		NetEvents.post_event("glide_to", { "from": cur, "to": cur, "duration_sec": 0.05 }, m.entity_id)
+	# Same mend for already-moved PLAYERS, with the same guards as the monster path above.
+	for p in _players.get_children():
+		if not (p is Player):
+			continue
+		if p == node:
+			continue  # the joiner's own player enters at its correct tile — no snap needed
+		if not _combat.is_alive(p.entity_id):
+			continue
+		var cur: Vector2i = _referee.tile_of_entity(p.entity_id)
+		if WorldGrid.is_wall(cur):
+			continue  # untracked / despawning — no truth to snap to
+		# Skip mid-glide players: a gliding player self-corrects on its own next event, and snapping
+		# it would kill a running tween on every existing peer (the monster path's reasoning verbatim).
+		if _referee.is_entity_moving(p.entity_id):
+			continue
+		NetEvents.post_event("glide_to", { "from": cur, "to": cur, "duration_sec": 0.05 }, p.entity_id)
 
 
 ## Sign of each axis of a delta, clamped to an 8-way step {-1,0,1}² — used to point an attacker's
