@@ -25,6 +25,15 @@ const GAME_LOG_SCENE: PackedScene = preload("uid://djd1d1pf44yi2") # ui/game_log
 # the same build (version gate), so the readable path is the stable, comparable form.
 const GOBLIN_TYPE_PATH := "res://resources/monsters/goblin.tres"
 
+# The training dummy — inert scenery-with-HP (has_brain = false) for practising attacks without
+# travelling. Loaded per-peer from this PATH like the goblin (spawn config carries the path, never a
+# Resource over the wire). Placed in the starting room (room A) at DUMMY_SPAWN_TILE.
+const DUMMY_TYPE_PATH := "res://resources/monsters/training_dummy.tres"
+
+# Training-dummy spawn tile: room A (cols 2-13 / rows 2-8), clear of the pillar (10,4) and the six
+# player spawn slots, so a player can hit it the moment the round starts.
+const DUMMY_SPAWN_TILE := Vector2i(12, 4)
+
 # Goblin spawn tiles, one per far room so the multi-room map (M3.5) is populated and cross-room
 # aggro/chase gets exercised: B (top-right), C (centre), E (bottom-right). Map-coupled: each spawn
 # is guarded by is_walkable + is_tile_free, so a future room edit that walls a tile skips that goblin
@@ -222,7 +231,10 @@ func _ready() -> void:
 		var tile: Vector2i = data.tile
 		monster.tile = tile
 		monster.position = WorldGrid.tile_to_world(tile)
-		if multiplayer.is_server():
+		# Only the host activates a brain, and only for a monster whose type wants one: has_brain ==
+		# false is inert scenery-with-HP (the training dummy) — it seeds HP and takes damage through
+		# the referee like any monster, but never moves and never attacks (no brain to think).
+		if multiplayer.is_server() and monster.monster_type != null and monster.monster_type.has_brain:
 			monster.activate_brain.call_deferred(_referee, _combat)
 		print("[peer %d] spawned monster '%s' (entity %d) at tile %s" % [
 			multiplayer.get_unique_id(), monster.name, monster.entity_id, tile])
@@ -822,6 +834,12 @@ func _reset_round() -> void:
 ## wall or onto a body — a skip doesn't consume a cap slot (the cap counts goblins actually placed).
 ## Each gets the next negative entity id; the config carries the type PATH so every peer loads the
 ## same authored .tres (never a Resource over the wire). Reused as-is by the F5 round reset.
+##
+## Also places the TRAINING DUMMY (DUMMY_SPAWN_TILE) at the end, OUTSIDE the cap count — the goblin=N
+## knob caps goblins without dropping the dummy. (goblin=0 disables monster spawning entirely —
+## spawn_monsters false skips this whole function, dummy included; use goblin=1 for a near-empty
+## harness run that still has the dummy.) Because the F5 reset calls this function wholesale, the
+## dummy respawns at full HP for free.
 func _spawn_goblins() -> void:
 	var cap := GameManager.monster_spawn_cap  # -1 = no cap
 	var spawned := 0
@@ -839,6 +857,20 @@ func _spawn_goblins() -> void:
 			"tile": tile,
 		})
 		spawned += 1
+
+	# The training dummy — same guarded, negative-id spawn path as a goblin, but NOT counted against
+	# the goblin cap (it is a practice fixture, not a monster the goblin=N knob governs). Skipped with
+	# a warning if its tile is walled/occupied, exactly like a goblin.
+	if not WorldGrid.is_walkable(DUMMY_SPAWN_TILE) or not _referee.is_tile_free(DUMMY_SPAWN_TILE):
+		push_warning("[Main] training dummy tile %s not walkable/free — skipping (map-coupled)" % DUMMY_SPAWN_TILE)
+		return
+	var dummy_id := _next_monster_id
+	_next_monster_id -= 1
+	_monster_spawner.spawn({
+		"entity_id": dummy_id,
+		"type_path": DUMMY_TYPE_PATH,
+		"tile": DUMMY_SPAWN_TILE,
+	})
 
 
 ## Host-only. Builds the replicated spawn config. spawn_index is the server-assigned slot;

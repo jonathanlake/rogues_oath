@@ -70,9 +70,15 @@ extends Resource
 @export var active_frac: float = 0.18
 @export var recovery_frac: float = 0.7
 
+## Orbit radius in PIXELS — how far out from the avatar centre the weapon sprite rides on the rig's
+## radius (the rig pivots AT the avatar centre and the sprite orbits it). Bigger = the weapon sweeps
+## a wider circle around the player. Read by the rig for both styles. A designer knob so there is no
+## magic number in the rig.
+@export var orbit_radius_px: float = 14.0
+
 ## Slash sweep in DEGREES — the total arc the weapon rotates through during the active phase of a
-## "slash". Read only when attack_style == "slash".
-@export var arc_degrees: float = 90.0
+## "slash" (a big sweep across the target direction). Read only when attack_style == "slash".
+@export var arc_degrees: float = 160.0
 
 ## Stab reach in PIXELS — how far the weapon thrusts toward the target during the active phase of a
 ## "stab" (and the forward travel of a slash, at half this). Read by the rig.

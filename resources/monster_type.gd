@@ -24,7 +24,20 @@ const DEFAULT_WINDUP_BEATS := 2.0
 
 ## Sprite cell (column, row) into assets/32rogues/monsters.png — 0-indexed, so monsters.txt row 1
 ## letter c ("goblin") is (2, 0). The monster's Sprite2D region is derived from this × TILE_PX.
+## Ignored when atlas_region is set (a non-grid sheet gives an explicit rect instead).
 @export var atlas_coords: Vector2i = Vector2i.ZERO
+
+## Override spritesheet for this monster. null (default) = the scene's default sheet (monsters.png);
+## set it to point a monster at a DIFFERENT sheet (e.g. a custom asset) without touching the scene.
+## Read per-peer in monster._ready — the type PATH crosses the wire, so every peer loads the same
+## texture from the same authored .tres (never streamed).
+@export var atlas_texture: Texture2D = null
+
+## Explicit sprite region (pixels) for a NON-grid sheet whose art is not on a clean atlas_coords ×
+## TILE_PX lattice. Zero-size Rect2() (default) = derive the region from atlas_coords × TILE_PX as
+## usual; a non-zero size = use this rect verbatim as the Sprite2D region (atlas_coords is then
+## ignored). Read per-peer in monster._ready.
+@export var atlas_region: Rect2 = Rect2()
 
 ## Starting / maximum hit points. The nameplate seeds its "HP/HP" readout from this locally at
 ## spawn; the combat referee owns the live value and applies damage against it.
@@ -69,3 +82,9 @@ const DEFAULT_WINDUP_BEATS := 2.0
 ## behaviour returns: aggro_range_tiles is re-checked every think and the chase drops the instant the
 ## target breaks range. Designer dial (DESIGN §2.8). Read HOST-side by MonsterBrain._think.
 @export var aggro_persists: bool = true
+
+## When true (default), this monster gets a live brain (chases + attacks). false = inert
+## scenery-with-HP: the host spawn path SKIPS activate_brain, so the monster never moves and never
+## attacks — a training dummy / destructible prop that still seeds HP, shows a nameplate, takes
+## damage, and dies through the normal referee path. Read HOST-side by Main's monster spawn gate.
+@export var has_brain: bool = true

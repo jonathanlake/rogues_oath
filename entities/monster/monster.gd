@@ -54,9 +54,18 @@ func _ready() -> void:
 		_name_label.text = display_name
 		return
 	glide_speed = monster_type.glide_speed
-	var cell := monster_type.atlas_coords
+	# Sprite: an optional atlas_texture override points this monster at a different sheet than the
+	# scene default (monsters.png); an optional non-zero atlas_region gives an explicit rect for a
+	# non-grid sheet, else derive the region from atlas_coords × TILE_PX as usual. Both are authored
+	# on the type and loaded identically on every peer (the type PATH crosses the wire, never pixels).
+	if monster_type.atlas_texture != null:
+		_sprite.texture = monster_type.atlas_texture
 	_sprite.region_enabled = true
-	_sprite.region_rect = Rect2(cell.x * WorldGrid.TILE_PX, cell.y * WorldGrid.TILE_PX, WorldGrid.TILE_PX, WorldGrid.TILE_PX)
+	if monster_type.atlas_region.size != Vector2.ZERO:
+		_sprite.region_rect = monster_type.atlas_region
+	else:
+		var cell := monster_type.atlas_coords
+		_sprite.region_rect = Rect2(cell.x * WorldGrid.TILE_PX, cell.y * WorldGrid.TILE_PX, WorldGrid.TILE_PX, WorldGrid.TILE_PX)
 	# Nameplate is name-only, seeded from the pre-tree display_name; the HP readout rides its own
 	# label under the feet, seeded from the authored max locally (max_hp is known everywhere) via
 	# set_hp_display, the single formatting site. The combat referee drives updates from attack

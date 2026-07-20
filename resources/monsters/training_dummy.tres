@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="MonsterType" format=3 uid="uid://cq4wt6dnxm8yb"]
+
+[ext_resource type="Texture2D" uid="uid://bdx5kyc57ixc4" path="res://assets/custom/training_dummies.png" id="1_atlas"]
+[ext_resource type="Resource" path="res://resources/speed_tiers/speed_slow.tres" id="2_speed"]
+[ext_resource type="Script" uid="uid://cl3pdmosdok4g" path="res://resources/monster_type.gd" id="3_type"]
+
+[resource]
+script = ExtResource("3_type")
+display_name = "Training Dummy"
+max_hp = 1000
+windup_beats = 0.0
+glide_speed = ExtResource("2_speed")
+atlas_texture = ExtResource("1_atlas")
+atlas_region = Rect2(66, 0, 32, 32)
+has_brain = false

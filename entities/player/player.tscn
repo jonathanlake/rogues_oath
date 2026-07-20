@@ -70,10 +70,10 @@ stream = ExtResource("9_impact")
 script = ExtResource("10_slashfx")
 
 [node name="WeaponRig" type="Node2D" parent="." unique_id=920144371]
-position = Vector2(7, 1)
 script = ExtResource("11_rig")
 
 [node name="Sprite2D" type="Sprite2D" parent="WeaponRig" unique_id=920144372]
+visible = false
 texture_filter = 1
 texture = ExtResource("12_items")
 region_enabled = true
