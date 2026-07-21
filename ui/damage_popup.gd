@@ -13,8 +13,12 @@ extends Label
 ## one tile don't stack into a single blob. It is deliberately NOT synced — jitter differing between
 ## peers is fine (it never touches adjudication), so a plain randf is used, not a seeded/shared RNG.
 
-## Damage red — shares §2.3.4's hit-red language (the hurt flash / slash streak family).
+## Damage red — shares §2.3.4's hit-red language (the hurt flash / slash streak family). Rendered for
+## damage the LOCAL side TAKES (a player was struck), so "I got hit" stays red across every cue.
 const DAMAGE_COLOR := Color(1.0, 0.3, 0.3)
+## Player→enemy hit white — a blow the party LANDED on a monster, kept visually distinct from the red
+## of damage taken so "I hit them" never reads as "I got hit" (v0.10.2, §2.3.4). Crit-yellow is future work.
+const PLAYER_HIT_COLOR := Color.WHITE
 ## Grey for the non-damage outcomes ("miss" on a whiff, "0" on a godded no-op) — deliberately NOT the
 ## damage red, so "no damage happened" never reads as "you took a hit".
 const MISS_COLOR := Color(0.72, 0.72, 0.72)

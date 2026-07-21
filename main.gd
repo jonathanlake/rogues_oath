@@ -586,7 +586,10 @@ func _handle_attack_event(event: Dictionary) -> void:
 			if godded:
 				_fx.damage_popup("0", DamagePopup.MISS_COLOR, target.tile)
 			else:
-				_fx.damage_popup("-%d" % int(data.get("damage", 0)), DamagePopup.DAMAGE_COLOR, target.tile)
+				# id-sign invariant (players POSITIVE ids, monsters NEGATIVE): target_id < 0 ⇒ a monster
+				# was struck (a player→enemy hit) → white; target_id > 0 ⇒ a player took the hit → red.
+				var hit_color := DamagePopup.PLAYER_HIT_COLOR if target_id < 0 else DamagePopup.DAMAGE_COLOR
+				_fx.damage_popup("-%d" % int(data.get("damage", 0)), hit_color, target.tile)
 		# LOCAL-only red hit vignette (v0.6.3 juice): fires ONLY when it's OUR OWN avatar being struck
 		# (landed — we're already past the whiff branch). Suppressed on a godded no-op (no damage taken).
 		# Pure local presentation off the same attack event every peer receives.
@@ -894,7 +897,17 @@ func _on_intent_rejected(action: String, reason: String) -> void:
 	if action != "glide_to" and action != "swap_weapon":
 		return
 	var me := _players.get_node_or_null(str(multiplayer.get_unique_id())) as Player
-	if me != null:
+	if me == null:
+		return
+	# occupied_hostile (1a, v0.10.2): the sender was mid-commitment gliding into a hostile it can't
+	# bump yet (a pipelined/mid-glide step — a from-idle move into a hostile becomes a bump, never a
+	# reject). Suppress the bonk cue: with input held the next from-idle submit IS the attack, so the
+	# thud/flash would misread as "your input didn't register" (§2.2.8). The reject must still reach the
+	# sampler's reject-counting (a walk into an enemy still stops), so relay it cue-free. Every other
+	# reason keeps the full bonk (§2.3.4 — a genuine refusal stays distinctly audible + visible).
+	if reason == "occupied_hostile":
+		me.note_reject_no_cue()
+	else:
 		me.play_bonk()
 
 

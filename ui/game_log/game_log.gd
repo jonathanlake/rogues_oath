@@ -284,6 +284,11 @@ func _log_glide_reject(reason: String) -> void:
 			add_line("Blocked — can't squeeze through that corner.")
 		"occupied":
 			add_line("Blocked — someone's there.")
+		"occupied_hostile":
+			# Mid-commitment glide into a hostile it couldn't bump yet (pipelined, 1a v0.10.2). No line:
+			# with input held the next from-idle submit becomes the bump attack, so "someone's there" would
+			# misread. Silent, matching the suppressed bonk cue — the raw reason must never surface to players.
+			pass
 		"already moving":
 			pass
 		"dead":

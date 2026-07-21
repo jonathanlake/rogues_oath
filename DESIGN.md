@@ -540,6 +540,16 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.10.2 (2026-07-21)** — Feedback polish (Jon+Jeff v0.10.0 playtest, overnight batch
+  chunk 1). Bumping a hostile you can't attack yet (pipelined/mid-glide step into an enemy)
+  now rejects with a distinct `occupied_hostile` reason and the client suppresses the bonk
+  cue — the thud/flash misread as "input didn't register" when the very next from-idle step
+  IS the attack; non-hostile blockers (players) keep the full bonk, and the reject still
+  feeds the sampler's walk-stop counting. Damage popups are direction-coded: player→enemy
+  hits render white (`PLAYER_HIT_COLOR`; crit-yellow reserved for a future crit system),
+  enemy→player stays red. §2.2.8 amendment: the commit-sent WHITE FLASH is retired entirely
+  (Jon's call — the glide starting is the ack; the rejection bonk remains §2.2.8's reject
+  seam), removing the "players blink when they move" artifact.
 - **v0.10.1 (2026-07-21)** — Review fix pass on v0.10.0 (10 verified findings). Dev tuning
   clamps every field to a named range (no more negative-damage heals — apply_damage also
   floors amount at 0 — dead-on-arrival spawns, or overlay-stalling radii); godded hits

@@ -3,8 +3,9 @@ extends Node
 ## Local-player-only input sampler for committed movement, now with TWO input sources feeding
 ## one latch/submit path: (1) the four move actions sampled into an 8-way direction, and (2) a
 ## click-to-move target driver that recomputes a path each step and submits ONE adjacent step at
-## a time. Both end in move_requested(dir, fresh) — the parent player turns that into the local
-## commit-sent cue (fresh only) plus a "glide_to" intent. It NEVER moves anything and NEVER
+## a time. Both end in move_requested(dir, fresh) — the parent player turns that into a "glide_to"
+## intent (the fresh flag is now vestigial: the white commit-sent flash it once gated was removed in
+## v0.10.2). It NEVER moves anything and NEVER
 ## predicts the outcome: the glide begins only when the server's event comes back (DESIGN
 ## §2.2.8), which the parent surfaces here via set_blocked / on_accepted / on_rejected.
 ##
@@ -34,8 +35,9 @@ extends Node
 # ── Signals ──────────────────────────────────────────────────────────────────
 
 ## A committed direction is ready to submit. Components in {-1,0,1}, non-zero. fresh=true for a
-## deliberate key/stick sample (gets the §2.2.8 commit-sent cue), false for a click-to-move
-## auto-continuation step (no cue — one click, one cue, however many steps). The parent wires it.
+## deliberate key/stick sample, false for a click-to-move auto-continuation step. The flag is now
+## vestigial (the commit-sent flash it once gated was removed in v0.10.2); kept on the signal for
+## any future fresh-only cue. The parent wires it.
 signal move_requested(dir: Vector2i, fresh: bool)
 ## A click set (or replaced) the walk target. The parent shows/moves the path marker + cues.
 signal path_target_set(tile: Vector2i)

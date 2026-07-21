@@ -112,7 +112,8 @@ var tile: Vector2i
 # glide can pre-empt a lingering cue.
 var _glide_tween: Tween = null
 var _shake_tween: Tween = null
-# The modulate flash tween (commit-sent / hurt / windup cues), held so overlapping cues don't stack.
+# The modulate flash tween (hurt / windup cues; the commit-sent flash was removed in v0.10.2), held
+# so overlapping cues don't stack.
 var _flash_tween: Tween = null
 
 

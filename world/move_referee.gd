@@ -329,14 +329,24 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# promoted to a bump, because the mover is still committed to this step (Commitment Rule — the
 	# parked queued-attack-slot follow-up in ROADMAP is the design venue for letting a mid-commit attack be queued).
 	if not is_tile_free(to):
+		# Resolve the blocker once: a LIVING HOSTILE occupant reads differently from an inert one. From
+		# IDLE the bump branch promotes it to an attack; when the bump can't apply (a PIPELINED/mid-glide
+		# step, or a monster mover) the reject is still tagged "occupied_hostile" so the sender's client
+		# can suppress the bonk cue (1a, v0.10.2) — the player was mid-commitment TRYING to attack, not
+		# fumbling into a wall; with input held the next from-idle submit becomes the bump. A non-hostile
+		# blocker (another player, the training dummy) keeps plain "occupied". Applied uniformly across
+		# player and monster movers — no client listens to a monster's rejects, so the tag is harmless there.
+		var occupant_id := entity_at(to)
+		var occupant := _node_of_id(occupant_id)
+		var blocker_is_hostile: bool = _combat != null and occupant != null \
+			and _combat.is_alive(occupant_id) and mover.is_hostile_to(occupant)
 		# sender > 0: only PLAYERS bump (M3 monsters attack solely via the telegraphed wind-up; the
 		# brain's adjacency branch fires before any step toward a player could be chosen — this is
 		# the structural backstop that keeps a monster intent from ever dealing bump damage).
-		if not is_pipelined and sender_peer_id > 0 and _combat != null:
-			var occupant_id := entity_at(to)
-			var occupant := _node_of_id(occupant_id)
-			if occupant != null and _combat.is_alive(occupant_id) and mover.is_hostile_to(occupant):
-				return _begin_bump(sender_peer_id, mover, occupant_id, occupant)
+		if not is_pipelined and sender_peer_id > 0 and blocker_is_hostile:
+			return _begin_bump(sender_peer_id, mover, occupant_id, occupant)
+		if blocker_is_hostile:
+			return { "ok": false, "reason": "occupied_hostile" }
 		return { "ok": false, "reason": "occupied" }
 
 	# Stamp THREE windows ONCE here (stamp-and-bake, DESIGN §2.8), so a live tempo change never
