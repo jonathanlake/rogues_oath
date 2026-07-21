@@ -217,6 +217,19 @@ func set_hp_display(hp: int, max_value: int) -> void:
 	_hp_label.text = "%d/%d" % [hp, max_value]
 
 
+## Turn the sprite to face along `dx` (the x-sign of a movement/attack/telegraph direction, v0.10.0).
+## The 32rogues art is authored FACING LEFT, so east (dx > 0) mirrors via flip_h and west (dx < 0)
+## restores the authored facing; dx == 0 (a pure-vertical step, or a same-column attack) is a NO-OP,
+## keeping whatever way the entity already faces. Flips $Sprite2D ONLY — NOT the root: a root-scale
+## flip would mirror the nameplate/HP text and invert the WeaponRig's aim (the rig orbits by rotation
+## from `dir`, so a sprite-local flip leaves it correct). Driven per-peer from the glide/attack/windup
+## events in main.gd (every peer derives the same dx from the same event data, so facing is
+## deterministic with no new wire field). Presentation only — never adjudication.
+func face_toward(dx: int) -> void:
+	if dx != 0:
+		_sprite.flip_h = dx > 0
+
+
 ## Adopt a weapon (M3.7 → shared by every Entity, v0.9.3): update the authoritative-on-host
 ## equipped_weapon AND repaint the rig's idle region in ONE place, so a swap (player) or a spawn
 ## seed (monster) can never leave the rig showing the old weapon. This node wires the rig; the rig

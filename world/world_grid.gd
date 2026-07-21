@@ -167,13 +167,15 @@ static func find_path(from: Vector2i, to: Vector2i, avoid: Array[Vector2i] = [])
 
 
 ## Build the shared grid once from ROOM_LAYOUT: region = the room rectangle, solids = walls,
-## octile heuristics (the natural 8-way distance), and ONLY_IF_NO_OBSTACLES diagonals — which
-## is precisely the corner rule's wall half, so client paths never propose a step the referee's
-## corner check would refuse for walls. (Body occupancy is per-query `avoid`, never baked in.)
+## octile heuristics (the natural 8-way distance), and AT_LEAST_ONE_WALKABLE diagonals — which
+## mirrors the corner rule's RELAXED wall half (DESIGN §2.2.7, Jon 2026-07-21): a diagonal is now
+## blocked only when BOTH flanking orthogonals are walls, so monster A* proposes exactly the
+## single-wall-corner diagonals a player may take, and no others. (Body occupancy is per-query
+## `avoid`, never baked in.)
 static func _build_astar() -> void:
 	_astar = AStarGrid2D.new()
 	_astar.region = Rect2i(Vector2i.ZERO, size())
-	_astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+	_astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_AT_LEAST_ONE_WALKABLE
 	_astar.default_compute_heuristic = AStarGrid2D.HEURISTIC_OCTILE
 	_astar.default_estimate_heuristic = AStarGrid2D.HEURISTIC_OCTILE
 	_astar.update()

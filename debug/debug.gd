@@ -259,6 +259,10 @@ func _ready() -> void:
 			# GameManager flag the overlay reads in its _ready — set here at parse time, before
 			# any scene change, so it is role-symmetric with no node hunting.
 			GameManager.debug_overlay_start_visible = arg.trim_prefix("overlay=").to_int() != 0
+		elif arg.begins_with("rangeoverlay="):
+			# Both roles: show the F7 range overlay from startup (scripted screenshots). Applied via a
+			# GameManager flag the overlay reads in its _ready — exact mirror of overlay= above.
+			GameManager.debug_range_overlay_start_visible = arg.trim_prefix("rangeoverlay=").to_int() != 0
 		elif arg.begins_with("hostile="):
 			all_hostile = arg.trim_prefix("hostile=").to_int() != 0
 		elif arg.begins_with("goblin="):

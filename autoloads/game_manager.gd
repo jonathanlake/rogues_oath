@@ -99,6 +99,12 @@ var debug_windup_override_sec: float = 0.0
 ## in-session toggle is always F3 regardless; gameplay code never reads this.
 var debug_overlay_start_visible: bool = false
 
+## DEBUG ONLY. When true, the F7 range overlay (aggro/tactical radii) starts VISIBLE — set by
+## debug.gd's `rangeoverlay=1` arg (either role, before the main scene loads) for scripted
+## screenshots, mirroring `overlay=`. The in-session toggle is always F7 regardless; gameplay code
+## never reads this.
+var debug_range_overlay_start_visible: bool = false
+
 ## DEBUG ONLY. When non-empty, the host applies this weapon (by display_name, resolved through
 ## GameConfig.weapon_roster) to its OWN player at session start — set host-side via debug.gd's
 ## `weapon=` arg so a scripted run can start on the dagger vs the longsword without a swap. Host-only

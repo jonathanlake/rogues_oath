@@ -7,6 +7,7 @@
 [ext_resource type="Script" uid="uid://cbty2otrqncun" path="res://world/pace_referee.gd" id="7_pace"]
 [ext_resource type="AudioStream" uid="uid://bgobemuhppy00" path="res://assets/audio/bonk.wav" id="5_bonk"]
 [ext_resource type="AudioStream" uid="uid://dflvxqnrggpxg" path="res://assets/audio/impact.wav" id="6_impact"]
+[ext_resource type="Script" path="res://world/range_overlay.gd" id="8_range"]
 
 [node name="Main" type="Node2D" unique_id=931510869]
 script = ExtResource("1_main")
@@ -24,6 +25,9 @@ grow_vertical = 2
 color = Color(0.09, 0.09, 0.12, 1)
 
 [node name="Room" type="TileMapLayer" parent="." unique_id=511016553]
+
+[node name="RangeOverlay" type="Node2D" parent="." unique_id=512358484]
+script = ExtResource("8_range")
 
 [node name="Players" type="Node2D" parent="." unique_id=1339843216]
 

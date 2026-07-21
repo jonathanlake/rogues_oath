@@ -13,3 +13,4 @@ glide_speed = ExtResource("2_speed")
 atlas_texture = ExtResource("1_atlas")
 atlas_region = Rect2(66, 0, 32, 32)
 has_brain = false
+tactical_radius_tiles = 0

@@ -86,6 +86,10 @@ const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN
 ## slightly darker grey squares against the same background. Tweak to taste.
 @export var floor_checker_modulate: Color = Color(0.85, 0.85, 0.9, 1.0)
 
+## Floating-combat-text spawn offset in PIXELS from the struck tile's centre (v0.10.0): lifted up so
+## the popup starts above the sprite's head rather than over its face, then rises further from there.
+@export var damage_popup_offset_px: Vector2 = Vector2(0.0, -14.0)
+
 @onready var _spawner: MultiplayerSpawner = $MultiplayerSpawner
 @onready var _players: Node2D = $Players
 # Monster replication, mirroring the player spawner/container. Present on every peer; the host
@@ -470,7 +474,13 @@ func _handle_glide_event(event: Dictionary) -> void:
 	if mover == null:
 		return
 	var data: Dictionary = event.get("data", {})
-	mover.glide_to(data.get("to"), float(data.get("duration_sec", 0.0)))
+	var from: Vector2i = data.get("from", mover.tile)
+	var to: Vector2i = data.get("to")
+	# Face the direction of travel before the slide runs (v0.10.0): both from/to already ride every
+	# glide event, so this is per-peer deterministic with no new wire field. A pure-vertical step
+	# (from.x == to.x) leaves facing unchanged (face_toward no-ops on dx == 0).
+	mover.face_toward(signi(to.x - from.x))
+	mover.glide_to(to, float(data.get("duration_sec", 0.0)))
 
 
 ## Play back a landed (or whiffed) attack (§2.3.4). All peers: the attacker lunges toward the target
@@ -494,6 +504,13 @@ func _handle_attack_event(event: Dictionary) -> void:
 			dir = _step_sign(target.tile - attacker.tile)
 		elif data.has("target_tile"):
 			dir = _step_sign((data.get("target_tile") as Vector2i) - attacker.tile)
+	# Facing (v0.10.0): the attacker turns toward its target; the victim turns to face the threat
+	# (-dir.x). dir is the per-peer step sign toward the target derived just above; dx == 0 (same
+	# column) no-ops for both. On a whiff (no target node) only the attacker turns.
+	if attacker != null:
+		attacker.face_toward(dir.x)
+	if target != null:
+		target.face_toward(-dir.x)
 	if whiff:
 		# Whiff cues are Monster surface (only a wind-up whiffs in M3) — deliberate narrow cast.
 		var whiffer := attacker as Monster
@@ -504,6 +521,11 @@ func _handle_attack_event(event: Dictionary) -> void:
 			# brains wind up), so a non-Monster whiffer is a future-shape break — §2.3.4 forbids an
 			# outcome being silently swallowed, so name the unhandled attacker instead of dropping it.
 			push_warning("[Main] whiff attack from non-Monster attacker %d — no feedback rendered" % attacker_id)
+		# Floating combat text for a whiff (v0.10.0): grey "miss" over the struck tile — but ONLY when
+		# a target node still resolves. A wind-up that whiffed onto vacated ground has no node (the
+		# dodge succeeded), so nothing shows, matching the landed branch's null-guard.
+		if target != null:
+			_spawn_damage_popup("miss", DamagePopup.MISS_COLOR, target.tile)
 	else:
 		# LANDED hit — audio-trim rule (v0.6.0, §2.3.4 feedback audit). The attacker lunges (bowstring)
 		# but its swing sound is SUPPRESSED (with_sound=false): a landed exchange plays exactly ONE
@@ -519,6 +541,14 @@ func _handle_attack_event(event: Dictionary) -> void:
 			# per-peer from this same event — no new wire data.
 			target.play_hurt(dir)
 			target.set_hp_display(int(data.get("hp_after", 0)), int(data.get("target_max", 0)))
+			# Floating combat text (v0.10.0, §2.3.4): red "-N" over the struck tile, or grey "0" when
+			# the target is godded (the godded flag lands in chunk 2 — rendered only when present, so a
+			# no-effect hit stays visibly distinct rather than silently swallowed). One per peer off
+			# this same event; parented to Main so a killing-blow popup outlives the victim's despawn.
+			if bool(data.get("godded", false)):
+				_spawn_damage_popup("0", DamagePopup.MISS_COLOR, target.tile)
+			else:
+				_spawn_damage_popup("-%d" % int(data.get("damage", 0)), DamagePopup.DAMAGE_COLOR, target.tile)
 		# LOCAL-only red hit vignette (v0.6.3 juice): fires ONLY when it's OUR OWN avatar being struck
 		# (landed — we're already past the whiff branch). Pure local presentation off the same attack
 		# event every peer receives; the target's slash streak + flash still render on every peer.
@@ -563,6 +593,9 @@ func _handle_windup_event(event: Dictionary) -> void:
 	if monster != null:
 		var target_tile: Vector2i = data.get("target_tile", monster.tile)
 		var dir_away := _step_sign(monster.tile - target_tile)
+		# Face the telegraph direction — toward the target tile it's winding up on (v0.10.0), the
+		# opposite of the coil's away-direction. Same event data, per-peer deterministic.
+		monster.face_toward(signi(target_tile.x - monster.tile.x))
 		monster.play_windup(dir_away, float(data.get("windup_sec", 0.0)))
 
 
@@ -796,6 +829,16 @@ func _node_for_peer(entity_id: int) -> Entity:
 	if entity_id < 0:
 		return _monsters.get_node_or_null(str(entity_id)) as Entity
 	return _players.get_node_or_null(str(entity_id)) as Entity
+
+
+## Spawn one floating-combat-text popup for `text`/`color` over `tile` (v0.10.0). Parented to MAIN
+## (this node), NEVER the struck entity, so a killing-blow popup survives the victim's despawn — the
+## same rationale as the follow camera and hurt vignette. Position is set BEFORE add_child so the
+## popup's rise/fade tween (its _ready) starts from the correct spot.
+func _spawn_damage_popup(text: String, color: Color, tile: Vector2i) -> void:
+	var popup := DamagePopup.make(text, color)
+	popup.position = WorldGrid.tile_to_world(tile) + damage_popup_offset_px
+	add_child(popup)
 
 
 ## Sender only: the host refused our glide. Bonk our OWN player (§2.3.4 — the sound+visual half;

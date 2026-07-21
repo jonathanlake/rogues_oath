@@ -304,13 +304,15 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	if not WorldGrid.is_walkable(to):
 		return { "ok": false, "reason": "blocked" }
 
-	# Corner rule (diagonals only): a squeeze between two walls that touch only at a corner is
-	# illegal even though both endpoints are floor. Both orthogonal flanks must be non-wall;
-	# when bodies_block_corners is on, an occupied flank blocks it too (DESIGN §2.2.7).
+	# Corner rule (diagonals only, DESIGN §2.2.7 — relaxed to the classic roguelike rule, Jon
+	# 2026-07-21): a diagonal is refused for WALLS only when BOTH orthogonal flanks are walls. You
+	# may round a single wall corner; you may not squeeze between two walls that touch only at a
+	# corner. The body branch is UNCHANGED and deliberately stricter: bodies are dodgeable and walls
+	# aren't, so when bodies_block_corners is on EITHER occupied flank still blocks the diagonal.
 	if dir.x != 0 and dir.y != 0:
 		var flank_x := from + Vector2i(dir.x, 0)
 		var flank_y := from + Vector2i(0, dir.y)
-		if WorldGrid.is_wall(flank_x) or WorldGrid.is_wall(flank_y):
+		if WorldGrid.is_wall(flank_x) and WorldGrid.is_wall(flank_y):
 			return { "ok": false, "reason": "corner" }
 		if GameManager.config.bodies_block_corners:
 			if not is_tile_free(flank_x) or not is_tile_free(flank_y):
