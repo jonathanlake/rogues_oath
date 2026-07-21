@@ -48,7 +48,8 @@ var _combat = null
 # step/rest window this referee stamps reads the mover's resolved beat through it (beat_sec_for), so an
 # entity in the fight stamps tactical and one out of it stamps explore — the ONE pace decision, shared
 # by all stamp sites. Also armed for a player's bump: _begin_bump reports the hostile action to it
-# BEFORE stamping the bump's own window (no fast first swing). Untyped (no class_name); null on clients.
+# BEFORE stamping the bump's own window (no fast first swing). Held untyped (its instance calls resolve
+# dynamically); the null-resolver → explore fallback lives in PaceReferee.beat_or_explore. Null on clients.
 var _pace = null
 
 # Authoritative occupancy: tile (Vector2i) -> ENTITY ID. THE adjudication truth; a node's `tile`
@@ -413,7 +414,7 @@ func _step_duration(mover, dir: Vector2i, mover_id: int) -> float:
 			_warned_null_speed = true
 	else:
 		glide_beats = mover.glide_speed.glide_beats
-	var base := glide_beats * _pace_beat_sec(mover_id)
+	var base := glide_beats * PaceReferee.beat_or_explore(_pace, mover_id)
 	if GameManager.debug_glide_override_sec > 0.0:
 		base = GameManager.debug_glide_override_sec
 	if dir.x != 0 and dir.y != 0:
@@ -421,24 +422,15 @@ func _step_duration(mover, dir: Vector2i, mover_id: int) -> float:
 	return base
 
 
-## The mover's resolved beat (seconds) at stamp time — tactical or explore per PaceReferee (§2.8.7).
-## Falls back to the explore beat when no pace referee is injected (a defensive path: this referee only
-## ever stamps host-side, where Main injects the resolver — the fallback is for parse/unit safety, not a
-## live code path).
-func _pace_beat_sec(entity_id: int) -> float:
-	if _pace != null:
-		return _pace.beat_sec_for(entity_id)
-	return GameManager.explore_beat_sec
-
-
 ## The REST seconds appended to every step's action window (DESIGN §2.8): move_rest_beats converted at
-## the mover's RESOLVED PACE (§2.8.7 — same pace as the glide term, keyed by mover_id). Defaults to 0 as
-## of v0.8.0 (the committed-rest experiment was answered/retired; the visible slide carries the pause now
-## — see slide_fraction). Still a SEPARATE term from the glide — the diagonal multiplier does NOT scale
-## the rest (a diagonal step glides longer but rests the same). Baked into busy_sec at stamp time
-## (stamp-and-bake): a later tempo change never re-derives it.
+## the mover's RESOLVED PACE (§2.8.7 — same pace as the glide term, keyed by mover_id) via the shared
+## PaceReferee.beat_or_explore policy site (the null-resolver → explore fallback lives there now, not a
+## private wrapper per referee). Defaults to 0 as of v0.8.0 (the committed-rest experiment was
+## answered/retired; the visible slide carries the pause now — see slide_fraction). Still a SEPARATE term
+## from the glide — the diagonal multiplier does NOT scale the rest (a diagonal step glides longer but
+## rests the same). Baked into busy_sec at stamp time (stamp-and-bake): a later tempo change never re-derives it.
 func _rest_duration(mover_id: int) -> float:
-	return GameManager.config.move_rest_beats * _pace_beat_sec(mover_id)
+	return GameManager.config.move_rest_beats * PaceReferee.beat_or_explore(_pace, mover_id)
 
 
 ## The clamped visible-slide fraction (DESIGN §2.8, v0.8.0). Read live from GameConfig and clamped
@@ -462,9 +454,11 @@ func _begin_bump(attacker_id: int, attacker, target_id: int, target) -> Dictiona
 	# the hostile action to the pace resolver BEFORE that stamp so the triggering swing is ITSELF a
 	# tactical-pace action (no fast first swing) AND the forcing window keeps the attacker tactical for
 	# a beat afterward — even against the brainless dummy (the rule is uniform). attacker_id is always a
-	# player here (only players bump). Deviation from the plan's literal "combat_referee.apply_damage"
-	# placement: apply_damage runs AFTER this window is already stamped, so reporting there would miss
-	# the ordering the spec's "before stamping that attack's own window" clause requires.
+	# player here (only players bump). TWO-SITE SPLIT (review #6): this EARLY arming exists purely for
+	# stamp ORDERING (the bump window below must stamp tactical); CombatReferee.apply_damage / wind_up are
+	# the UNIFORM catch-alls that arm on every player-dealt hostile action (AoO free strikes, future
+	# windup weapons). Re-arming there is idempotent-by-design — each hostile action refreshes the one
+	# wall-clock deadline — so the bump path arming here and re-arming in apply_damage cost nothing.
 	if _pace != null:
 		_pace.report_hostile_action(attacker_id)
 	var damage: int = _combat.damage_of(attacker)

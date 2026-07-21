@@ -1,3 +1,4 @@
+class_name PaceReferee
 extends Node
 
 ## The HOST-ONLY pace resolver (DESIGN §2.8.7 — Tactical Zones v1). It is the SINGLE place the two
@@ -25,7 +26,9 @@ extends Node
 ##
 ## Chunk 2 (v0.9.5): the resolver also BROADCASTS. A player's resolved pace is compared against the
 ## last value broadcast for them and, on a flip, a `pace_changed` event posts so every peer plays the
-## §2.3.4 cue (tempo-bar emphasis + own-player log line). Two flush triggers: a coarse host-side poll
+## TWO-SIGNAL pace cue (tempo-bar emphasis + own-player log line) — deliberately NO sound: pace flips
+## are a two-signal cue by audio-grammar choice (v0.6.2, "hit + swing are the only combat noises"), so
+## §2.3.4's sound prong applies to combat OUTCOMES, not to a pace-mode change. Two flush triggers: a coarse host-side poll
 ## Timer (server-internal re-check — NOT wire traffic; events post only on change per §2.5) catches
 ## time-driven exits (hysteresis expiry, which no state update signals), and an immediate flush after
 ## report_engagement / report_hostile_action makes ENTRY cues fire on the frame the fight starts rather
@@ -55,9 +58,12 @@ var _monsters: Node2D = null
 var _move_referee = null
 
 # Live engagement state, reported by each MonsterBrain every think (report_engagement): monster id
-# (negative) -> the player id it is currently chasing (its leash target). Presence means "this monster
-# is aggroed" (drives BOTH the monster's own tactical pace and the players' bubble); the value is the
-# leash target. Erased when the brain reports un-aggroed and on the monster's container-exit.
+# (negative) -> a small { "target": int, "radius": int } dict. Presence means "this monster is aggroed"
+# (drives BOTH the monster's own tactical pace and the players' bubble); `target` is the player id it is
+# currently chasing (its leash key), `radius` is its authored tactical_radius_tiles CACHED at report
+# time (the value is authored-static — no runtime writes — so resolving it once per engagement, not per
+# player-loop iteration, saves the hot-path node lookup). Erased when the brain reports un-aggroed and
+# on the monster's container-exit.
 var _engagements: Dictionary = {}
 # Forcing-window deadlines (anti-cheese): player id -> Time.get_ticks_msec() wall-clock instant the
 # window expires. Armed by report_hostile_action; a player is tactical while now < this. No entry /
@@ -111,6 +117,18 @@ func beat_sec_for(entity_id: int) -> float:
 	return GameManager.tactical_beat_sec if _resolve_tactical(entity_id) else GameManager.explore_beat_sec
 
 
+## THE single "no resolver → explore" policy site (§2.8.7), shared by the three stamp-site referees
+## (MoveReferee, CombatReferee, MonsterBrain) so none keeps a private copy of the fallback rule. Given a
+## (possibly null) PaceReferee and an entity id, returns that entity's resolved beat (seconds) — tactical
+## or explore. The NULL branch exists for PARSE / UNIT safety only (a defensive path); host wiring always
+## injects a live resolver at every stamp site, so the real path is always pace.beat_sec_for. Static so a
+## caller holding a null _pace can still reach the ONE fallback (it can't call an instance method on null).
+static func beat_or_explore(pace, entity_id: int) -> float:
+	if pace != null:
+		return pace.beat_sec_for(entity_id)
+	return GameManager.explore_beat_sec
+
+
 ## Late-join seed (§2.8.7), called from Main's host-side player-spawn hook. Posts this player's CURRENT
 ## pace once so a joiner's tempo-bar seeds correctly — joiners default to explore in the UI, and this
 ## single event corrects them if they happened to spawn into a fight. Seeds _last_broadcast so the poll
@@ -120,7 +138,10 @@ func on_player_spawned(entity_id: int) -> void:
 		return
 	var tactical := _resolve_tactical(entity_id)
 	_last_broadcast[entity_id] = tactical
-	NetEvents.post_event("pace_changed", { "entity_id": entity_id, "pace": _pace_name(tactical) })
+	# `seed: true` marks this as a SEED, not a real flip: main.gd applies it to the bar exactly like a flip
+	# (correcting a joiner / respawner's initial emphasis), but game_log SKIPS the log line for it — a
+	# spawn is not a mode change, so the "— pace —" marker stays reserved for genuine flips.
+	NetEvents.post_event("pace_changed", { "entity_id": entity_id, "pace": _pace_name(tactical), "seed": true })
 
 
 ## Called by each MonsterBrain every think (injected ref — the brain never reaches up). Records this
@@ -128,12 +149,24 @@ func on_player_spawned(entity_id: int) -> void:
 ## aggroed false erases the entry (an idle / leash-dropped monster projects nothing). target_id is the
 ## player the monster is chasing (0 when none) — the leash key.
 func report_engagement(monster_id: int, aggroed: bool, target_id: int) -> void:
+	# Change-detect (review #2): this is called EVERY think (the chase-parity hot loop), so on a steady
+	# chase / a steady idle the state is unchanged and there is nothing to flush. Only a genuine change
+	# writes + flushes: a NEW engagement, a switched leash target, or an un-aggro that drops a live entry.
 	if aggroed:
-		_engagements[monster_id] = target_id
+		var existing: Variant = _engagements.get(monster_id)
+		# Same target already recorded → no change (radius is authored-static, can't move): skip the dict
+		# write AND the flush. Radius is resolved ONCE here (review #4), never in the per-player loop.
+		if existing != null and int(existing["target"]) == target_id:
+			return
+		_engagements[monster_id] = { "target": target_id, "radius": _radius_of(monster_id) }
 	else:
+		# Un-aggro: only a real drop (an entry existed) is a change worth flushing — an already-idle
+		# monster reporting false every think must NOT re-flush (that was the unconditional-flush waste).
+		if not _engagements.has(monster_id):
+			return
 		_engagements.erase(monster_id)
-	# Flush immediately so an ENTRY cue (a player just entered a bubble / became a leash target) fires
-	# on this frame rather than waiting up to pace_poll_sec for the next poll.
+	# Flush immediately so an ENTRY / EXIT cue (a player just entered a bubble / became a leash target, or
+	# a monster just dropped aggro) fires on this frame rather than waiting up to pace_poll_sec for the poll.
 	_flush_pace_changes()
 
 
@@ -201,22 +234,28 @@ func _pace_name(tactical: bool) -> String:
 ## live engagement + forcing state + authoritative tiles — the hysteresis is applied by the caller.
 func _player_qualifies_tactical(player_id: int) -> bool:
 	# Forcing window (anti-cheese) — a recent hostile action keeps the actor tactical regardless of
-	# proximity, so a player can't tap-and-flee to cheese explore pace between swings.
+	# proximity, so a player can't tap-and-flee to cheese explore pace between swings. Stays AHEAD of the
+	# engagement loop: a cheap map probe that short-circuits before any per-monster work.
 	if _force_until.has(player_id) and Time.get_ticks_msec() < int(_force_until[player_id]):
 		return true
-	# Leash (Jon's pick, DESIGN §2.8.7 revisit note): a player being chased by any aggroed monster
-	# stays tactical however far they run — chase parity, chaser and target share the tactical beat.
-	for monster_id in _engagements:
-		if int(_engagements[monster_id]) == player_id:
-			return true
-	# Bubble: within an aggroed monster's tactical_radius_tiles (Chebyshev). Idle / brainless monsters
-	# never appear in _engagements, so the dummy never slows anyone; a monster authored radius 0
-	# projects no bubble (its aggro is still the real guard via the leash above).
+	# ONE pass over live engagements does BOTH proximity tests (was two separate loops, review #9). Per
+	# monster, in order:
+	#  - LEASH (Jon's pick, DESIGN §2.8.7 revisit note): this player is that monster's current chase
+	#    target → tactical however far they run (chase parity). Tile-independent, so it runs for EVERY
+	#    entry even when the player holds no tile.
+	#  - BUBBLE: within the monster's authored tactical_radius_tiles (Chebyshev). Skipped via `continue`
+	#    when the player has no live tile, the monster projects no bubble (radius 0), or the monster is
+	#    off-grid. Radius is read from the cached entry (review #4) — no per-iteration _radius_of lookup.
+	# player_tile is resolved ONCE before the loop. All matches short-circuit `return true`; a non-match
+	# falls through every entry. Idle / brainless monsters (the dummy) never appear in _engagements.
 	var player_tile := _tile_of(player_id)
-	if player_tile == _NO_TILE:
-		return false
 	for monster_id in _engagements:
-		var radius := _radius_of(monster_id)
+		var entry: Dictionary = _engagements[monster_id]
+		if int(entry["target"]) == player_id:
+			return true
+		if player_tile == _NO_TILE:
+			continue
+		var radius := int(entry["radius"])
 		if radius <= 0:
 			continue
 		var monster_tile := _tile_of(monster_id)
@@ -237,7 +276,8 @@ func _tile_of(entity_id: int) -> Vector2i:
 
 ## This monster's authored tactical bubble radius (Chebyshev tiles), or 0 (no bubble) for a missing /
 ## brainless type. Resolved from the authored MonsterType on the node — the same per-peer authored
-## value everywhere (the wire carries the type PATH, never pixels).
+## value everywhere (the wire carries the type PATH, never pixels). Called ONCE per engagement, at
+## report_engagement time, and cached in the entry — never in the per-player qualify loop (review #4).
 func _radius_of(monster_id: int) -> int:
 	if _monsters == null:
 		return 0
@@ -259,8 +299,16 @@ func _on_monster_exiting(node: Node) -> void:
 ## teardown), so a stale timestamp can't linger and a rejoin starts clean (explore immediately).
 func _on_player_exiting(node: Node) -> void:
 	if node is Entity:
-		_force_until.erase(node.entity_id)
-		_last_qualified.erase(node.entity_id)
+		var departing: int = node.entity_id
+		_force_until.erase(departing)
+		_last_qualified.erase(departing)
 		# Drop the last-broadcast record too, so a rejoining peer id re-seeds fresh (its first flush
 		# posts, rather than being deduped against a stale pre-disconnect value).
-		_last_broadcast.erase(node.entity_id)
+		_last_broadcast.erase(departing)
+		# Ghost-leash sweep (the refuted-but-real note from review): the departing player may still be some
+		# aggroed monster's cached leash target. Zero any such target so no cross-reference to a freed
+		# player id outlives the disconnect — the monster keeps its aggro + bubble; its next think re-reports
+		# a live target. (Values are { target, radius } dicts; mutating a value while iterating keys is safe.)
+		for monster_id in _engagements:
+			if int(_engagements[monster_id]["target"]) == departing:
+				_engagements[monster_id]["target"] = 0

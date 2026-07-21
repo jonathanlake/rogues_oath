@@ -52,9 +52,10 @@ signal path_target_cleared
 
 ## After a REJECT, a still-held key waits this many BEATS before resubmitting. Without it a zero-RTT
 ## host would bonk ~60×/sec on a wall. A FRESH press bypasses the wait (responsive to deliberate
-## re-taps); only auto-repeat from a held key is throttled. Converted to seconds at the LIVE beat
-## when used, not cached (DESIGN §2.8) — client-side PACING only (adjudication stays host-side); the
-## client reads its own explore_beat_sec, which matches the host's at session start. 1 beat = one rest.
+## re-taps); only auto-repeat from a held key is throttled. Converted to seconds at the LOCAL player's
+## RESOLVED PACE when used (§2.8.7 — tactical while the host has us in a fight, else explore; via
+## _pace_beats_to_sec), not cached (DESIGN §2.8) — client-side PACING only (adjudication stays
+## host-side), so the retry cadence tracks the host's stamped window during a fight. 1 beat = one rest.
 @export var held_retry_beats: float = 1.0
 
 ## Consecutive step rejects that drop a standing walk target. The first reject marks the refused
@@ -62,8 +63,8 @@ signal path_target_cleared
 @export var target_reject_cap: int = 2
 
 ## Tap/hold threshold in BEATS: a single continuous press shorter than this = exactly ONE step;
-## held longer, movement auto-repeats one step per beat. Converted at the LIVE beat
-## (GameManager.beats_to_sec) at use, not cached (DESIGN §2.8) — client-side PACING only
+## held longer, movement auto-repeats one step per beat. Converted at the LOCAL player's RESOLVED PACE
+## (§2.8.7 — via _pace_beats_to_sec) at use, not cached (DESIGN §2.8) — client-side PACING only
 ## (adjudication stays host-side). Default 1.2 beats (~0.3s at the 0.25 default): deliberately
 ## ABOVE the 1-beat action window so a hold that merely outlasts the SHORTER visible slide does
 ## not free-fire a second step (the v0.8.0 settle-phase double-step fix), yet low enough that a
@@ -173,7 +174,7 @@ func _process(delta: float) -> void:
 				_state = State.IDLE
 			else:
 				_cooldown_elapsed += delta
-				if _cooldown_elapsed < GameManager.beats_to_sec(held_retry_beats):
+				if _cooldown_elapsed < _pace_beats_to_sec(held_retry_beats):
 					return
 				_state = State.IDLE
 				_cooldown_elapsed = 0.0
@@ -213,7 +214,7 @@ func _process(delta: float) -> void:
 	# double-step fix). The AWAITING latch + the referee's one pipeline slot pace the stream to one
 	# step per beat; a third intent while the slot is full is the unchanged "already moving" bonk.
 	var _may_submit := (not _blocked) if _fresh_edge \
-		else (_key_held_sec >= GameManager.beats_to_sec(key_repeat_min_hold_beats))
+		else (_key_held_sec >= _pace_beats_to_sec(key_repeat_min_hold_beats))
 	if dir != Vector2i.ZERO and _may_submit:
 		_last_dir = dir
 		# A key step is not a target step: clear the pending-step stamp so its reject can never
@@ -437,3 +438,15 @@ func _fresh_press() -> bool:
 		if Input.is_action_just_pressed(action):
 			return true
 	return false
+
+
+## Convert BEATS to seconds at the LOCAL player's CURRENT pace (Tactical Zones v1, §2.8.7) — the tactical
+## dial while the host has us in a fight, else the explore dial, mirrored from the host-authored pace via
+## GameManager.local_pace_is_tactical. CLIENT-SIDE PACING ONLY: the retry (held_retry_beats) and hold-
+## threshold (key_repeat_min_hold_beats) throttles read it so their cadence tracks the host's stamped
+## window during a fight — halving refused-intent spam when tactical slows the beat — instead of always
+## converting at the explore beat. Never a verdict input (adjudication stays host-side). Deliberately
+## SEPARATE from GameManager.beats_to_sec, which stays the EXPLORE-specific conversion for its own uses.
+func _pace_beats_to_sec(beats: float) -> float:
+	var beat := GameManager.tactical_beat_sec if GameManager.local_pace_is_tactical else GameManager.explore_beat_sec
+	return beats * beat

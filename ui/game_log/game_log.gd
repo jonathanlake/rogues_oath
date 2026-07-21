@@ -152,9 +152,15 @@ func _on_event_received(event: Dictionary) -> void:
 			# every peer, so a live swap is legible in the log. Names go through add_line's sink escape.
 			add_line("%s draws the %s." % [str(data.get("by", "Someone")), str(data.get("weapon", "weapon"))])
 		"pace_changed":
-			# The pace-flip cue (Tactical Zones v1, §2.8.7 / §2.3.4). OWN-player only — a flip for someone
-			# else isn't our line (mirrors the "You died." self-filter above). Hysteresis keeps these
-			# infrequent, so the marker reads as a real mode change, not churn. One distinct line per pole.
+			# The pace-flip cue (Tactical Zones v1, §2.8.7). A TWO-SIGNAL cue — tempo-bar emphasis + this
+			# log line — and deliberately NO sound: pace flips are a two-signal cue by audio-grammar choice
+			# (v0.6.2, "hit + swing are the only combat noises"), so §2.3.4's SOUND prong applies to combat
+			# OUTCOMES, not to a pace-mode change. SEED events (a spawn / respawn / join re-seeding the bar)
+			# carry seed:true and get NO line here — a spawn is not a mode change, so this marker stays
+			# reserved for genuine FLIPS (hysteresis keeps those infrequent — a real mode change, not churn).
+			# OWN-player only — a flip for someone else isn't our line (mirrors the "You died." self-filter).
+			if bool(data.get("seed", false)):
+				return
 			if int(data.get("entity_id", 0)) == multiplayer.get_unique_id():
 				var tactical := str(data.get("pace", "explore")) == "tactical"
 				add_line("— Tactical pace —" if tactical else "— Explore pace —")

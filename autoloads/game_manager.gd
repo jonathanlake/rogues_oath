@@ -32,6 +32,14 @@ var explore_beat_sec: float = config.beat_sec
 ## (when tactical pace applies) is still open with Jeff. Seeded inline from config so it is never 0.
 var tactical_beat_sec: float = config.tactical_beat_sec
 
+## CLIENT-SIDE presentation / pacing MIRROR of the local player's broadcast pace (Tactical Zones v1,
+## §2.8.7). Set on EVERY peer from the host-authored pace_changed event for OUR OWN id (seeds included),
+## by main.gd's handler. Read ONLY for local presentation + input pacing (move_input's retry/hold cadence
+## reads it so a fight's throttles match the host's stamped tactical window). It is NEVER read by any
+## adjudication — the host stamps every verdict from PaceReferee alone, server-side, from shared config.
+## Defaults false (explore), the correct pre-fight state on every peer before any flip.
+var local_pace_is_tactical: bool = false
+
 ## Set from the main menu before host_game() / join_game(). Flows into the spawn
 ## dict so all peers know each player's display name independently of peer ID.
 var player_name: String = ""

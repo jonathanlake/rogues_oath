@@ -4,7 +4,7 @@
 [ext_resource type="Script" uid="uid://bnytx3u1r1cp" path="res://world/move_referee.gd" id="2_referee"]
 [ext_resource type="PackedScene" path="res://ui/debug_overlay/debug_overlay.tscn" id="3_overlay"]
 [ext_resource type="Script" uid="uid://bxwx82w24gbfp" path="res://world/combat_referee.gd" id="4_combat"]
-[ext_resource type="Script" path="res://world/pace_referee.gd" id="7_pace"]
+[ext_resource type="Script" uid="uid://cbty2otrqncun" path="res://world/pace_referee.gd" id="7_pace"]
 [ext_resource type="AudioStream" uid="uid://bgobemuhppy00" path="res://assets/audio/bonk.wav" id="5_bonk"]
 [ext_resource type="AudioStream" uid="uid://dflvxqnrggpxg" path="res://assets/audio/impact.wav" id="6_impact"]
 

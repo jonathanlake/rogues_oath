@@ -569,8 +569,17 @@ func _handle_windup_event(event: Dictionary) -> void:
 ## Play back a death (§2.3.4): the death sound on every peer (Main-level — the node itself vanishes
 ## with the spawner despawn the host authored). The game-log line comes from game_log's own handler,
 ## and the node's disappearance is the visual.
-func _handle_died_event(_event: Dictionary) -> void:
+func _handle_died_event(event: Dictionary) -> void:
 	_death_sfx.play()
+	# When OUR OWN player died, reset the local pace back to explore (§2.8.7, A): the host erases a dead
+	# player's engagement/forcing state and posts no further pace_changed for a gone entity, so without
+	# this the tempo bar would FREEZE on whatever emphasis it last held (tactical, if we died mid-fight).
+	# Local presentation only — no wire event; a fresh spawn (F5) re-seeds via on_player_spawned.
+	var data: Dictionary = event.get("data", {})
+	if int(data.get("entity_id", 0)) == multiplayer.get_unique_id():
+		_local_pace_tactical = false
+		GameManager.local_pace_is_tactical = false
+		_update_tempo_display()
 
 
 ## All peers: adopt a host-stamped tempo change (§2.8.3). Apply it to the LOCAL GameManager beat so the
@@ -618,6 +627,10 @@ func _handle_pace_changed_event(event: Dictionary) -> void:
 	if int(data.get("entity_id", 0)) != multiplayer.get_unique_id():
 		return
 	_local_pace_tactical = str(data.get("pace", "explore")) == "tactical"
+	# Mirror the pace into GameManager so move_input's retry/hold throttles cadence to the host's stamped
+	# window during fights (§2.8.7, C). Seeds count too — a joiner spawning into a fight adopts the right
+	# cadence at once. Presentation/pacing only; adjudication stays host-side (never reads this).
+	GameManager.local_pace_is_tactical = _local_pace_tactical
 	_update_tempo_display()
 
 

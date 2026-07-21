@@ -48,7 +48,10 @@ var _move_referee = null
 # The PaceReferee, handed in by Main via activate() (Tactical Zones v1, §2.8.7). Combat stamps each
 # attack's telegraph + recovery window at the ATTACKER's resolved pace through it (beat_sec_for), so an
 # engaged goblin's windup/recovery run at the tactical beat and an out-of-fight attacker's at explore.
-# Untyped (no class_name); null on clients (activate never runs there).
+# Combat also ARMS it for a PLAYER attacker's forcing window at the two damage chokepoints (apply_damage,
+# wind_up) so an AoO / future windup weapon counts as a hostile action just like a bump. Held untyped (its
+# instance calls resolve dynamically); the null-resolver fallback lives in PaceReferee.beat_or_explore.
+# Null on clients (activate never runs there).
 var _pace = null
 
 
@@ -89,6 +92,15 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 	# (it would post a spurious event and could double-resolve death).
 	if not is_alive(target_id):
 		return false
+	# Forcing-window arming, uniform catch-all (Tactical Zones v1, §2.8.7, review #6). A PLAYER attacker
+	# (positive id) landing ANY damage — an AoO free strike (attacks_of_opportunity_enabled), a future
+	# windup weapon's hit, or a bump — counts as a hostile action, so it can't be dodged out of tactical.
+	# Two-site split with MoveReferee._begin_bump: the bump arms EARLY (before its own window is stamped)
+	# purely for stamp ORDERING (no fast first swing); apply_damage / wind_up are the UNIFORM catch-alls
+	# that guarantee every player-dealt hostile action arms regardless of path. Re-arming on the bump path
+	# is idempotent-by-design — each hostile action refreshes the same wall-clock deadline.
+	if _pace != null and attacker_id > 0:
+		_pace.report_hostile_action(attacker_id)
 	var attacker := _node_of_id(attacker_id)
 	var target := _node_of_id(target_id)
 	var new_hp: int = maxi(0, int(_hp[target_id]) - amount)
@@ -139,6 +151,13 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 	# busy record is the Commitment Rule backstop, owned by MoveReferee.
 	if _move_referee.is_entity_moving(attacker_id):
 		return -1.0
+	# Forcing-window arming for a PLAYER windup attacker (§2.8.7, review #6), BEFORE this path's stamps
+	# so a future player windup weapon telegraphs at the tactical beat (no fast first swing) and stays
+	# tactical for a beat after. Monsters (negative id) never need arming (aggro already makes them
+	# tactical). No player calls wind_up in M3 — this is the uniform catch-all for when they do; the
+	# gate on attacker_id > 0 keeps it inert for the monster path that exists today.
+	if _pace != null and attacker_id > 0:
+		_pace.report_hostile_action(attacker_id)
 	var attacker := _node_of_id(attacker_id)
 	var windup_sec := _windup_duration_of(attacker)
 	if GameManager.debug_windup_override_sec > 0.0:
@@ -328,6 +347,16 @@ func _windup_duration_of(node: Node) -> float:
 	return beats * _pace_beat_sec(node)
 
 
+## The attacker node's resolved beat (seconds) at stamp time — tactical or explore per PaceReferee
+## (§2.8.7), keyed by the node's entity_id. Keeps the `node is Entity` guard HERE (combat's duration
+## accessors take the resolved attacker node, not an id) and delegates the null-resolver → explore
+## fallback to the shared PaceReferee.beat_or_explore policy site; a non-Entity node reads explore.
+func _pace_beat_sec(node: Node) -> float:
+	if node is Entity:
+		return PaceReferee.beat_or_explore(_pace, node.entity_id)
+	return GameManager.explore_beat_sec
+
+
 ## The attacker's recovery tail (seconds) — its authored recovery beats stamped at the ATTACKER's
 ## resolved pace (PaceReferee, §2.8.7: an engaged attacker recovers at the tactical beat; a player's bump
 ## tail stamps tactical because _begin_bump armed the forcing window first). Player: attack_recovery_beats;
@@ -343,14 +372,3 @@ func _recovery_duration_of(node: Node) -> float:
 	if node is Monster and node.monster_type != null:
 		return node.monster_type.recovery_beats * _pace_beat_sec(node)
 	return 0.0
-
-
-## The attacker node's resolved beat (seconds) at stamp time — tactical or explore per PaceReferee
-## (§2.8.7), keyed by the node's entity_id. Falls back to the explore beat when no pace referee is
-## injected or the node is not an Entity (defensive: combat only stamps host-side where Main injects
-## the resolver, and attackers are always Entities). Reading node.entity_id keeps the two duration
-## accessors' signatures unchanged (they already take the resolved attacker node).
-func _pace_beat_sec(node: Node) -> float:
-	if _pace != null and node is Entity:
-		return _pace.beat_sec_for(node.entity_id)
-	return GameManager.explore_beat_sec
