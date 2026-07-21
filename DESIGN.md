@@ -531,6 +531,14 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.9.4 (2026-07-20)** — Quick pass from the v0.9.3 playtest. UI SHRINK: game log/chat
+  fonts 8→6 with a tighter panel (200×72); debug overlay to font 5 with two terse lines
+  (FPS, verdict latency) — its tempo line removed as a duplicate of the tempo bar, which
+  itself drops to font 8. ANY-PEER F5: round reset now rides the intent pipe like every
+  other dev control — the host validates, the single log marker names the presser
+  ("— Round reset (NAME) —", replacing the anonymous round_reset event). Policy recorded:
+  ALL dev tools stay deliberately any-peer until stripped for release. Claw damage 3→2
+  (Jon tuning call). Next up: tactical zones v1 (§2.8.7) — the pace switch goes live.
 - **v0.9.3 (2026-07-20)** — Feedback pass 3 (Jon+Jeff playtest of v0.9.2). CHASE PARITY:
   diagnosed why players outran goblins (worse at faster beats) — both sides are authored at
   1.0 glide_beats, but the goblin's brain paid a FIXED 0.05s epsilon-wake per step
