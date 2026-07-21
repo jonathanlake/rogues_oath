@@ -23,8 +23,20 @@ extends Node
 ## Commitment Rule (DESIGN §2.1): pace is read at STAMP time only. An in-flight commit keeps its baked
 ## seconds (§2.8.2 stamp-and-bake) — this referee never re-derives a committed window.
 ##
-## Chunk 1 scope: the resolver RESOLVES. The pace_changed broadcast + poll timer + UI cue land in
-## chunk 2; here beat_sec_for is the only read, and it is also the hysteresis WRITER (see below).
+## Chunk 2 (v0.9.5): the resolver also BROADCASTS. A player's resolved pace is compared against the
+## last value broadcast for them and, on a flip, a `pace_changed` event posts so every peer plays the
+## §2.3.4 cue (tempo-bar emphasis + own-player log line). Two flush triggers: a coarse host-side poll
+## Timer (server-internal re-check — NOT wire traffic; events post only on change per §2.5) catches
+## time-driven exits (hysteresis expiry, which no state update signals), and an immediate flush after
+## report_engagement / report_hostile_action makes ENTRY cues fire on the frame the fight starts rather
+## than waiting for the next poll. Monsters get no cue (their pace needs no player-facing signal).
+
+## Coarse host-side re-check interval (seconds) for the pace-flip poll (§2.8.7). Server-internal
+## polling only — it re-resolves each player and posts a `pace_changed` ONLY on a flip (per §2.5, events
+## post on change, never per-tick), so this is not wire traffic. Its sole unique job is catching the
+## time-driven EXIT (hysteresis expiry / forcing-window lapse), which no state update signals; entry
+## flips are already flushed immediately by the report_* hooks. ~0.25s balances cue latency vs churn.
+@export var pace_poll_sec: float = 0.25
 
 # Sentinel tile for "this entity holds no occupancy" — mirrors MoveReferee._NO_TILE. (0,0) is a wall
 # in every room, so no live body ever rests there; an untracked / despawned id reads as this.
@@ -52,11 +64,18 @@ var _engagements: Dictionary = {}
 # past deadline = not forcing.
 var _force_until: Dictionary = {}
 # Hysteresis timestamps: player id -> the last Time.get_ticks_msec() at which the player would resolve
-# tactical. WRITTEN by beat_sec_for as a side effect on every tactical resolve (host-only, single-
-# threaded), so stamp-time and any future poll-timer verdict read the SAME truth and can never
-# disagree. NO ENTRY = never qualified = explore immediately (fresh spawns / late joiners), which is
-# why this is a lazy write rather than a seeded default.
+# tactical. WRITTEN by _resolve_tactical as a side effect on every tactical resolve (host-only, single-
+# threaded), so stamp-time (beat_sec_for) and the poll-timer verdict (_flush_pace_changes) share the ONE
+# resolve and can never disagree. NO ENTRY = never qualified = explore immediately (fresh spawns / late
+# joiners), which is why this is a lazy write rather than a seeded default.
 var _last_qualified: Dictionary = {}
+# Last pace BROADCAST for each player: player id -> bool (true = tactical). A flush diffs the live
+# resolve against this; a flip posts `pace_changed` and updates it. Seeded on player spawn
+# (on_player_spawned) so a joiner gets its initial pace once and the poll then posts only changes.
+var _last_broadcast: Dictionary = {}
+# The coarse re-check Timer (host-only), created + started in activate(). Server-internal — it drives
+# the EXIT flush no state update signals (hysteresis expiry). Held so its ownership is unambiguous.
+var _poll_timer: Timer = null
 
 
 # ── Public methods ────────────────────────────────────────────────────────────
@@ -71,30 +90,37 @@ func activate(players: Node2D, monsters: Node2D, move_referee: Node) -> void:
 	_move_referee = move_referee
 	_monsters.child_exiting_tree.connect(_on_monster_exiting)
 	_players.child_exiting_tree.connect(_on_player_exiting)
+	# The coarse re-check poll (§2.8.7), host-only. A repeating Timer added as a child of this in-tree
+	# referee node — server-internal, it re-resolves each player and posts a pace_changed ONLY on a flip
+	# (the EXIT cue the report_* hooks can't catch, since hysteresis expiry is time-driven). Never armed
+	# on clients (activate never runs there), so a client's pace referee posts nothing.
+	_poll_timer = Timer.new()
+	_poll_timer.name = "PacePollTimer"
+	_poll_timer.wait_time = pace_poll_sec
+	_poll_timer.one_shot = false
+	_poll_timer.autostart = true
+	_poll_timer.timeout.connect(_flush_pace_changes)
+	add_child(_poll_timer)
 
 
-## THE resolver — the read every stamp site uses. Returns the beat (seconds) this entity's NEXT
-## committed window stamps from. Host-only (stamp sites never run on clients). It is ALSO the
-## hysteresis writer: any resolve that lands tactical for a player stamps _last_qualified as a side
-## effect, so a later poll/timer verdict reads the same truth (see _last_qualified).
+## THE resolver read every stamp site uses. Returns the beat (seconds) this entity's NEXT committed
+## window stamps from — tactical or explore per _resolve_tactical. Host-only (stamp sites never run on
+## clients). Sharing _resolve_tactical with the poll/flush means a stamp and a poll verdict for the same
+## instant can never disagree (both take the one hysteresis-writing resolve).
 func beat_sec_for(entity_id: int) -> float:
-	# Monsters (negative id): tactical iff engaged (aggroed — always inside their own bubble). No
-	# engagement entry = idle / brainless = explore. Monsters have no hysteresis or forcing window.
-	if entity_id < 0:
-		return GameManager.tactical_beat_sec if _engagements.has(entity_id) else GameManager.explore_beat_sec
-	# Players (positive id). A live tactical qualification stamps the hysteresis clock and returns
-	# tactical NOW.
-	if _player_qualifies_tactical(entity_id):
-		_last_qualified[entity_id] = Time.get_ticks_msec()
-		return GameManager.tactical_beat_sec
-	# Not currently qualifying. Hysteresis: hold tactical until tactical_exit_sec has elapsed since the
-	# last qualify, so a player skimming a bubble edge doesn't flicker. No _last_qualified entry means
-	# never qualified — explore immediately, zero exit delay (fresh spawns / late joiners).
-	if _last_qualified.has(entity_id):
-		var elapsed_ms := Time.get_ticks_msec() - int(_last_qualified[entity_id])
-		if elapsed_ms < int(GameManager.config.tactical_exit_sec * 1000.0):
-			return GameManager.tactical_beat_sec
-	return GameManager.explore_beat_sec
+	return GameManager.tactical_beat_sec if _resolve_tactical(entity_id) else GameManager.explore_beat_sec
+
+
+## Late-join seed (§2.8.7), called from Main's host-side player-spawn hook. Posts this player's CURRENT
+## pace once so a joiner's tempo-bar seeds correctly — joiners default to explore in the UI, and this
+## single event corrects them if they happened to spawn into a fight. Seeds _last_broadcast so the poll
+## then posts only genuine flips. Host-only; a non-player id is ignored.
+func on_player_spawned(entity_id: int) -> void:
+	if entity_id <= 0:
+		return
+	var tactical := _resolve_tactical(entity_id)
+	_last_broadcast[entity_id] = tactical
+	NetEvents.post_event("pace_changed", { "entity_id": entity_id, "pace": _pace_name(tactical) })
 
 
 ## Called by each MonsterBrain every think (injected ref — the brain never reaches up). Records this
@@ -106,6 +132,9 @@ func report_engagement(monster_id: int, aggroed: bool, target_id: int) -> void:
 		_engagements[monster_id] = target_id
 	else:
 		_engagements.erase(monster_id)
+	# Flush immediately so an ENTRY cue (a player just entered a bubble / became a leash target) fires
+	# on this frame rather than waiting up to pace_poll_sec for the next poll.
+	_flush_pace_changes()
 
 
 ## Called by CombatReferee / MoveReferee when a PLAYER lands a hostile action (its bump), BEFORE that
@@ -116,9 +145,57 @@ func report_engagement(monster_id: int, aggroed: bool, target_id: int) -> void:
 func report_hostile_action(player_id: int) -> void:
 	var window_ms := int(GameManager.config.tactical_force_beats * GameManager.tactical_beat_sec * 1000.0)
 	_force_until[player_id] = Time.get_ticks_msec() + window_ms
+	# Flush immediately so the attacker's tactical cue fires the instant the swing commits (its own
+	# window already stamps tactical — see MoveReferee._begin_bump), not on the next poll.
+	_flush_pace_changes()
 
 
 # ── Private methods ───────────────────────────────────────────────────────────
+
+## THE one pace resolve, shared by beat_sec_for (stamps) and _flush_pace_changes (poll) so the two can
+## never disagree — and the hysteresis WRITER: any resolve that lands tactical for a player stamps
+## _last_qualified as a side effect. Monsters: tactical iff engaged (aggroed — always inside their own
+## bubble), no hysteresis/forcing. Players: qualify now (bubble ∨ leash ∨ forcing) → tactical + stamp the
+## clock; else hold tactical until tactical_exit_sec since the last qualify (hysteresis, no flicker at a
+## bubble edge); no _last_qualified entry = never qualified = explore immediately (fresh spawns / joiners).
+func _resolve_tactical(entity_id: int) -> bool:
+	if entity_id < 0:
+		return _engagements.has(entity_id)
+	if _player_qualifies_tactical(entity_id):
+		_last_qualified[entity_id] = Time.get_ticks_msec()
+		return true
+	if _last_qualified.has(entity_id):
+		var elapsed_ms := Time.get_ticks_msec() - int(_last_qualified[entity_id])
+		if elapsed_ms < int(GameManager.config.tactical_exit_sec * 1000.0):
+			return true
+	return false
+
+
+## Re-resolve every live player and post a `pace_changed` for each whose pace flipped since the last
+## broadcast (§2.8.7, §2.5 "events post on change"). Called by the poll Timer (catches time-driven
+## EXITs) and immediately after report_engagement / report_hostile_action (ENTRY cues, no poll wait).
+## Players only — monster pace needs no player-facing cue. Host-only (post_event is call_local; a client
+## never reaches here). Iterating _players is safe: post_event mutates no referee state read in the loop.
+func _flush_pace_changes() -> void:
+	if _players == null:
+		return
+	for child in _players.get_children():
+		if not (child is Entity):
+			continue
+		var player_id: int = child.entity_id
+		if player_id <= 0:
+			continue
+		var tactical := _resolve_tactical(player_id)
+		if not _last_broadcast.has(player_id) or bool(_last_broadcast[player_id]) != tactical:
+			_last_broadcast[player_id] = tactical
+			NetEvents.post_event("pace_changed", { "entity_id": player_id, "pace": _pace_name(tactical) })
+
+
+## The wire label for a resolved pace — the ONE mapping bool -> the string the cue reads, so the event
+## name can't drift between the seed, the poll, and the flush.
+func _pace_name(tactical: bool) -> String:
+	return "tactical" if tactical else "explore"
+
 
 ## Does this player qualify for tactical RIGHT NOW (bubble ∨ leash ∨ forcing window)? Pure read of
 ## live engagement + forcing state + authoritative tiles — the hysteresis is applied by the caller.
@@ -184,3 +261,6 @@ func _on_player_exiting(node: Node) -> void:
 	if node is Entity:
 		_force_until.erase(node.entity_id)
 		_last_qualified.erase(node.entity_id)
+		# Drop the last-broadcast record too, so a rejoining peer id re-seeds fresh (its first flush
+		# posts, rather than being deduped against a stale pre-disconnect value).
+		_last_broadcast.erase(node.entity_id)

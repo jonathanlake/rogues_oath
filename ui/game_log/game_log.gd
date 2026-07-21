@@ -151,6 +151,13 @@ func _on_event_received(event: Dictionary) -> void:
 			# The weapon-swap referee outcome (M3.7, §2.3.7): one line naming who drew which weapon, on
 			# every peer, so a live swap is legible in the log. Names go through add_line's sink escape.
 			add_line("%s draws the %s." % [str(data.get("by", "Someone")), str(data.get("weapon", "weapon"))])
+		"pace_changed":
+			# The pace-flip cue (Tactical Zones v1, §2.8.7 / §2.3.4). OWN-player only — a flip for someone
+			# else isn't our line (mirrors the "You died." self-filter above). Hysteresis keeps these
+			# infrequent, so the marker reads as a real mode change, not churn. One distinct line per pole.
+			if int(data.get("entity_id", 0)) == multiplayer.get_unique_id():
+				var tactical := str(data.get("pace", "explore")) == "tactical"
+				add_line("— Tactical pace —" if tactical else "— Explore pace —")
 
 
 ## Compose the combat-log line for one `attack` event, one distinct phrasing per outcome (§2.3.4):

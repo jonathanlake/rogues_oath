@@ -119,7 +119,9 @@ const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN
 # crosses the wire.
 @onready var _camera: Camera2D = $Camera
 # Always-on tempo readout (DESIGN §2.8.3), top-center. Session UI only (in main.tscn, never the menu).
-@onready var _tempo_label: Label = $TempoDisplay/Label
+# A RichTextLabel (bbcode) since v0.9.5 so the two-tone pace EMPHASIS (§2.8.7 cue) can bright/dim the two
+# dials inline — YOUR active pace bold + full-alpha, the inactive one dimmed. Driven by pace_changed.
+@onready var _tempo_label: RichTextLabel = $TempoDisplay/Label
 
 # Chat/combat log, added on every peer in _ready. Held so spawn/disconnect can post system
 # lines through it. Set before the host spawns its own player so that spawn's "joined." lands.
@@ -158,6 +160,10 @@ var _vignette_tween: Tween = null
 # our death); (re)acquired lazily from $Players by our peer id, so first spawn, late join, and F5
 # respawn all re-attach the camera uniformly. Local presentation only — never read for adjudication.
 var _local_avatar: Node2D = null
+# The LOCAL player's current pace (Tactical Zones v1, §2.8.7 cue). Presentation only — set from the
+# host-authored pace_changed event for our own id, read by _update_tempo_display to emphasize the active
+# dial. Defaults false (explore emphasized), the correct pre-fight state on every peer before any flip.
+var _local_pace_tactical: bool = false
 
 
 func _ready() -> void:
@@ -450,6 +456,10 @@ func _on_net_event(event: Dictionary) -> void:
 			# An accepted weapon swap broadcasts under its own action name; every peer repaints that
 			# player's rig + equipped weapon (the log line comes from game_log's own handler).
 			_handle_swap_weapon_event(event)
+		"pace_changed":
+			# A host-resolved pace flip (Tactical Zones v1, §2.8.7). Every peer plays the cue for its OWN
+			# player only — the tempo bar emphasizes YOUR active dial (the log line comes from game_log).
+			_handle_pace_changed_event(event)
 
 
 ## Play back an accepted glide. Resolve the mover by entity id: positive is a player, negative a
@@ -599,6 +609,18 @@ func _handle_swap_weapon_event(event: Dictionary) -> void:
 	player.set_weapon(weapon)
 
 
+## All peers: adopt a host-resolved pace flip (Tactical Zones v1, §2.8.7). Filter to OUR OWN player id —
+## the cue emphasizes YOUR active dial, so a flip for someone else never repaints our bar (each peer runs
+## this only for itself). Store the local pace and refresh the readout; the own-player log line rides the
+## same event via game_log. No local inference — the pace is host-authored, played from the event.
+func _handle_pace_changed_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	if int(data.get("entity_id", 0)) != multiplayer.get_unique_id():
+		return
+	_local_pace_tactical = str(data.get("pace", "explore")) == "tactical"
+	_update_tempo_display()
+
+
 ## Per-peer local camera follow (M3.5). Track OUR OWN avatar's position each frame; the avatar's glide
 ## tween is already smooth, so the camera rides it smoothly (pure presentation — nothing networked).
 ## (Re)acquire the avatar from $Players by our peer id whenever we don't hold a live one — covering
@@ -640,14 +662,31 @@ func _apply_tactical_tempo(beat_sec: float) -> void:
 
 
 ## Refresh the top-center tempo readout from the LOCAL GameManager beats (each peer's own). Shows BOTH
-## dials since v0.9.2 — "explore 0.25s · 240 BPM   |   tactical 0.50s · 120 BPM" — so a player can see the
-## two paces at a glance (the tactical dial is groundwork; nothing stamps from it yet). BPM derives through
-## GameManager.bpm_of so the 0-guard and rounding match every other readout (§2.8.3).
+## dials — "explore 0.25s · 240 BPM   |   tactical 0.50s · 120 BPM" — and, since v0.9.5, EMPHASIZES the
+## local player's ACTIVE pace (§2.8.7 cue): the live dial bold + full-alpha, the idle one dimmed, so a
+## player reads their current pace at a glance. bbcode two-tone (the label is a RichTextLabel). BPM
+## derives through GameManager.bpm_of so the 0-guard and rounding match every other readout (§2.8.3).
 func _update_tempo_display() -> void:
 	var explore := GameManager.explore_beat_sec
 	var tactical := GameManager.tactical_beat_sec
-	_tempo_label.text = "explore %.2fs · %d BPM   |   tactical %.2fs · %d BPM" % [
-		explore, GameManager.bpm_of(explore), tactical, GameManager.bpm_of(tactical)]
+	var explore_text := "explore %.2fs · %d BPM" % [explore, GameManager.bpm_of(explore)]
+	var tactical_text := "tactical %.2fs · %d BPM" % [tactical, GameManager.bpm_of(tactical)]
+	# The active dial is bright + bold; the inactive one dims to half-alpha. _local_pace_tactical is
+	# driven by the own-player pace_changed event (default explore before any flip).
+	_tempo_label.text = "[center]%s   |   %s[/center]" % [
+		_dial_markup(explore_text, not _local_pace_tactical),
+		_dial_markup(tactical_text, _local_pace_tactical)]
+
+
+## Wrap one dial's text in the emphasis markup for the pace cue (§2.8.7): the ACTIVE dial is bold at full
+## alpha, the inactive one dims via a half-alpha color tag. The one styling site both dials share, so the
+## bright/dim treatment can't drift between them.
+func _dial_markup(dial_text: String, active: bool) -> String:
+	if active:
+		return "[b]%s[/b]" % dial_text
+	# Dim to ~40% alpha in the same bluish readout tone (matches TempoDisplay's theme), so the inactive
+	# dial recedes without changing hue.
+	return "[color=#ccd9f266]%s[/color]" % dial_text
 
 
 ## Any peer: request a tempo nudge of `delta` seconds/beat (negative = faster; delta = ±config.tempo_step_sec).
@@ -722,6 +761,10 @@ func _on_player_spawned_host(node: Node) -> void:
 		if _referee.is_entity_moving(p.entity_id):
 			continue
 		NetEvents.post_event("glide_to", { "from": cur, "to": cur, "duration_sec": 0.05 }, p.entity_id)
+	# Late-join pace seed (§2.8.7, v0.9.5): post the joiner's CURRENT pace so its tempo-bar emphasis
+	# starts right — normally explore, but corrected in one event if it spawned into a fight. Host-only
+	# (this hook is inside the is_server branch); the pace referee dedups against _last_broadcast.
+	_pace.on_player_spawned(node.entity_id)
 
 
 ## Sign of each axis of a delta, clamped to an 8-way step {-1,0,1}² — used to point an attacker's
