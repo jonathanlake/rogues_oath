@@ -95,13 +95,15 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    something that means it isn't being changed at all"; cites 5e dropping diagonal rules
    for simplicity even though "diagonals are OP"; "probably won't ever be double/half,
    too drastic").**
-   **Corner rule (defined in M2, Jon/Jeff 2026-07-17 — provisional, pending playtest):** a
-   diagonal step requires both orthogonal flank tiles of the origin — `origin+(dx,0)` and
-   `origin+(0,dy)` — to be non-wall, so a squeeze between two walls that touch only at a corner
-   is illegal even when both endpoints are floor. Flank **occupancy** does NOT block by default —
-   walls block corners, bodies don't — with the `bodies_block_corners` GameConfig toggle as the
-   playtest alternative: flip it and an occupied flank blocks the diagonal too. Diagonal LoS math
-   is still deferred to the dungeon-visibility milestone.
+   **Corner rule (defined in M2; AMENDED v0.10.0, Jon playtest verdict 2026-07-21):** a
+   diagonal step is refused only when BOTH orthogonal flank tiles of the origin —
+   `origin+(dx,0)` and `origin+(0,dy)` — are walls: you may round a single wall corner, but a
+   squeeze between two walls that touch only at a corner stays illegal. (The original M2 form
+   blocked on EITHER flank wall; playtest read that as "can't move diagonally near a wall.")
+   Monster A* mirrors the wall half. Flank **occupancy** does NOT block by default — walls block
+   corners, bodies don't — with the `bodies_block_corners` GameConfig toggle as the playtest
+   alternative: flip it and an occupied flank blocks the diagonal too (EITHER flank, unchanged).
+   Diagonal LoS math is still deferred to the dungeon-visibility milestone.
 8. **Commit feedback (added v0.3).** The feedback rule (2.3.4) applies to movement:
    pressing a move renders an instant, local **"commit sent"** acknowledgment, so the
    player always knows the input registered. The **verdict** — glide start, or a rejection
@@ -538,6 +540,31 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.10.0 (2026-07-21)** — Feature pass from Jon's playtest list. MOVEMENT FEEL: the diagonal
+  corner rule relaxes to the classic form — blocked only when BOTH flanking orthogonals are
+  walls (§2.2.7 amendment, playtest verdict; you can round a single wall corner, never squeeze
+  between two); monster A* mirrors it; the body-flank dial keeps its semantics. SPRITE FACING:
+  entities flip toward their step/attack/telegraph direction (sprite-only flip — labels and the
+  weapon rig untouched), event-driven per peer. SLASH COMMANDS (dev-era, any peer): a leading
+  "/" in chat rides a host-validated dev_command intent — /w and /m live-tune weapon and monster
+  resources at stamp time (with reset), /god toggles referee-level invulnerability (damage-0
+  events keep the feedback rule), /help lists locally; docs/dev-commands.md is the reference.
+  PLAYER CLASSES: PlayerClass resources (six authored) replace the hardwired sprite table;
+  /class swaps live, class_changed broadcasts, sync_class covers late joiners — the beachhead
+  for real class stats. F7 RANGE OVERLAY: translucent aggro (red) / tactical (yellow) fills from
+  authored values (static — live aggro state stays host-only). FLOATING COMBAT TEXT: damage
+  numbers (miss / godded-0) rise off victims, Main-parented to survive killing blows. All
+  two-instance verified (client-typed tuning applying to its own next bump; late-join wizard
+  via sync_class; the once-forbidden pillar diagonal accepting).
+- **v0.9.6 (2026-07-21)** — Code-review fix pass on Tactical Zones v1 (10 verified findings;
+  no standalone export — superseded same-day by v0.10.0). Seed-vs-flip pace events (spawn seeds
+  update the bar without log spam); local death resets the tempo bar (was frozen tactical until
+  F5 — screenshot-verified at 0/20); resolver hot path: change-detected engagement reports,
+  radius cached at report time, merged leash+bubble scan (kills the O(P·M²) chase-loop term);
+  client input throttles follow the local broadcast pace; the anti-cheese window also arms at
+  the combat chokepoints (covers AoO-when-re-enabled and future windup weapons); one static
+  beat_or_explore fallback replaces three copies; twin nearest-target scans merged; pace-cue
+  comments cite the deliberate two-signal choice (v0.6.2 audio grammar) instead of §2.3.4.
 - **v0.9.5 (2026-07-20)** — TACTICAL ZONES v1 SHIPPED (§2.8.7): the two dials come alive.
   A new host-side PaceReferee is the single resolver both stamping referees and every brain
   consult per entity, per action: players go tactical inside an aggroed monster's bubble
