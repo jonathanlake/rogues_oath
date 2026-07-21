@@ -1,8 +1,14 @@
-[gd_resource type="Resource" script_class="GameConfig" load_steps=4 format=3 uid="uid://caodi0fnqcjpi"]
+[gd_resource type="Resource" script_class="GameConfig" load_steps=10 format=3 uid="uid://caodi0fnqcjpi"]
 
 [ext_resource type="Script" uid="uid://cdrfkh1t65l16" path="res://resources/game_config.gd" id="1_config"]
 [ext_resource type="Resource" path="res://resources/weapons/dagger.tres" id="2_dagger"]
 [ext_resource type="Resource" path="res://resources/weapons/longsword.tres" id="3_longsword"]
+[ext_resource type="Resource" path="res://resources/classes/rogue.tres" id="4_rogue"]
+[ext_resource type="Resource" path="res://resources/classes/knight.tres" id="5_knight"]
+[ext_resource type="Resource" path="res://resources/classes/wizard.tres" id="6_wizard"]
+[ext_resource type="Resource" path="res://resources/classes/barbarian.tres" id="7_barbarian"]
+[ext_resource type="Resource" path="res://resources/classes/priest.tres" id="8_priest"]
+[ext_resource type="Resource" path="res://resources/classes/ranger.tres" id="9_ranger"]
 
 [resource]
 script = ExtResource("1_config")
@@ -10,3 +16,4 @@ diagonal_step_multiplier = 1.0
 attacks_of_opportunity_enabled = false
 click_pathing_enabled = false
 weapon_roster = Array[Resource]([ExtResource("2_dagger"), ExtResource("3_longsword")])
+class_roster = Array[Resource]([ExtResource("4_rogue"), ExtResource("5_knight"), ExtResource("6_wizard"), ExtResource("7_barbarian"), ExtResource("8_priest"), ExtResource("9_ranger")])

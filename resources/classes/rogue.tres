@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="PlayerClass" format=3]
+
+[ext_resource type="Script" path="res://resources/player_class.gd" id="1_class"]
+
+[resource]
+script = ExtResource("1_class")
+display_name = "rogue"
+atlas_coords = Vector2i(3, 0)

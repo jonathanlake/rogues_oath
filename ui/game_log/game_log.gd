@@ -76,8 +76,19 @@ func _append_markup(line: String) -> void:
 
 
 func _on_input_submitted(text: String) -> void:
+	var trimmed := text.strip_edges()
 	# Empty/whitespace: just drop focus, send nothing (no wasted intent, no empty chat event).
-	if text.strip_edges().is_empty():
+	if trimmed.is_empty():
+		_input.clear()
+		_input.release_focus()
+		return
+	# Slash-command interception (v0.10.0 dev commands). The ONE clean client entry point (this file
+	# already owns "am I typing?"): a leading "/" is a dev command, NEVER chat — parse it locally and
+	# either render /help here or submit a dev_command intent the host adjudicates + broadcasts. It clears
+	# + releases focus exactly like a sent message, so the focus/movement-gate flow is unchanged; only the
+	# wire payload differs (an intent, not a chat event). A slash never reaches submit_intent("chat", ...).
+	if trimmed.begins_with("/"):
+		_handle_slash_command(trimmed)
 		_input.clear()
 		_input.release_focus()
 		return
@@ -85,6 +96,39 @@ func _on_input_submitted(text: String) -> void:
 	NetEvents.submit_intent("chat", {"text": text})
 	_input.clear()
 	_input.release_focus()
+
+
+## Parse a "/..." dev command and dispatch it (v0.10.0). Strip the leading "/", split on whitespace, and
+## LOWERCASE every token (so weapon/field/class names and the command itself are case-insensitive — the
+## host command table then takes precedence over the bare-weapon alias, e.g. "/w" beats a weapon literally
+## named "w"). First token = command, the rest = args. "/help" renders locally (the command list is client
+## knowledge — no wire); everything else submits a dev_command intent {cmd, args} the host validates,
+## adjudicates, and broadcasts a host-composed log line for. An empty command (a bare "/") is ignored.
+func _handle_slash_command(text: String) -> void:
+	var tokens := text.substr(1).split(" ", false)
+	if tokens.is_empty():
+		return
+	var lowered: Array[String] = []
+	for t in tokens:
+		lowered.append(t.to_lower())
+	var cmd: String = lowered[0]  # indexing a typed Array returns Variant at parse time — annotate
+	var args := lowered.slice(1)
+	if cmd == "help":
+		_render_help()
+		return
+	NetEvents.submit_intent("dev_command", { "cmd": cmd, "args": args })
+
+
+## Render the /help command list LOCALLY (v0.10.0) — it never crosses the wire, so it appears only in the
+## asker's own log. Kept in sync BY HAND with the host command table (main.gd) and docs/dev-commands.md.
+func _render_help() -> void:
+	add_line("Dev commands (any peer):")
+	add_line("  /w <weapon> [damage|attack_beats|windup_beats] <value|reset>")
+	add_line("  /<weapon> <value>  — shorthand for /w <weapon> damage <value>")
+	add_line("  /m <monster> <max_hp|aggro_range_tiles|tactical_radius_tiles|recovery_beats> <value|reset>")
+	add_line("  /god  — toggle your own invulnerability")
+	add_line("  /class <rogue|knight|wizard|barbarian|priest|ranger>")
+	add_line("  /help  — this list")
 
 
 # Editing ended (Esc, or the external world-click release from MoveInput). Release focus so the
@@ -151,6 +195,17 @@ func _on_event_received(event: Dictionary) -> void:
 			# The weapon-swap referee outcome (M3.7, §2.3.7): one line naming who drew which weapon, on
 			# every peer, so a live swap is legible in the log. Names go through add_line's sink escape.
 			add_line("%s draws the %s." % [str(data.get("by", "Someone")), str(data.get("weapon", "weapon"))])
+		"dev_command":
+			# A host-adjudicated dev command's outcome (v0.10.0, /w & /m & /god). The HOST composed the
+			# whole line (who + what changed) — the client never trusts its own parse for the log — and every
+			# peer renders it, so a live tuning/god change is legible party-wide (like set_tempo/swap_weapon).
+			# The line goes through add_line's sink escape like every other system line.
+			add_line(str(data.get("line", "")))
+		"class_changed":
+			# The /class referee outcome (v0.10.0): one line naming who became which class, on every peer, so
+			# a live class change is legible in the log — the mirror of swap_weapon (state adopted by main.gd's
+			# handler from this same event). Names/classes go through add_line's sink escape.
+			add_line("%s becomes a %s." % [str(data.get("by", "Someone")), str(data.get("class", "class"))])
 		"pace_changed":
 			# The pace-flip cue (Tactical Zones v1, §2.8.7). A TWO-SIGNAL cue — tempo-bar emphasis + this
 			# log line — and deliberately NO sound: pace flips are a two-signal cue by audio-grammar choice
@@ -175,6 +230,12 @@ func _log_attack(data: Dictionary) -> void:
 		add_line("%s's attack hits nothing." % attacker_name)
 		return
 	var target_name := str(data.get("target_name", ""))
+	# God-mode no-op (v0.10.0): a hit that landed on an invulnerable target. A DISTINCT line (§2.3.4 —
+	# never confusable with a real hit or a whiff), before the free/normal branches; the event carries
+	# damage 0 + hp unchanged, so this reads "connected, no damage" not "missed".
+	if bool(data.get("godded", false)):
+		add_line("%s hits %s — no effect (god)." % [attacker_name, target_name])
+		return
 	var damage := int(data.get("damage", 0))
 	if str(data.get("kind", "")) == "free":
 		add_line("%s gets a free attack on %s — %d damage." % [attacker_name, target_name, damage])
@@ -190,6 +251,11 @@ func _on_intent_rejected(action: String, reason: String) -> void:
 		add_line("(message not sent: %s)" % reason)
 	elif action == "glide_to":
 		_log_glide_reject(reason)
+	elif action == "dev_command":
+		# A rejected dev command (v0.10.0): unknown command, bad field, or non-number value. Surface the
+		# host's reason to the SENDER only (rejects reach only the sender) so a typo is never a silent
+		# no-op (§2.3.4). Distinct wording from a rejected chat/move so the three don't blur.
+		add_line("(command failed: %s)" % reason)
 
 
 # A refused move must never be silent when the cause is the world (§2.3.4): a wall/corner/occupied

@@ -36,6 +36,14 @@ const _NO_ENTITY := 0
 # (> 0) for a player or a host-assigned negative int for a monster — the same id space MoveReferee uses.
 var _hp: Dictionary = {}
 
+# GOD MODE (v0.10.0 dev command): entity id -> true for every entity the /god command has made
+# invulnerable. Host-only authority (this referee is inert on clients — the toggle rides the dev_command
+# validator, which only runs host-side), so a client can never grant itself invulnerability. Checked in
+# apply_damage's single chokepoint (covers bump / AoO / windup uniformly) — a godded target takes the hit
+# as a visible NO-OP (damage 0, a "godded" flag on the event) rather than a silent block (§2.3.4). Erased
+# with the entity's HP on container exit (disconnect / despawn / F5 reset), so a fresh spawn is mortal.
+var _godded: Dictionary = {}
+
 # The Players / Monsters containers, handed in by Main via activate() on the HOST only. Read for
 # node resolution + HP seeding; never reached up from. Null on clients (activate never runs there).
 var _players: Node2D = null
@@ -80,6 +88,25 @@ func is_alive(entity_id: int) -> bool:
 	return _hp.has(entity_id) and int(_hp[entity_id]) > 0
 
 
+## Is this entity currently invulnerable (the /god dev command toggled it on)? Host-only truth beside
+## is_alive; apply_damage reads it at the single damage chokepoint. An untracked id (never godded /
+## already erased) reads false. Never trusted from the wire — only the host's dev_command validator writes it.
+func is_godded(entity_id: int) -> bool:
+	return _godded.get(entity_id, false)
+
+
+## Toggle an entity's invulnerability and return the NEW state (v0.10.0). Host-only — called by the
+## /god dev command validator (main.gd), which composes the log line from the returned state. Erasing
+## (rather than storing false) keeps the dict to just the godded ids, so the container-exit cleanup is a
+## plain erase and an untracked id reads mortal.
+func toggle_godded(entity_id: int) -> bool:
+	if _godded.get(entity_id, false):
+		_godded.erase(entity_id)
+		return false
+	_godded[entity_id] = true
+	return true
+
+
 ## Apply deterministic melee damage from attacker to target and broadcast the outcome. Host-only.
 ## Returns whether the target DIED (so MoveReferee's AoO scan can abort a glide whose mover it just
 ## killed — decision 4). `kind` is bump|free|windup (the flavor for feedback + the combat log).
@@ -91,6 +118,35 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 	# Defensive: a caller should have gated on is_alive, but never damage a dead/untracked target
 	# (it would post a spurious event and could double-resolve death).
 	if not is_alive(target_id):
+		return false
+	# GOD MODE (v0.10.0): a godded target takes the hit as a visible NO-OP — post the attack event with
+	# damage 0, hp_after UNCHANGED, and a "godded" flag (the feedback rule forbids a silent block, §2.3.4:
+	# main.gd renders a grey "0" popup + play_hurt, game_log a "no effect (god)" line), then SKIP the HP
+	# mutation and _kill_entity and return false (not dead). One chokepoint covers bump / AoO / windup
+	# uniformly. The attacker's own commitment (its committed busy window, stamped BEFORE apply_damage)
+	# stands — this only cancels the DAMAGE, never an in-flight action (Commitment Rule intact). Placed
+	# before the forcing-window arming so a no-op hit on a godded target doesn't re-arm pace either.
+	if is_godded(target_id):
+		var g_attacker := _node_of_id(attacker_id)
+		var g_target := _node_of_id(target_id)
+		var godded_data := {
+			"attacker_id": attacker_id,
+			"attacker_name": _name_of(g_attacker),
+			"target_id": target_id,
+			"target_name": _name_of(g_target),
+			"damage": 0,
+			"hp_after": int(_hp[target_id]),
+			"target_max": _max_hp_of(g_target),
+			"kind": kind,
+			"whiff": false,
+			"duration_sec": duration_sec,
+			"godded": true,
+		}
+		# Weapon stamp on the no-op too (parity with the landed/whiff branches): a godded hit still
+		# animates the attacker's rig — the world reacts, the HP doesn't.
+		if g_attacker is Entity and g_attacker.equipped_weapon != null:
+			godded_data["weapon"] = g_attacker.equipped_weapon.display_name
+		NetEvents.post_event("attack", godded_data, attacker_id)
 		return false
 	# Forcing-window arming, uniform catch-all (Tactical Zones v1, §2.8.7, review #6). A PLAYER attacker
 	# (positive id) landing ANY damage — an AoO free strike (attacks_of_opportunity_enabled), a future
@@ -296,10 +352,13 @@ func _on_entity_entered(node: Node) -> void:
 
 
 ## Forget an entity's HP as its node leaves (disconnect / despawn / teardown). Idempotent with the
-## synchronous death erase above — a natural despawn just clears whatever remains.
+## synchronous death erase above — a natural despawn just clears whatever remains. Also drops any /god
+## invulnerability (v0.10.0): a disconnect / despawn / F5 respawn clears the godded flag, so a fresh
+## spawn on the same id starts mortal — the same container hook that clears HP owns the god cleanup.
 func _on_entity_exiting(node: Node) -> void:
 	if node is Entity:
 		_hp.erase(node.entity_id)
+		_godded.erase(node.entity_id)
 
 
 ## The id -> node resolver over this referee's own containers (mirror of MoveReferee's). Positive is

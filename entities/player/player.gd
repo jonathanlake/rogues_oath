@@ -15,17 +15,6 @@ extends Entity
 ##    to a newer server truth, never to abort a committed step.
 ##  - A reject reaches only the sender; Main calls play_bonk() on the sender's own player.
 
-## Distinct sprite tiles (col, row) into rogues.png, one per spawn slot, so players are
-## told apart at a glance. Indexed by spawn_index (wraps if there are more players than tiles).
-const _SPRITE_TILES: Array[Vector2i] = [
-	Vector2i(3, 0),  # rogue
-	Vector2i(0, 1),  # knight
-	Vector2i(0, 4),  # female wizard
-	Vector2i(0, 3),  # male barbarian
-	Vector2i(1, 2),  # priest
-	Vector2i(2, 0),  # ranger
-]
-
 ## Damage (HP) this player deals per landed melee attack — a bump (move into a hostile) or an
 ## attack of opportunity. Deterministic (no to-hit roll, DESIGN §2.3 amendment). Read HOST-side by
 ## the referees when they stamp this attacker's damage; never trusted from the wire.
@@ -53,12 +42,23 @@ var peer_id: int = 0
 var player_name: String = ""
 var spawn_index: int = 0
 
+## This player's class (v0.10.0) — its appearance today, its stat identity in future. Seeded in _ready
+## from GameConfig.class_roster[spawn_index % size] (the class resources ARE the old per-slot sprite
+## table now), reassigned by the /class validator host-side and adopted on every peer via the
+## class_changed event / late-join sync_class RPC (main.gd) through set_class. Read by the late-join
+## loop to tell the joiner our current class. Presentation on the node; never adjudication truth.
+var player_class: PlayerClass = null
+
 
 func _ready() -> void:
 	super()
-	var sprite_tile := _SPRITE_TILES[spawn_index % _SPRITE_TILES.size()]
-	_sprite.region_enabled = true
-	_sprite.region_rect = Rect2(sprite_tile.x * WorldGrid.TILE_PX, sprite_tile.y * WorldGrid.TILE_PX, WorldGrid.TILE_PX, WorldGrid.TILE_PX)
+	# Seed the class-driven sprite from the spawn slot (v0.10.0): the class roster replaced the old
+	# per-slot _SPRITE_TILES, so slot N wears roster[N % size]'s tile — identical default appearance,
+	# now a swappable PlayerClass. set_class paints the region; a /class change or late-join sync
+	# repaints it thereafter. An empty roster (misconfig) leaves the scene-default region untouched.
+	var roster := GameManager.config.class_roster
+	if not roster.is_empty():
+		set_class(roster[spawn_index % roster.size()])
 	# Nameplate is name-only, seeded from the pre-tree display_name; the HP readout rides its own
 	# label under the feet. max_hp is locally known everywhere (an Entity export), so the seed is
 	# correct on every peer with no query; the combat referee's attack events drive live updates via
@@ -98,6 +98,25 @@ func is_hostile_to(other: Node) -> bool:
 	if GameManager.all_hostile and other != self:
 		return true
 	return other is Monster
+
+
+## Adopt a class (v0.10.0): update player_class AND repaint the sprite's region from its atlas_coords in
+## ONE place, so a /class change (via the class_changed event) or a late-join sync (sync_class) can never
+## leave the sprite showing the old class. FLIP PRESERVED: face_toward flips $Sprite2D via flip_h, which
+## a region_rect assignment does not touch — but we capture + restore it explicitly so the invariant is
+## documented at the site and survives any future region-set that might reset it. A null class is a no-op
+## (the misconfig / empty-roster guard) — the scene-default region stays. Driven on the swap/sync event on
+## every peer; every peer resolves the same PlayerClass through GameConfig.class_by_name (roster = truth).
+func set_class(new_class: PlayerClass) -> void:
+	player_class = new_class
+	if new_class == null:
+		return
+	var was_flipped := _sprite.flip_h
+	_sprite.region_enabled = true
+	_sprite.region_rect = Rect2(
+		new_class.atlas_coords.x * WorldGrid.TILE_PX, new_class.atlas_coords.y * WorldGrid.TILE_PX,
+		WorldGrid.TILE_PX, WorldGrid.TILE_PX)
+	_sprite.flip_h = was_flipped
 
 
 ## Outcome-neutral input ack (§2.2.8): a brief bright flash + tick the instant we SUBMIT, before

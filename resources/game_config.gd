@@ -125,3 +125,24 @@ func next_weapon(current: WeaponType) -> WeaponType:
 		return current
 	var idx := weapon_roster.find(current)  # -1 when absent → (idx + 1) wraps to the first entry
 	return weapon_roster[(idx + 1) % weapon_roster.size()]
+
+
+## The authored player-class roster (v0.10.0). ONE authoring site for the classes a player may BE:
+## Player._ready seeds a fresh spawn from `class_roster[spawn_index % size]` (this array IS the old
+## per-slot sprite table), the /class validator resolves the requested class through class_by_name, and
+## every peer maps a class_changed / sync_class event's name back to the same resource through it.
+## Designer-editable (add / reorder .tres here, no code). Read HOST-side for adjudication resolution and
+## client-side to repaint a sprite from a class event's name — the mirror of weapon_roster above.
+@export var class_roster: Array[PlayerClass] = []
+
+
+# ── Player-class roster helpers ────────────────────────────────────────────────
+
+## Resolve a class by its display_name through the roster, or null if absent. The single lookup the
+## /class validator, the late-join class sync, and the spawn seed share, so the roster stays the one
+## place a class name maps to a resource (mirror of weapon_by_name).
+func class_by_name(name: String) -> PlayerClass:
+	for c in class_roster:
+		if c != null and c.display_name == name:
+			return c
+	return null

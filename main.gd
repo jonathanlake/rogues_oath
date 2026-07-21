@@ -332,6 +332,13 @@ func _ready() -> void:
 		# OWN player; this validator refuses it while the player is busy, otherwise toggles within the
 		# roster host-side and broadcasts. A dev-era control (M5's inventory replaces the hardwired roster).
 		NetEvents.register_handler("swap_weapon", _validate_swap_weapon)
+		# Host-only: the slash-command referee (v0.10.0). ANY peer submits dev_command {cmd, args} (from the
+		# game_log "/" intercept); this validator dispatches on a command table (/w /m /god /class), applies
+		# host-side authoritatively (reads/mutates shared config, toggles god, sets class), and returns a
+		# host-COMPOSED log line every peer renders (a generic dev_command event) — except /class, which
+		# broadcasts its own class_changed event (mirror of swap_weapon) and defers its dev_command broadcast.
+		# Unknown command / bad field / non-number value → reject with a reason (sender-only, like a bad move).
+		NetEvents.register_handler("dev_command", _validate_dev_command)
 		print("[HOST] server started (peer %d) — spawning host player" % multiplayer.get_unique_id())
 		# Spawn the host's own player immediately — no RPC needed. (_spawn_config records the reset
 		# roster entry as a side effect — the one chokepoint every spawn path shares.)
@@ -460,6 +467,11 @@ func _on_net_event(event: Dictionary) -> void:
 			# An accepted weapon swap broadcasts under its own action name; every peer repaints that
 			# player's rig + equipped weapon (the log line comes from game_log's own handler).
 			_handle_swap_weapon_event(event)
+		"class_changed":
+			# A host-adjudicated /class change (v0.10.0) broadcasts under its own action name (mirror of
+			# swap_weapon); every peer repaints that player's sprite region from the resolved PlayerClass
+			# (the log line comes from game_log's own class_changed handler).
+			_handle_class_changed_event(event)
 		"pace_changed":
 			# A host-resolved pace flip (Tactical Zones v1, §2.8.7). Every peer plays the cue for its OWN
 			# player only — the tempo bar emphasizes YOUR active dial (the log line comes from game_log).
@@ -649,6 +661,22 @@ func _handle_swap_weapon_event(event: Dictionary) -> void:
 	if weapon == null:
 		return
 	player.set_weapon(weapon)
+
+
+## All peers: adopt a host-adjudicated /class change (v0.10.0). Resolve the player by entity id and the
+## class by name through the roster (shared config, so every peer maps the id to the same resource), then
+## set_class — repainting the sprite region (flip preserved). On the HOST this also runs (call_local),
+## re-applying the value the validator already set (idempotent). The log line is added by game_log off this
+## same event. Exact mirror of _handle_swap_weapon_event.
+func _handle_class_changed_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var player := _players.get_node_or_null(str(int(data.get("entity_id", 0)))) as Player
+	if player == null:
+		return
+	var player_class := GameManager.config.class_by_name(str(data.get("class", "")))
+	if player_class == null:
+		return
+	player.set_class(player_class)
 
 
 ## All peers: adopt a host-resolved pace flip (Tactical Zones v1, §2.8.7). Filter to OUR OWN player id —
@@ -1333,6 +1361,197 @@ func _validate_swap_weapon(sender_peer_id: int, _data: Dictionary) -> Dictionary
 	} }
 
 
+# ── Slash-command referee (v0.10.0, DESIGN §2.3.4 dev tools) ───────────────────
+
+# The /w field allowlist (weapon tuning): a token must be one of these to set it, and `reset` restores
+# ALL of them from disk. A plain const so the validator, the reset, /help, and docs/dev-commands.md agree.
+const _DEV_WEAPON_FIELDS := ["damage", "attack_beats", "windup_beats"]
+# The /m field allowlist (monster tuning). max_hp affects NEW spawns only (seeded at spawn); the other
+# three are read LIVE (brain aggro, pace bubble, combat recovery), so a tune is felt without a respawn.
+const _DEV_MONSTER_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles", "recovery_beats"]
+
+
+## Host-only slash-command referee (v0.10.0), registered with NetEvents in _ready. ANY peer submits a
+## dev_command {cmd, args} intent (the game_log "/" intercept parses + lowercases the tokens). Resolves the
+## sender null-safe, then DISPATCHES on the command table: /w (weapon tuning), /m (monster tuning), /god
+## (own invulnerability), /class (own class), and the bare-weapon alias ("/longsword 5" → /w longsword 5).
+## The command table takes PRECEDENCE over the alias (a weapon named like a command is reachable only via
+## /w). Most commands return a host-composed log line the generic dev_command event carries to every peer;
+## /class instead broadcasts its own class_changed event and defers (no dev_command broadcast). Unknown
+## command / bad field / non-number value → reject with a reason (sender-only, like a refused move).
+func _validate_dev_command(sender_peer_id: int, data: Dictionary) -> Dictionary:
+	var player_node := _players.get_node_or_null(str(sender_peer_id)) as Player
+	if player_node == null:
+		return { "ok": false, "reason": "not in session" }
+	var by := player_node.display_name
+	var cmd := str(data.get("cmd", "")).to_lower()
+	# Coerce the wire args to a lowercased String array — never trust the wire's element types.
+	var args: Array[String] = []
+	var raw_args = data.get("args", [])
+	if raw_args is Array:
+		for a in raw_args:
+			args.append(str(a).to_lower())
+	match cmd:
+		"w":
+			return _dev_cmd_weapon(args, by)
+		"m":
+			return _dev_cmd_monster(args, by)
+		"god":
+			return _dev_cmd_god(sender_peer_id, by)
+		"class":
+			return _dev_cmd_class(sender_peer_id, args, by)
+		_:
+			# Bare-weapon alias: "/longsword 5" arrives as cmd "longsword", args ["5"]. Reachable ONLY when
+			# cmd resolves to a real weapon (table precedence is handled by the match above). Re-dispatch as
+			# /w by prepending the weapon name onto the args.
+			if _resolve_weapon(cmd) != null:
+				var aliased: Array[String] = [cmd]
+				aliased.append_array(args)
+				return _dev_cmd_weapon(aliased, by)
+			return { "ok": false, "reason": "unknown command '%s'" % cmd }
+
+
+## /w <weapon> [field] <value|reset> — weapon tuning (v0.10.0). Resolve the weapon (roster first, then a
+## filename load), parse the optional field (omitted = damage, so "/w longsword 5" works) + value, and
+## mutate the SHARED loaded resource host-side — adjudication reads it live at the next stamp, so every
+## holder of that weapon is affected (the point of tuning; a process restart restores authored values,
+## nothing saves). `reset` restores ALL allowlisted fields from a fresh disk load.
+func _dev_cmd_weapon(args: Array[String], by: String) -> Dictionary:
+	if args.size() < 2:
+		return { "ok": false, "reason": "usage: /w <weapon> [field] <value|reset>" }
+	var weapon := _resolve_weapon(args[0])
+	if weapon == null:
+		return { "ok": false, "reason": "unknown weapon '%s'" % args[0] }
+	var rest := args.slice(1)
+	# reset: any shape whose LAST token is "reset" restores every allowlisted field from disk.
+	if rest[rest.size() - 1] == "reset":
+		_dev_reset_resource(weapon, _DEV_WEAPON_FIELDS)
+		return { "ok": true, "data": { "line": "%s reset the %s." % [by, weapon.display_name] } }
+	# Otherwise: [value] (field defaults to damage) or [field, value]. Explicit String types — indexing a
+	# typed Array returns Variant at parse time, so := can't infer here.
+	var field: String = "damage"
+	var value_token: String = rest[0]
+	if rest.size() >= 2:
+		field = rest[0]
+		value_token = rest[1]
+	if not (field in _DEV_WEAPON_FIELDS):
+		return { "ok": false, "reason": "unknown weapon field '%s'" % field }
+	if not value_token.is_valid_float():
+		return { "ok": false, "reason": "'%s' is not a number" % value_token }
+	# damage is an int field; the two beat fields are floats.
+	if field == "damage":
+		weapon.damage = int(value_token.to_float())
+	else:
+		weapon.set(field, value_token.to_float())
+	return { "ok": true, "data": { "line": "%s set %s %s to %s." % [by, weapon.display_name, field, value_token] } }
+
+
+## /m <monster> <field> <value|reset> — MonsterType tuning (v0.10.0). Resolve the type by a filename load
+## (exists-guarded — no roster for monsters, the .tres filename is the token), parse the required field +
+## value, and mutate the SHARED loaded resource host-side. max_hp is seeded at spawn, so its change affects
+## NEW spawns only (the log line says so — F5/F6 give fresh spawns to feel it); the other three are read
+## live. `reset` restores ALL allowlisted fields from a fresh disk load.
+func _dev_cmd_monster(args: Array[String], by: String) -> Dictionary:
+	if args.size() < 2:
+		return { "ok": false, "reason": "usage: /m <monster> <field> <value|reset>" }
+	var monster := _resolve_monster(args[0])
+	if monster == null:
+		return { "ok": false, "reason": "unknown monster '%s'" % args[0] }
+	var rest := args.slice(1)
+	if rest[rest.size() - 1] == "reset":
+		_dev_reset_resource(monster, _DEV_MONSTER_FIELDS)
+		return { "ok": true, "data": { "line": "%s reset the %s." % [by, monster.display_name] } }
+	if rest.size() < 2:
+		return { "ok": false, "reason": "usage: /m <monster> <field> <value|reset>" }
+	# Explicit String types — indexing a typed Array returns Variant at parse time, so := can't infer.
+	var field: String = rest[0]
+	var value_token: String = rest[1]
+	if not (field in _DEV_MONSTER_FIELDS):
+		return { "ok": false, "reason": "unknown monster field '%s'" % field }
+	if not value_token.is_valid_float():
+		return { "ok": false, "reason": "'%s' is not a number" % value_token }
+	# recovery_beats is the only float field; the other three are ints.
+	if field == "recovery_beats":
+		monster.recovery_beats = value_token.to_float()
+	else:
+		monster.set(field, int(value_token.to_float()))
+	var line := "%s set %s %s to %s." % [by, monster.display_name, field, value_token]
+	if field == "max_hp":
+		line += " (affects new spawns)"
+	return { "ok": true, "data": { "line": line } }
+
+
+## /god — toggle the SENDER's invulnerability (v0.10.0). Flips the combat referee's godded entry for the
+## sender's own entity id and returns the log line from the NEW state. Host-authoritative (the godded dict
+## lives host-side); a godded target's hits then resolve as visible no-ops in CombatReferee.apply_damage.
+func _dev_cmd_god(sender_peer_id: int, by: String) -> Dictionary:
+	var now_godded: bool = _combat.toggle_godded(sender_peer_id)
+	var line := ("%s is invulnerable." % by) if now_godded else ("%s is mortal again." % by)
+	return { "ok": true, "data": { "line": line } }
+
+
+## /class <name> — set the SENDER's class (v0.10.0). Resolve the class through the roster, apply it
+## host-side to the sender's player (set_class), then BROADCAST a class_changed event (mirror of
+## swap_weapon) every peer adopts + logs, and return a DEFERRED verdict so NetEvents does NOT also
+## broadcast a generic dev_command event (the class_changed event is the whole outcome — no double log).
+## Late-join is handled separately (sync_class in peer_ready).
+func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dictionary:
+	if args.is_empty():
+		return { "ok": false, "reason": "usage: /class <name>" }
+	var player_class := GameManager.config.class_by_name(args[0])
+	if player_class == null:
+		return { "ok": false, "reason": "unknown class '%s'" % args[0] }
+	var player_node := _players.get_node_or_null(str(sender_peer_id)) as Player
+	if player_node == null:
+		return { "ok": false, "reason": "not in session" }
+	# Apply host-side FIRST (authoritative), then broadcast — mirrors _validate_swap_weapon. set_class
+	# repaints the host's own sprite at validator time too; the call_local re-apply stays idempotent.
+	player_node.set_class(player_class)
+	NetEvents.post_event("class_changed", {
+		"entity_id": sender_peer_id,
+		"class": player_class.display_name,
+		"by": by,
+	})
+	# Deferred: the class_changed broadcast IS the outcome — suppress the generic dev_command broadcast
+	# (ok:true so it isn't a reject; deferred:true so NetEvents skips the broadcast + seq).
+	return { "ok": true, "deferred": true }
+
+
+## Resolve a weapon by lowercase name (v0.10.0 /w): GameConfig.weapon_by_name FIRST (roster display_name),
+## else a filename load guarded by ResourceLoader.exists — so the claw (not in the roster) is reachable by
+## its filename (= its display_name). Null if neither resolves. Host-side only.
+func _resolve_weapon(name: String) -> WeaponType:
+	var w := GameManager.config.weapon_by_name(name)
+	if w != null:
+		return w
+	var path := "res://resources/weapons/%s.tres" % name
+	if ResourceLoader.exists(path):
+		return load(path) as WeaponType
+	return null
+
+
+## Resolve a MonsterType by lowercase name via a filename load, exists-guarded (v0.10.0 /m). No roster for
+## monsters — the .tres filename is the token ("goblin" → goblin.tres). Null if the file is absent.
+func _resolve_monster(name: String) -> MonsterType:
+	var path := "res://resources/monsters/%s.tres" % name
+	if ResourceLoader.exists(path):
+		return load(path) as MonsterType
+	return null
+
+
+## Restore `fields` on a shared resource from a FRESH disk copy (v0.10.0 /w & /m reset). Loads the same
+## .tres with CACHE_MODE_IGNORE (Godot 4.7's cache_mode param) so it reads the authored on-disk values
+## regardless of the live mutated cached instance, then copies each allowlisted field onto the shared
+## resource. The resource's own resource_path is the source — a roster-resolved weapon carries it just like
+## a filename-loaded one, so both reset paths share this.
+func _dev_reset_resource(res: Resource, fields: Array) -> void:
+	var fresh := ResourceLoader.load(res.resource_path, "", ResourceLoader.CACHE_MODE_IGNORE)
+	if fresh == null:
+		return
+	for f in fields:
+		res.set(f, fresh.get(f))
+
+
 ## Host-only. Refuse a peer that was NEVER admitted (version mismatch or capacity). Used by BOTH
 ## refusal paths: mark it refused, send the reason over the transient host->client channel, then
 ## kick IMMEDIATELY — no grace timer. The RPC is enqueued synchronously onto the peer's reliable
@@ -1423,8 +1642,16 @@ func peer_ready(p_name: String, client_version: String) -> void:
 		# BEFORE any later attack event, so the joiner has the right weapon before it must animate one. The
 		# joiner's own just-spawned player carries the scene default already, so it needs no sync.
 		for existing in _players.get_children():
-			if existing is Player and existing.entity_id != peer_id and existing.equipped_weapon != null:
+			if not (existing is Player) or existing.entity_id == peer_id:
+				continue
+			if existing.equipped_weapon != null:
 				sync_weapon.rpc_id(peer_id, existing.entity_id, existing.equipped_weapon.display_name)
+			# Late-join CLASS sync rides the SAME loop (v0.10.0): a player who ran /class shows their chosen
+			# class on the joiner's sprite immediately, not the spawn-seeded default. Same targeted-sync
+			# spirit as sync_weapon, its own RPC (incl. the 0.5s spawn-race retry). The joiner's own player
+			# carries the scene/roster default, so it's skipped by the entity_id guard above.
+			if existing.player_class != null:
+				sync_class.rpc_id(peer_id, existing.entity_id, existing.player_class.display_name)
 	else:
 		# Symmetric with the version branch: host-side visibility before the refusal, so a full-server
 		# rejection shows in the host's log/console too (not just on the refused client's menu).
@@ -1477,3 +1704,20 @@ func sync_weapon(entity_id: int, weapon_name: String, is_retry: bool = false) ->
 	var weapon := GameManager.config.weapon_by_name(weapon_name)
 	if weapon != null:
 		player.set_weapon(weapon)
+
+
+## Host -> one late-joining client (v0.10.0). Adopt one existing player's CURRENT class so the joiner's
+## sprite shows it (not the spawn-seeded default). Byte-for-byte mirror of sync_weapon: host-authored
+## (authority) and TARGETED (no broadcast — existing peers already show it), resolves the class through
+## the shared roster and repaints via set_class, and a not-yet-replicated player node (the spawn race)
+## gets ONE deferred retry half a second later. No log line — silent state sync, like a join snap.
+@rpc("authority", "call_remote", "reliable")
+func sync_class(entity_id: int, class_display_name: String, is_retry: bool = false) -> void:
+	var player := _players.get_node_or_null(str(entity_id)) as Player
+	if player == null:
+		if not is_retry:
+			get_tree().create_timer(0.5).timeout.connect(sync_class.bind(entity_id, class_display_name, true))
+		return
+	var player_class := GameManager.config.class_by_name(class_display_name)
+	if player_class != null:
+		player.set_class(player_class)

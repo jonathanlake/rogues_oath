@@ -31,6 +31,17 @@ extends Node
 var _say_text: String = ""
 var _has_say: bool = false
 
+# Slash-command harness (cmd=/cmdwait=, v0.10.0): feed ONE dev-command string through the REAL
+# game_log._on_input_submitted() entry point — the SAME method a typed "/w longsword 3" hits — so the
+# scripted run exercises the genuine greenfield interception/parse/clear path (the "/" detection, the
+# submit_intent("dev_command", ...), the focus release), NOT a bypass around it. Works from EITHER role;
+# the value may contain spaces (a quoted arg is ONE token), so it's parsed by prefix like say=. Fires at
+# the role anchor by default (mirrors say= timing); cmdwait= overrides. The leading "/" must be included
+# (that's what game_log detects), e.g. `cmd=/w longsword 3` or `cmd=/god` or `cmd=/class knight`.
+var _cmd_text: String = ""
+var _has_cmd: bool = false
+var _cmd_wait_sec: float = -1.0
+
 # Scripted-move harness (move=/movedelay=/movewait=), stashed like say so it survives the scene
 # change and can be anchored to the same events (host: after scene change; client: after connect).
 # The moves go through the REAL pipe (submit_intent), DELIBERATELY bypassing MoveInput — that
@@ -207,6 +218,11 @@ func _ready() -> void:
 		elif arg.begins_with("say="):
 			_say_text = arg.trim_prefix("say=")
 			_has_say = true
+		elif arg.begins_with("cmdwait="):
+			_cmd_wait_sec = arg.trim_prefix("cmdwait=").to_float()
+		elif arg.begins_with("cmd="):
+			_cmd_text = arg.trim_prefix("cmd=")
+			_has_cmd = true
 		elif arg.begins_with("name="):
 			name_text = arg.trim_prefix("name=")
 			has_name = true
@@ -394,6 +410,10 @@ func _on_autostart_connected() -> void:
 func _schedule_input_knobs(default_anchor_sec: float) -> void:
 	if _has_say:
 		_schedule_say(_say_text, default_anchor_sec)
+	# cmd= mirrors say= timing (fires at the role anchor) so a dev command lands after both peers have
+	# spawned; cmdwait= overrides for staggering (e.g. /w then a later bump to feel the new damage).
+	if _has_cmd:
+		_schedule_cmd(_cmd_text, _cmd_wait_sec if _cmd_wait_sec >= 0.0 else default_anchor_sec)
 	# movewait= overrides the anchor for the move/tap/click knobs; unset, they share the anchor.
 	var move_anchor := _move_wait_sec if _move_wait_sec >= 0.0 else default_anchor_sec
 	if _has_move:
@@ -423,6 +443,22 @@ func _schedule_input_knobs(default_anchor_sec: float) -> void:
 func _schedule_say(text: String, delay_sec: float) -> void:
 	await get_tree().create_timer(delay_sec).timeout
 	NetEvents.submit_intent("chat", {"text": text})
+
+
+## Fire one dev command through the REAL game_log entry point after a delay (v0.10.0). Resolves the
+## GameLog node (added under Main in main.gd's _ready — /root/Main/GameLog), then calls its
+## _on_input_submitted() with the raw string — the SAME method a typed submission hits — so the "/"
+## interception, the parse-to-{cmd,args}, the submit_intent("dev_command", ...), and the focus release
+## all run under test, not a bypass. Works identically on host and client (submit_intent is the one
+## public entry point; game_log's "/help" branch stays local). A missing node warns rather than crashes.
+func _schedule_cmd(text: String, delay_sec: float) -> void:
+	await get_tree().create_timer(delay_sec).timeout
+	var game_log := get_tree().root.get_node_or_null("Main/GameLog")
+	if game_log == null:
+		push_warning("[Debug] cmd=: GameLog node not found (Main/GameLog) — command dropped")
+		return
+	print("[Debug] cmd: submitting '%s' through game_log" % text)
+	game_log._on_input_submitted(text)
 
 
 ## Fire the scripted move list through the REAL pipe (submit_intent) after an initial delay, one
