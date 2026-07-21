@@ -550,6 +550,10 @@ func _handle_attack_event(event: Dictionary) -> void:
 	var target_id := int(data.get("target_id", 0))
 	var kind := str(data.get("kind", ""))
 	var whiff := bool(data.get("whiff", false))
+	# Backstab feedback (v0.11.0, §2.3.4 — a distinct outcome gets a distinct cue). The referee tags a
+	# rogue's dagger-from-behind hit; every peer reads the same event `tags` and plays a "!"-suffixed
+	# popup, a pitched-up impact, and (in game_log) the backstab log line. Absent on every other hit.
+	var backstab := (data.get("tags", []) as Array).has("backstab")
 	var attacker := _node_for_peer(attacker_id)
 	var target := _node_for_peer(target_id)
 	# Direction of the strike, for the attacker's directional lunge. Prefer the two nodes' tiles; on
@@ -604,7 +608,9 @@ func _handle_attack_event(event: Dictionary) -> void:
 			# dir passed through so the victim's slash streak reads directional (v0.6.3), derived
 			# per-peer from this same event — no new wire data. SKIPPED for a godded no-op.
 			if not godded:
-				target.play_hurt(dir)
+				# On a backstab the impact SFX is pitched UP a step (placeholder audio grammar, §2.3.4)
+				# so the sharper hit is audibly distinct from a normal blow — same stream, per-peer local.
+				target.play_hurt(dir, 1.5 if backstab else 1.0)
 			# HP readout still refreshes on a godded hit (harmless — the value is unchanged).
 			target.set_hp_display(int(data.get("hp_after", 0)), int(data.get("target_max", 0)))
 			# Floating combat text (v0.10.0, §2.3.4): red "-N" over the struck tile, or grey "0" when
@@ -616,7 +622,10 @@ func _handle_attack_event(event: Dictionary) -> void:
 				# id-sign invariant (players POSITIVE ids, monsters NEGATIVE): target_id < 0 ⇒ a monster
 				# was struck (a player→enemy hit) → white; target_id > 0 ⇒ a player took the hit → red.
 				var hit_color := DamagePopup.PLAYER_HIT_COLOR if target_id < 0 else DamagePopup.DAMAGE_COLOR
-				_fx.damage_popup("-%d" % int(data.get("damage", 0)), hit_color, target.tile)
+				# A backstab reads "-N!" (the "!" is the distinct-outcome tell, §2.3.4) in the same white.
+				var hit_damage := int(data.get("damage", 0))
+				var hit_text := ("-%d!" % hit_damage) if backstab else ("-%d" % hit_damage)
+				_fx.damage_popup(hit_text, hit_color, target.tile)
 		# LOCAL-only red hit vignette (v0.6.3 juice): fires ONLY when it's OUR OWN avatar being struck
 		# (landed — we're already past the whiff branch). Suppressed on a godded no-op (no damage taken).
 		# Pure local presentation off the same attack event every peer receives.

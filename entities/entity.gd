@@ -182,8 +182,12 @@ func play_attack(dir: Vector2i, with_sound := true) -> void:
 ## Never confusable with the attacker's swing or a rejected commit — this is "I got hit." `dir` is
 ## the 8-way step from attacker toward this victim (main derives it per-peer from the same event);
 ## Vector2i.ZERO leaves the streak on its default diagonal.
-func play_hurt(dir: Vector2i = Vector2i.ZERO) -> void:
+## `pitch` scales the impact SFX playback (v0.11.0): 1.0 is the normal thud; a backstab passes it up a
+## step (main.gd) so the sharper hit is audibly distinct (§2.3.4), reusing this one stream rather than a
+## second clip. Set every call (default 1.0 restores normal pitch), so a prior pitched hit never lingers.
+func play_hurt(dir: Vector2i = Vector2i.ZERO, pitch: float = 1.0) -> void:
 	_flash(_HURT_FLASH_COLOR)
+	_hit_audio.pitch_scale = pitch
 	_hit_audio.play()
 	if _slash_fx != null:
 		_slash_fx.show_streak(dir)

@@ -147,14 +147,40 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 	# is idempotent-by-design — each hostile action refreshes the same wall-clock deadline.
 	if _pace != null and attacker_id > 0:
 		_pace.report_hostile_action(attacker_id)
+	# Passive modify_damage dispatch (v0.11.0). AFTER the god-check (a godded no-op returned above and
+	# runs NO passives), BEFORE the HP mutation. Run the ATTACKER's passives SEQUENTIALLY in array order
+	# — each receives the previous one's output amount (ctx.amount rewritten between calls) — and collect
+	# any feedback tags (e.g. "backstab") for the event. Host-only (this referee is inert on clients); a
+	# monster or a no-passive attacker yields an empty list and skips the whole block. ctx is kept for
+	# the after_attack pass below (same dict, now carrying the final amount).
+	var tags: Array = []
+	var passives := _passives_of(attacker)
+	var ctx: Dictionary = {}
+	if not passives.is_empty():
+		ctx = _build_damage_ctx(attacker, attacker_id, target, target_id, amount, kind)
+		for p in passives:
+			ctx["amount"] = p.modify_damage(ctx)
+		# Re-floor after the chain (defense-in-depth, mirroring the entry floor): the maxi(0, hp-amount)
+		# below has no ceiling, so a buggy passive returning a negative must never heal a target here.
+		amount = maxi(0, int(ctx["amount"]))
+		tags = ctx["tags"]
 	var new_hp: int = maxi(0, int(_hp[target_id]) - amount)
 	_hp[target_id] = new_hp
 	var target_name := _name_of(target)
 	# Author the hit on the shared pipe (as_peer = attacker, positive for a player or negative for a
 	# monster — negative ids are fine on the wire). Posted BEFORE any `died` so hp_after 0 lands first.
-	var attack_data := _build_attack_data(attacker, attacker_id, target, target_id, amount, new_hp, kind, duration_sec, false)
+	# `tags` rides the event only when non-empty (see _build_attack_data), so a plain hit is unchanged.
+	var attack_data := _build_attack_data(attacker, attacker_id, target, target_id, amount, new_hp, kind, duration_sec, false, tags)
 	NetEvents.post_event("attack", attack_data, attacker_id)
-	if new_hp <= 0:
+	var died := new_hp <= 0
+	# Passive after_attack dispatch (v0.11.0): post-broadcast observation with the lethal flag. Fired
+	# BEFORE _kill_entity so the target node is still valid for a passive to read; still fully
+	# synchronous + host-only. Read-only per the PassiveAbility contract — the `attack` event is out.
+	if not passives.is_empty():
+		ctx["died"] = died
+		for p in passives:
+			p.after_attack(ctx)
+	if died:
 		_kill_entity(target_id, target_name)
 		return true
 	return false
@@ -187,6 +213,16 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 	if _pace != null and attacker_id > 0:
 		_pace.report_hostile_action(attacker_id)
 	var attacker := _node_of_id(attacker_id)
+	# Server facing at wind-up ENTRY (v0.11.0): the attacker turns to face its committed target tile —
+	# a mid-windup monster faces its victim and so can't be "backstabbed sideways" during the telegraph.
+	# Sign-vector from the attacker's authoritative tile toward the target tile; set through MoveReferee
+	# (it owns _facing). A ZERO dir (attacker already ON the tile — impossible for a real windup) no-ops.
+	var att_tile: Vector2i = _move_referee.tile_of_entity(attacker_id)
+	_move_referee.set_facing(attacker_id, (target_tile - att_tile).sign())
+	# before_attack observation seam (v0.11.0), fired at wind-up ENTRY before any stamp/telegraph. The
+	# target is whatever hostile currently occupies the committed tile (best-effort — the real occupant
+	# is re-resolved at strike time); a monster/no-passive attacker no-ops. Read-only per the contract.
+	fire_before_attack(attacker_id, _move_referee.entity_at(target_tile), "windup")
 	var windup_sec := _windup_duration_of(attacker)
 	if GameManager.debug_windup_override_sec > 0.0:
 		windup_sec = GameManager.debug_windup_override_sec
@@ -248,6 +284,50 @@ func bump_duration_of(node: Node) -> float:
 	return _recovery_duration_of(node)
 
 
+## Fire the ATTACKER's before_attack passives (v0.11.0 read-only observation seam). Host-only public
+## entry: MoveReferee._begin_bump calls it at a player bump's entry; wind_up calls it at wind-up entry.
+## Resolves the attacker's passive list and runs each hook with a read-only ctx; a no-passive attacker
+## (or a monster, or an unresolved node) no-ops. The contract (PassiveAbility.before_attack) forbids
+## this hook cancelling or mutating the attack — it observes/arms only, so nothing here touches state.
+func fire_before_attack(attacker_id: int, target_id: int, kind: String) -> void:
+	# No resolvable target (a wind-up whose tile has no occupant at entry passes target_id 0): skip the
+	# hook rather than hand every passive a null target to guard against — defense-in-depth for the
+	# read-only contract. A targetless swing has nothing for an observation hook to observe.
+	if target_id == 0:
+		return
+	var attacker := _node_of_id(attacker_id)
+	var passives := _passives_of(attacker)
+	if passives.is_empty():
+		return
+	var target := _node_of_id(target_id)
+	var ctx := {
+		"attacker": attacker,
+		"target": target,
+		"attacker_id": attacker_id,
+		"target_id": target_id,
+		"kind": kind,
+		"weapon": attacker.equipped_weapon if attacker is Entity else null,
+		"attacker_facing": _move_referee.facing_of(attacker_id),
+		"target_facing": _move_referee.facing_of(target_id),
+	}
+	for p in passives:
+		p.before_attack(ctx)
+
+
+## Positional BEHIND-ARC test (v0.11.0), a pure-math static so any passive (or future system) can reuse
+## it (Jeff's ask) — Backstab is the first caller. `behind` = the approach vector (sign-vector from the
+## attacker's tile toward the target's tile) points the SAME rough way the target faces: dot > 0 STRICTLY.
+## That is the classic wide backstab arc — the rear 3 octants of the defender's 8-way facing; dot == 0 is
+## a FLANK (not behind), and a ZERO target_facing (never-moved: faces nowhere) is never a backstab.
+## ADJACENCY ASSUMPTION: all combat is melee-adjacent today, so approach is a clean 8-way sign; the parked
+## ranged pass (Q6) revisits this with a normalized delta. Vector2i has no dot(), so it's spelled out.
+static func is_attack_from_behind(attacker_tile: Vector2i, target_tile: Vector2i, target_facing: Vector2i) -> bool:
+	if target_facing == Vector2i.ZERO:
+		return false
+	var approach := (target_tile - attacker_tile).sign()
+	return approach.x * target_facing.x + approach.y * target_facing.y > 0
+
+
 # ── Private methods ───────────────────────────────────────────────────────────
 
 ## Build the shared `attack` event dict for a LANDED or GODDED hit (v0.10.1 dedup) — the ONE construction
@@ -257,7 +337,8 @@ func bump_duration_of(node: Node) -> float:
 ## bare-handed player, the training dummy) stamps no field. `godded` adds the flag only when true, so a
 ## normal hit's dict is byte-identical to the pre-dedup literal.
 func _build_attack_data(attacker: Node, attacker_id: int, target: Node, target_id: int,
-		damage: int, hp_after: int, kind: String, duration_sec: float, godded: bool) -> Dictionary:
+		damage: int, hp_after: int, kind: String, duration_sec: float, godded: bool,
+		tags: Array = []) -> Dictionary:
 	var data := {
 		"attacker_id": attacker_id,
 		"attacker_name": _name_of(attacker),
@@ -272,6 +353,13 @@ func _build_attack_data(attacker: Node, attacker_id: int, target: Node, target_i
 	}
 	if godded:
 		data["godded"] = true
+	# Passive feedback tags (v0.11.0) ride the event ONLY when non-empty — a plain hit's dict stays
+	# byte-identical to the pre-tags shape (same present-only style as `godded`/`weapon`). Clients read
+	# these for the distinct per-outcome cue (§2.3.4), e.g. the backstab log line / popup / pitched sound.
+	if not tags.is_empty():
+		# duplicate(): the caller's ctx["tags"] stays live through the after_attack pass — a future
+		# after_attack passive appending there must never mutate the already-posted event's array.
+		data["tags"] = tags.duplicate()
 	if attacker is Entity and attacker.equipped_weapon != null:
 		data["weapon"] = attacker.equipped_weapon.display_name
 	return data
@@ -358,6 +446,47 @@ func _on_entity_exiting(node: Node) -> void:
 	if node is Entity:
 		_hp.erase(node.entity_id)
 		_godded.erase(node.entity_id)
+
+
+## Null-safe passive accessor (v0.11.0): the ATTACKER's PassiveAbility list, or [] for anything without
+## one — a monster, the training dummy, an unresolved node. Duck-typed via Object.get so it never
+## crashes on a node lacking `player_class` (get returns null for a missing property); a Player exposes
+## player_class (its PlayerClass), whose `passives` array is the list. Monsters can own passives later by
+## feeding this same accessor from MonsterType — the dispatch sites don't care where the array comes from.
+func _passives_of(node) -> Array:
+	if node == null:
+		return []
+	var pc = node.get("player_class")
+	if pc == null:
+		return []
+	var passives = pc.get("passives")
+	return passives if passives != null else []
+
+
+## Build the modify_damage / after_attack context dict (v0.11.0). Authoritative throughout: tiles and
+## facing come from MoveReferee (server truth), NEVER a node's rendered `tile`/sprite flip. attack_dir is
+## the sign-vector from the attacker's tile toward the target's — for a bump the attacker's facing was
+## just set to this same dir by _begin_bump, while target_facing is the DEFENDER's own last-committed
+## facing (what a behind-arc check reads). weapon is the attacker's equipped WeaponType (or null). `tags`
+## starts empty for a passive to append to. `amount` is rewritten in place as the modify_damage chain runs.
+func _build_damage_ctx(attacker: Node, attacker_id: int, target: Node, target_id: int, amount: int, kind: String) -> Dictionary:
+	var attacker_tile: Vector2i = _move_referee.tile_of_entity(attacker_id)
+	var target_tile: Vector2i = _move_referee.tile_of_entity(target_id)
+	return {
+		"amount": amount,
+		"attacker": attacker,
+		"target": target,
+		"attacker_id": attacker_id,
+		"target_id": target_id,
+		"kind": kind,
+		"weapon": attacker.equipped_weapon if attacker is Entity else null,
+		"attacker_tile": attacker_tile,
+		"target_tile": target_tile,
+		"attacker_facing": _move_referee.facing_of(attacker_id),
+		"target_facing": _move_referee.facing_of(target_id),
+		"attack_dir": (target_tile - attacker_tile).sign(),
+		"tags": [],
+	}
 
 
 ## The id -> node resolver over this referee's own containers (mirror of MoveReferee's). Positive is

@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="Backstab" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://resources/passives/backstab.gd" id="1_backstab"]
+[ext_resource type="Resource" uid="uid://c2yq6v8kh4mxr" path="res://resources/weapons/dagger.tres" id="2_dagger"]
+
+[resource]
+script = ExtResource("1_backstab")
+damage_multiplier = 2.0
+required_weapon = ExtResource("2_dagger")

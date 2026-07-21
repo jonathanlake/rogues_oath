@@ -27,3 +27,11 @@ extends Resource
 ## is derived from this × WorldGrid.TILE_PX (Player.set_class). Matches the historical per-spawn-slot
 ## tiles: rogue (3,0), knight (0,1), wizard (0,4), barbarian (0,3), priest (1,2), ranger (2,0).
 @export var atlas_coords: Vector2i = Vector2i.ZERO
+
+## The class's COMBAT PASSIVES (v0.11.0, Jeff's class-identity framework). CombatReferee runs the
+## ATTACKER's list through the PassiveAbility hooks at the fixed combat seams (host-only, server-
+## authoritative — see resources/passive_ability.gd). Order matters: modify_damage chains in ARRAY
+## order, each passive receiving the previous one's output. Empty for a class with no passives (the
+## default) — the rogue overrides it with backstab.tres. A non-coder grants a class an ability by
+## dropping a PassiveAbility .tres into this array, no code edit.
+@export var passives: Array[PassiveAbility] = []

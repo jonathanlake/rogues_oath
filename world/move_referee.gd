@@ -85,6 +85,17 @@ var _reserved: Dictionary = {}
 # branch's mechanics are designed. Disconnect is the SOLE cancel path (_on_player_exiting).
 var _pending: Dictionary = {}
 
+# Authoritative 8-way FACING: entity_id -> Vector2i unit/sign direction the entity currently faces.
+# Server-side truth (v0.11.0, DESIGN §2.3 backstab prerequisite) — presentation's sprite flip is
+# still derived per-peer and unchanged; this is the facing a passive (backstab) reads to decide a
+# behind-arc hit. MUTATION RULES (explicit, so a passive author can rely on them): facing changes
+# ONLY on an ACCEPTED verdict — an accepted glide (the glide dir), an executed bump (sign-vector
+# toward the struck tile), and a monster's wind-up ENTRY (set by CombatReferee via set_facing, toward
+# its target). A REJECTED intent — including 1a's silent `occupied_hostile` reject — NEVER touches
+# facing, so no player can face-fish by spam-bumping. Spawn facing is ABSENT (facing_of → ZERO) BY
+# DESIGN: a never-moved entity has no back to stab; its first accepted action sets a real facing.
+# Cleared wholesale on death (clear_entity) and on container exit, like every other per-entity record.
+var _facing: Dictionary = {}
 # Monotonic per-glide id, stamped into each _gliding record so a completion timer can tell "my"
 # glide from a later one for the same peer (disconnect+rejoin, or any superseding glide).
 var _next_token: int = 0
@@ -187,6 +198,23 @@ func tile_of_entity(entity_id: int) -> Vector2i:
 	return _tile_of_peer(entity_id)
 
 
+## Host-only facing setter (v0.11.0). The ONLY external writer is CombatReferee, at a monster's
+## wind-up ENTRY (toward its target) — a mid-windup monster faces its victim and can't be "backstabbed
+## sideways" during the telegraph. The referee's own glide/bump accepts write _facing directly (below).
+## `dir` is a sign-vector; ZERO would erase the facing, so callers pass a real direction (wind-up always has one).
+func set_facing(entity_id: int, dir: Vector2i) -> void:
+	if dir == Vector2i.ZERO:
+		return
+	_facing[entity_id] = dir
+
+
+## The authoritative 8-way facing for an entity, or Vector2i.ZERO if unknown (never moved / untracked /
+## despawned). ZERO is the deliberate "faces nowhere" state — a backstab check treats a ZERO defender
+## facing as un-backstabbable (a never-moved entity has no back). Read host-side by the passive dispatch.
+func facing_of(entity_id: int) -> Vector2i:
+	return _facing.get(entity_id, Vector2i.ZERO)
+
+
 ## Brain accessor: every player's authoritative tile (occupancy values > 0). Under conga timing a
 ## gliding player's entry sits at its DESTINATION, so a chaser paths toward where the player is
 ## heading — the honest read of the Commitment Rule (you can't dodge to a tile you've committed off).
@@ -252,6 +280,7 @@ func commit_in_place(entity_id: int, duration_sec: float) -> bool:
 func clear_entity(entity_id: int) -> void:
 	_gliding.erase(entity_id)
 	_pending.erase(entity_id)
+	_facing.erase(entity_id)
 	_erase_by_value(_occupied, entity_id)
 	_erase_by_value(_reserved, entity_id)
 
@@ -359,7 +388,7 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 		# brain's adjacency branch fires before any step toward a player could be chosen — this is
 		# the structural backstop that keeps a monster intent from ever dealing bump damage).
 		if not is_pipelined and sender_peer_id > 0 and blocker_is_hostile:
-			return _begin_bump(sender_peer_id, mover, occupant_id, occupant)
+			return _begin_bump(sender_peer_id, mover, occupant_id, occupant, dir)
 		if blocker_is_hostile:
 			return { "ok": false, "reason": "occupied_hostile" }
 		return { "ok": false, "reason": "occupied" }
@@ -383,6 +412,8 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	if is_pipelined:
 		_occupied.erase(from)
 		_occupied[to] = sender_peer_id
+		# Accepted glide → face the glide direction (v0.11.0 facing, mutation rule: accepted verdict only).
+		_facing[sender_peer_id] = dir
 		# Both stamped windows travel in the slot: slide_sec for the deferred broadcast/tween,
 		# busy_sec for the completion timer the promotion arms (the action window carries through the pipe).
 		_pending[sender_peer_id] = { "from": from, "to": to, "slide_sec": slide_sec, "busy_sec": busy_sec }
@@ -408,6 +439,9 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	var token := _next_token
 	_next_token += 1
 	_gliding[sender_peer_id] = { "from": from, "to": to, "token": token }
+	# Accepted glide → face the glide direction (v0.11.0 facing, mutation rule: accepted verdict only;
+	# set after the AoO scan so a mover killed there — cleared by clear_entity — never leaves a facing).
+	_facing[sender_peer_id] = dir
 	if GameManager.config.origin_frees_at_glide_start:
 		# Conga: the origin frees immediately; the mover claims the destination now.
 		_occupied.erase(from)
@@ -476,7 +510,18 @@ func _slide_fraction() -> float:
 ## which promotes a differently-directed intent committed mid-swing (swing-then-move) or erases the
 ## record. Damage/duration come from the combat referee (stats live in ONE place); `attacker` is
 ## untyped so the reads duck-type across player (the only M3 bumper) and a future monster bumper.
-func _begin_bump(attacker_id: int, attacker, target_id: int, target) -> Dictionary:
+func _begin_bump(attacker_id: int, attacker, target_id: int, target, dir: Vector2i) -> Dictionary:
+	# Executed bump → the attacker faces the struck tile (v0.11.0 facing, mutation rule: accepted
+	# verdict only). `dir` is the sign-vector toward the target the validator already resolved (the
+	# bump IS a move-into-hostile, so dir == sign toward target). Set BEFORE apply_damage so a passive
+	# reading the ATTACKER's facing sees the post-swing direction; the DEFENDER's facing is untouched
+	# here (a bump never turns the victim), so backstab evaluates the victim's own last-committed facing.
+	_facing[attacker_id] = dir
+	# before_attack observation seam (v0.11.0): fire the attacker's passives' read-only pre-commit hook
+	# at bump ENTRY, before any damage math. Host-only (this referee is inert on clients). Delegated to
+	# CombatReferee, which owns passive resolution + the ctx build; a no-passive attacker (or a monster) no-ops.
+	if _combat != null:
+		_combat.fire_before_attack(attacker_id, target_id, "bump")
 	# Anti-cheese, ordered FIRST (Tactical Zones v1, §2.8.7): a bump is the ONLY way a player attacks in
 	# M3, and _begin_bump is where that attack's own window (bump_duration_of, below) is stamped. Report
 	# the hostile action to the pace resolver BEFORE that stamp so the triggering swing is ITSELF a
@@ -644,6 +689,7 @@ func _on_entity_exiting(node: Node) -> void:
 	# discards the held step; _erase_by_value(_occupied) below already reverts its pre-claimed
 	# destination — a pipelined mover's single _occupied entry IS that dest (swapped at accept).
 	_pending.erase(entity_id)
+	_facing.erase(entity_id)
 	_erase_by_value(_occupied, entity_id)
 	_erase_by_value(_reserved, entity_id)
 

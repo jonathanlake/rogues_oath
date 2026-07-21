@@ -249,6 +249,17 @@ func _log_attack(data: Dictionary) -> void:
 		add_line("%s hits %s — no effect (god)." % [attacker_name, target_name])
 		return
 	var damage := int(data.get("damage", 0))
+	# Backstab (v0.11.0): a DISTINCT line before the free/normal branches (§2.3.4 — never confusable with
+	# a plain hit), driven by the "backstab" tag the referee stamped. Same running-HP readout as a normal
+	# hit, with "backstabs" + a "!" carrying the distinct outcome. On every peer (the tag rides the event).
+	if (data.get("tags", []) as Array).has("backstab"):
+		# A free (AoO) backstab keeps its free-ness visible — both outcomes are distinct cues (§2.3.4),
+		# so neither may swallow the other.
+		var free_prefix := "free-attack " if str(data.get("kind", "")) == "free" else ""
+		add_line("%s %sbackstabs %s for %d! (%d/%d)." % [
+			attacker_name, free_prefix, target_name, damage,
+			int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
+		return
 	if str(data.get("kind", "")) == "free":
 		add_line("%s gets a free attack on %s — %d damage." % [attacker_name, target_name, damage])
 		return

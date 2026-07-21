@@ -1,8 +1,10 @@
-[gd_resource type="Resource" script_class="PlayerClass" format=3]
+[gd_resource type="Resource" script_class="PlayerClass" load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://resources/player_class.gd" id="1_class"]
+[ext_resource type="Resource" path="res://resources/passives/backstab.tres" id="2_backstab"]
 
 [resource]
 script = ExtResource("1_class")
 display_name = "rogue"
 atlas_coords = Vector2i(3, 0)
+passives = Array[PassiveAbility]([ExtResource("2_backstab")])

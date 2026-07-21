@@ -540,6 +540,27 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.11.0 (2026-07-21)** — Combat events + Backstab (Jeff's class-identity spec, overnight
+  batch chunk 4). Three layers: (1) SERVER-SIDE 8-WAY FACING — MoveReferee now tracks an
+  authoritative facing per entity, written ONLY on accepted verdicts (accepted glide,
+  executed bump, monster wind-up entry; rejects never mutate — no face-fishing; spawn = ZERO
+  by design: a never-moved entity has no back to stab). Presentation sprite-flip unchanged;
+  nothing new crosses the wire. (2) PASSIVE FRAMEWORK — `PassiveAbility` Resource with three
+  combat-event hooks: `before_attack` (read-only observation), `modify_damage` (the
+  BeforeDamageApplied seam: sequential chain in class-array order, host-only, may append
+  feedback `tags` that ride the attack event when non-empty), `after_attack` (post-broadcast,
+  `died` flag). PlayerClass gains a `passives` array; dispatch is duck-typed and null-safe
+  (monsters can join later via MonsterType). The combat system exposes information — tiles,
+  facings, weapon, attack_dir — and passives decide what to do with it; a reusable
+  `is_attack_from_behind()` helper (rear-3-octant arc, strict dot > 0) is the first shared
+  positional predicate. (3) BACKSTAB — the Rogue's first passive (`backstab.tres`): dagger
+  equipped (resource_path match) + attack from the defender's rear arc → damage ×
+  `damage_multiplier` (2.0), tagged "backstab" with a distinct log line ("X backstabs Y for
+  N!"), a white "-N!" popup, and a pitched-up hit sound (§2.3.4). Verified two-instance:
+  rear dagger = 4 + tag on players AND a moved/attacking goblin; frontal dagger = 2 untagged;
+  rear LONGSWORD = 5 untagged (weapon gate); never-moved dummy untagged (spawn-ZERO rule).
+  Design question parked for Jeff: should idle/never-moved monsters be backstabbable
+  (sneak-attack flavor) via a spawn-facing default?
 - **v0.10.4 (2026-07-21)** — Goblins route around blockers + ghost-cam (overnight batch
   chunk 3). Monster pathing now feeds sibling-occupied tiles into A* as temp-solids
   (`MoveReferee.monster_tiles` → `find_path(avoid)`), with a walls-only fallback so a truly
