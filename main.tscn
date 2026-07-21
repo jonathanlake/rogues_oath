@@ -8,6 +8,8 @@
 [ext_resource type="AudioStream" uid="uid://bgobemuhppy00" path="res://assets/audio/bonk.wav" id="5_bonk"]
 [ext_resource type="AudioStream" uid="uid://dflvxqnrggpxg" path="res://assets/audio/impact.wav" id="6_impact"]
 [ext_resource type="Script" path="res://world/range_overlay.gd" id="8_range"]
+[ext_resource type="Script" uid="uid://7tokri5wtueo" path="res://ui/fx_layer.gd" id="9_fx"]
+[ext_resource type="Script" uid="uid://djbhj87fidunw" path="res://debug/dev_commands.gd" id="10_devcmd"]
 
 [node name="Main" type="Node2D" unique_id=931510869]
 script = ExtResource("1_main")
@@ -33,6 +35,9 @@ script = ExtResource("8_range")
 
 [node name="Monsters" type="Node2D" parent="." unique_id=312358483]
 
+[node name="FxLayer" type="Node2D" parent="." unique_id=312358484]
+script = ExtResource("9_fx")
+
 [node name="MoveReferee" type="Node" parent="." unique_id=1205671277]
 script = ExtResource("2_referee")
 
@@ -41,6 +46,9 @@ script = ExtResource("4_combat")
 
 [node name="PaceReferee" type="Node" parent="." unique_id=424015746]
 script = ExtResource("7_pace")
+
+[node name="DevCommands" type="Node" parent="." unique_id=424015747]
+script = ExtResource("10_devcmd")
 
 [node name="DeathSfx" type="AudioStreamPlayer" parent="." unique_id=2085852180]
 stream = ExtResource("6_impact")

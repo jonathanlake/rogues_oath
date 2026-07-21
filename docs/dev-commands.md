@@ -13,11 +13,11 @@ restart restores every authored value (no command saves to disk).
 
 | Command | Effect |
 |---|---|
-| `/w <weapon> [field] <value\|reset>` | Tune a weapon. Field ∈ `damage`, `attack_beats`, `windup_beats`; omitted field = `damage`. `reset` restores all three from disk. |
+| `/w <weapon> [field] <value\|reset>` | Tune a weapon. Field ∈ `damage` (0–999), `attack_beats` (0.05–30), `windup_beats` (0–30); omitted field = `damage`. Out-of-range values are rejected. `reset` restores all three from disk. |
 | `/<weapon> <value>` | Shorthand for `/w <weapon> damage <value>` (e.g. `/longsword 5`). The command table wins over this alias, so a weapon named like a command is only reachable via `/w`. |
-| `/m <monster> <field> <value\|reset>` | Tune a monster type. Field ∈ `max_hp`, `aggro_range_tiles`, `tactical_radius_tiles`, `recovery_beats`. `reset` restores all four. |
+| `/m <monster> <field> <value\|reset>` | Tune a monster type. Field ∈ `max_hp` (1–99999), `aggro_range_tiles` (0–30), `tactical_radius_tiles` (0–30), `recovery_beats` (0–30). Out-of-range values are rejected. `reset` restores all four. |
 | `/god` | Toggle **your own** invulnerability. A hit on a godded target resolves as a visible no-op (grey `0` popup + "no effect (god)" log line), never a silent block. Cleared on disconnect / despawn / F5 respawn. |
-| `/class <name>` | Set **your own** class (sprite today, stats later). `name` ∈ `rogue`, `knight`, `wizard`, `barbarian`, `priest`, `ranger`. Broadcasts to every peer; late joiners sync via `sync_class`. |
+| `/class <name>` | Set **your own** class (sprite today, stats later). `name` ∈ `rogue`, `knight`, `wizard`, `barbarian`, `priest`, `ranger`. Broadcasts to every peer; late joiners sync via `sync_player_field`. Reverts to the slot default on F5 respawn. |
 | `/help` | Print the command list (local only — never crosses the wire). |
 
 ## Resolution notes

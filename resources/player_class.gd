@@ -12,13 +12,13 @@ extends Resource
 ## every save, so the defaults here ARE part of the authored surface. The six shipped classes each
 ## override both fields, so the defaults are just the safe empty state for a fresh PlayerClass.
 ##
-## Replication: the class is NEVER streamed as a Resource — the class_changed event and the sync_class
+## Replication: the class is NEVER streamed as a Resource — the class_changed event and the sync_player_field
 ## RPC (main.gd) carry only its display_name, and every peer resolves the same .tres through
 ## GameConfig.class_by_name (the roster is the one authoring site, mirroring weapon_by_name). So a
 ## /class change and a late-join snap both repaint from an authored file, host-authoritative.
 
 ## Machine + display name for this class ("rogue", "knight", …). LOWERCASE and one-word: it doubles as
-## the identity everywhere — the /class token, the class_changed / sync_class `class` field, the
+## the identity everywhere — the /class token, the class_changed / sync_player_field `class` field, the
 ## GameConfig.class_roster lookup key, and the log line ("JON becomes a knight."). Kept lowercase so the
 ## slash-command token (lowercased client-side) resolves it and the log reads naturally.
 @export var display_name: String = ""

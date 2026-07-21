@@ -120,15 +120,27 @@ func _handle_slash_command(text: String) -> void:
 
 
 ## Render the /help command list LOCALLY (v0.10.0) — it never crosses the wire, so it appears only in the
-## asker's own log. Kept in sync BY HAND with the host command table (main.gd) and docs/dev-commands.md.
+## asker's own log. DERIVES from data (v0.10.1): the /w and /m field lists come from the shared GameManager
+## allowlist consts (the same ones the DevCommands validator enforces), and the class list from
+## GameConfig.class_roster display_names — so the help can never drift from what the host actually accepts.
 func _render_help() -> void:
 	add_line("Dev commands (any peer):")
-	add_line("  /w <weapon> [damage|attack_beats|windup_beats] <value|reset>")
+	add_line("  /w <weapon> [%s] <value|reset>" % "|".join(PackedStringArray(GameManager.DEV_WEAPON_FIELDS)))
 	add_line("  /<weapon> <value>  — shorthand for /w <weapon> damage <value>")
-	add_line("  /m <monster> <max_hp|aggro_range_tiles|tactical_radius_tiles|recovery_beats> <value|reset>")
+	add_line("  /m <monster> <%s> <value|reset>" % "|".join(PackedStringArray(GameManager.DEV_MONSTER_FIELDS)))
 	add_line("  /god  — toggle your own invulnerability")
-	add_line("  /class <rogue|knight|wizard|barbarian|priest|ranger>")
+	add_line("  /class <%s>" % "|".join(_dev_class_names()))
 	add_line("  /help  — this list")
+
+
+## The class-name list for /help, derived from GameConfig.class_roster display_names at render time (never
+## a hand-synced literal), so a class added/removed/renamed in the roster .tres shows correctly with no code edit.
+func _dev_class_names() -> PackedStringArray:
+	var names := PackedStringArray()
+	for c in GameManager.config.class_roster:
+		if c != null:
+			names.append(c.display_name)
+	return names
 
 
 # Editing ended (Esc, or the external world-click release from MoveInput). Release focus so the

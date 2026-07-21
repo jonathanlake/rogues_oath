@@ -15,8 +15,9 @@ extends Node
 ## them in playtest without code (DESIGN §2.2.7 / Part 4 Q4):
 ##  - origin_frees_at_glide_start: true = the departed tile frees the instant the glide STARTS
 ##    (conga-line); false = the origin stays held until the glide finishes.
-##  - bodies_block_corners: walls ALWAYS block a diagonal squeeze; this only governs whether an
-##    occupied flank tile also blocks it.
+##  - bodies_block_corners: a diagonal squeeze is refused for WALLS only when BOTH flanks are walls
+##    (a single wall corner may be rounded freely); this dial adds bodies — when true, EITHER
+##    occupied flank also blocks the diagonal.
 ##
 ## Pipelined next step (§2.2.5 amendment, v0.3.4): under origin_frees_at_glide_start, the referee
 ## holds at most ONE accepted-but-unbroadcast step per mover — adjudicated at accept, broadcast

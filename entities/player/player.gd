@@ -45,7 +45,7 @@ var spawn_index: int = 0
 ## This player's class (v0.10.0) — its appearance today, its stat identity in future. Seeded in _ready
 ## from GameConfig.class_roster[spawn_index % size] (the class resources ARE the old per-slot sprite
 ## table now), reassigned by the /class validator host-side and adopted on every peer via the
-## class_changed event / late-join sync_class RPC (main.gd) through set_class. Read by the late-join
+## class_changed event / late-join sync_player_field RPC (main.gd) through set_class. Read by the late-join
 ## loop to tell the joiner our current class. Presentation on the node; never adjudication truth.
 var player_class: PlayerClass = null
 
@@ -101,7 +101,7 @@ func is_hostile_to(other: Node) -> bool:
 
 
 ## Adopt a class (v0.10.0): update player_class AND repaint the sprite's region from its atlas_coords in
-## ONE place, so a /class change (via the class_changed event) or a late-join sync (sync_class) can never
+## ONE place, so a /class change (via the class_changed event) or a late-join sync (sync_player_field) can never
 ## leave the sprite showing the old class. FLIP PRESERVED: face_toward flips $Sprite2D via flip_h, which
 ## a region_rect assignment does not touch — but we capture + restore it explicitly so the invariant is
 ## documented at the site and survives any future region-set that might reset it. A null class is a no-op

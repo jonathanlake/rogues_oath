@@ -138,8 +138,9 @@ static var _astar: AStarGrid2D = null
 ## 8-way path from `from` to `to` over the walkable grid, as tile coords with path[0] == from.
 ## Empty array = unreachable (or an endpoint is a wall/out of bounds). `avoid` tiles are made
 ## temporarily solid for THIS query only (transient obstacles — other bodies), restored after.
-## Diagonals follow the corner rule's wall half exactly (DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES):
-## a squeeze between two corner-touching walls is never in a returned path.
+## Diagonals follow the corner rule's wall half exactly (AT_LEAST_ONE_WALKABLE — see _build_astar):
+## a diagonal is refused only when BOTH flanking orthogonals are walls, so a path may round a single
+## wall corner but never squeezes between two walls that touch only at a corner.
 static func find_path(from: Vector2i, to: Vector2i, avoid: Array[Vector2i] = []) -> Array[Vector2i]:
 	if not in_bounds(from) or not in_bounds(to):
 		return []

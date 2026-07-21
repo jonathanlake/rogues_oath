@@ -23,6 +23,16 @@ extends Node2D
 ## Fill for the tactical radius (monster_type.tactical_radius_tiles), drawn OVER the aggro fill.
 @export var tactical_color: Color = Color(1.0, 0.9, 0.1, 0.15)
 
+# The Monsters container, handed in by Main via set_monsters on EVERY peer (component pattern — the
+# overlay never reaches up to read a sibling). Null until wired; a null ref draws nothing.
+var _monsters: Node2D = null
+
+
+## Component wiring (v0.10.1): Main hands the overlay its Monsters container so it never reaches up to
+## read a sibling itself (CLAUDE.md: components never reach up). A null ref draws nothing.
+func set_monsters(monsters: Node2D) -> void:
+	_monsters = monsters
+
 
 func _ready() -> void:
 	# Layering comes from SIBLING ORDER in main.tscn — this node sits between $Room and $Players, so
@@ -47,10 +57,11 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _draw() -> void:
-	var monsters := get_parent().get_node_or_null("Monsters")
-	if monsters == null:
+	# Null until Main wires it (set_monsters), or if wiring is ever skipped — draw nothing (component
+	# pattern: the overlay no longer reaches up to find its sibling itself).
+	if _monsters == null:
 		return
-	for child in monsters.get_children():
+	for child in _monsters.get_children():
 		var monster := child as Monster
 		if monster == null or monster.monster_type == null:
 			continue
@@ -62,11 +73,24 @@ func _draw() -> void:
 ## Fill every tile within `radius` Chebyshev (king-move) tiles of `center` with `color`. radius <= 0
 ## draws nothing: 0 is the "unlimited" (aggro) / "no bubble" (tactical) sentinel on the authored
 ## fields, and flooding the whole room for "unlimited" would obscure everything — so it is skipped.
+##
+## A uniform-alpha Chebyshev disc IS a filled square spanning center ± radius, so this draws ONE rect
+## per radius instead of the old (2r+1)² per-tile loop — pixel-identical (the tiles tile edge-to-edge
+## with no intra-radius overlap, so a single fill blends the same as the per-tile fills did), and the
+## red-then-yellow layering still holds because it lives BETWEEN the two _draw_radius calls above. The
+## rect is CLAMPED to the room bounds (WorldGrid.size()) so a radius reaching past the edge doesn't
+## paint off-grid; an entirely off-grid disc draws nothing.
 func _draw_radius(center: Vector2i, radius: int, color: Color) -> void:
 	if radius <= 0:
 		return
+	var grid_size := WorldGrid.size()
+	var lo_x := maxi(center.x - radius, 0)
+	var lo_y := maxi(center.y - radius, 0)
+	var hi_x := mini(center.x + radius, grid_size.x - 1)
+	var hi_y := mini(center.y + radius, grid_size.y - 1)
+	if hi_x < lo_x or hi_y < lo_y:
+		return  # the disc is entirely off-grid
 	var half := Vector2(WorldGrid.TILE_PX, WorldGrid.TILE_PX) * 0.5
-	for dy in range(-radius, radius + 1):
-		for dx in range(-radius, radius + 1):
-			var top_left := WorldGrid.tile_to_world(center + Vector2i(dx, dy)) - half
-			draw_rect(Rect2(top_left, Vector2(WorldGrid.TILE_PX, WorldGrid.TILE_PX)), color)
+	var top_left := WorldGrid.tile_to_world(Vector2i(lo_x, lo_y)) - half
+	var span := Vector2((hi_x - lo_x + 1) * WorldGrid.TILE_PX, (hi_y - lo_y + 1) * WorldGrid.TILE_PX)
+	draw_rect(Rect2(top_left, span), color)

@@ -119,33 +119,23 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 	# (it would post a spurious event and could double-resolve death).
 	if not is_alive(target_id):
 		return false
+	# Defense-in-depth (v0.10.1 review fix 1): floor the incoming amount at 0 before any HP math. This
+	# pipe is DAMAGE-ONLY (§2.4 heals will be their own path); the maxi(0, hp - amount) floor below has
+	# NO ceiling, so a negative amount would otherwise heal a target above its max. The dev-command range
+	# clamps are the first line; this is the last, covering any future caller that computes a negative.
+	amount = maxi(0, amount)
+	var attacker := _node_of_id(attacker_id)
+	var target := _node_of_id(target_id)
 	# GOD MODE (v0.10.0): a godded target takes the hit as a visible NO-OP — post the attack event with
 	# damage 0, hp_after UNCHANGED, and a "godded" flag (the feedback rule forbids a silent block, §2.3.4:
-	# main.gd renders a grey "0" popup + play_hurt, game_log a "no effect (god)" line), then SKIP the HP
-	# mutation and _kill_entity and return false (not dead). One chokepoint covers bump / AoO / windup
-	# uniformly. The attacker's own commitment (its committed busy window, stamped BEFORE apply_damage)
-	# stands — this only cancels the DAMAGE, never an in-flight action (Commitment Rule intact). Placed
-	# before the forcing-window arming so a no-op hit on a godded target doesn't re-arm pace either.
+	# main.gd renders a grey "0" popup + the "no effect (god)" line — and SKIPS the hurt cues), then SKIP
+	# the HP mutation and _kill_entity and return false (not dead). One chokepoint covers bump / AoO /
+	# windup uniformly. The attacker's own commitment (its committed busy window, stamped BEFORE
+	# apply_damage) stands — this only cancels the DAMAGE, never an in-flight action (Commitment Rule
+	# intact). Placed before the forcing-window arming so a no-op hit on a godded target doesn't re-arm
+	# pace either. Reuses the ONE attack-dict builder with the damage=0 / godded overrides (no second literal).
 	if is_godded(target_id):
-		var g_attacker := _node_of_id(attacker_id)
-		var g_target := _node_of_id(target_id)
-		var godded_data := {
-			"attacker_id": attacker_id,
-			"attacker_name": _name_of(g_attacker),
-			"target_id": target_id,
-			"target_name": _name_of(g_target),
-			"damage": 0,
-			"hp_after": int(_hp[target_id]),
-			"target_max": _max_hp_of(g_target),
-			"kind": kind,
-			"whiff": false,
-			"duration_sec": duration_sec,
-			"godded": true,
-		}
-		# Weapon stamp on the no-op too (parity with the landed/whiff branches): a godded hit still
-		# animates the attacker's rig — the world reacts, the HP doesn't.
-		if g_attacker is Entity and g_attacker.equipped_weapon != null:
-			godded_data["weapon"] = g_attacker.equipped_weapon.display_name
+		var godded_data := _build_attack_data(attacker, attacker_id, target, target_id, 0, int(_hp[target_id]), kind, duration_sec, true)
 		NetEvents.post_event("attack", godded_data, attacker_id)
 		return false
 	# Forcing-window arming, uniform catch-all (Tactical Zones v1, §2.8.7, review #6). A PLAYER attacker
@@ -157,30 +147,12 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 	# is idempotent-by-design — each hostile action refreshes the same wall-clock deadline.
 	if _pace != null and attacker_id > 0:
 		_pace.report_hostile_action(attacker_id)
-	var attacker := _node_of_id(attacker_id)
-	var target := _node_of_id(target_id)
 	var new_hp: int = maxi(0, int(_hp[target_id]) - amount)
 	_hp[target_id] = new_hp
 	var target_name := _name_of(target)
 	# Author the hit on the shared pipe (as_peer = attacker, positive for a player or negative for a
 	# monster — negative ids are fine on the wire). Posted BEFORE any `died` so hp_after 0 lands first.
-	var attack_data := {
-		"attacker_id": attacker_id,
-		"attacker_name": _name_of(attacker),
-		"target_id": target_id,
-		"target_name": target_name,
-		"damage": amount,
-		"hp_after": new_hp,
-		"target_max": _max_hp_of(target),
-		"kind": kind,
-		"whiff": false,
-		"duration_sec": duration_sec,
-	}
-	# Weapon stamp (v0.9.3): ANY Entity attacker with an equipped weapon stamps its `weapon` id so
-	# every peer animates the right rig (the guard is field-presence + non-empty in playback). A
-	# weaponless attacker (a bare-handed player, the training dummy) stamps no field — its cues stay.
-	if attacker is Entity and attacker.equipped_weapon != null:
-		attack_data["weapon"] = attacker.equipped_weapon.display_name
+	var attack_data := _build_attack_data(attacker, attacker_id, target, target_id, amount, new_hp, kind, duration_sec, false)
 	NetEvents.post_event("attack", attack_data, attacker_id)
 	if new_hp <= 0:
 		_kill_entity(target_id, target_name)
@@ -277,6 +249,33 @@ func bump_duration_of(node: Node) -> float:
 
 
 # ── Private methods ───────────────────────────────────────────────────────────
+
+## Build the shared `attack` event dict for a LANDED or GODDED hit (v0.10.1 dedup) — the ONE construction
+## both paths use, differing only in the damage / hp_after values passed and the godded flag. The weapon
+## stamp (v0.9.3): ANY Entity attacker with an equipped weapon stamps its `weapon` id so every peer
+## animates the right rig (playback guards on field-presence + non-empty); a weaponless attacker (a
+## bare-handed player, the training dummy) stamps no field. `godded` adds the flag only when true, so a
+## normal hit's dict is byte-identical to the pre-dedup literal.
+func _build_attack_data(attacker: Node, attacker_id: int, target: Node, target_id: int,
+		damage: int, hp_after: int, kind: String, duration_sec: float, godded: bool) -> Dictionary:
+	var data := {
+		"attacker_id": attacker_id,
+		"attacker_name": _name_of(attacker),
+		"target_id": target_id,
+		"target_name": _name_of(target),
+		"damage": damage,
+		"hp_after": hp_after,
+		"target_max": _max_hp_of(target),
+		"kind": kind,
+		"whiff": false,
+		"duration_sec": duration_sec,
+	}
+	if godded:
+		data["godded"] = true
+	if attacker is Entity and attacker.equipped_weapon != null:
+		data["weapon"] = attacker.equipped_weapon.display_name
+	return data
+
 
 ## Resolve an attack against its committed TILE. Shared by both shapes (decision 3; DESIGN §2.8):
 ## the telegraphed wind-up (armed on a timer; recovery_sec 0 — recovery is brain pacing there, so

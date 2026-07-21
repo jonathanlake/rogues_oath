@@ -8,6 +8,28 @@ extends Node
 const MAIN_SCENE := "res://main.tscn"
 const MENU_SCENE := "res://ui/main_menu/main_menu.tscn"
 
+## Dev-command tuning tables (v0.10.0 /w & /m), the ONE authoring site shared by the dev-command
+## validator (DevCommands) AND the /help renderer (game_log) — so the allowed fields, their int/float
+## kinds, and their sane ranges can never drift between the code that enforces them and the help that
+## documents them. Each CLAMPS entry is [min, max]; a value outside it is REJECTED (not silently
+## clamped), naming the range, at the validator. The field is stored as an int when it appears in the
+## matching *_INT_FIELDS list, else as a float.
+const DEV_WEAPON_FIELDS := ["damage", "attack_beats", "windup_beats"]
+const DEV_WEAPON_INT_FIELDS := ["damage"]
+const DEV_WEAPON_CLAMPS := {
+	"damage": [0, 999],
+	"attack_beats": [0.05, 30.0],
+	"windup_beats": [0.0, 30.0],
+}
+const DEV_MONSTER_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles", "recovery_beats"]
+const DEV_MONSTER_INT_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles"]
+const DEV_MONSTER_CLAMPS := {
+	"max_hp": [1, 99999],
+	"aggro_range_tiles": [0, 30],
+	"tactical_radius_tiles": [0, 30],
+	"recovery_beats": [0.0, 30.0],
+}
+
 ## Designer contract: resources/game_config.tres is where Jeff flips playtest toggles
 ## (bodies_block_corners, origin_frees_at_glide_start, …) WITHOUT touching code. The host
 ## populates this before starting the server; all game systems read from it. Loaded from the .tres

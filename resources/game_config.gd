@@ -71,9 +71,10 @@ extends Resource
 ## corner-cutting isn't a free shortcut. Read server-side when stamping each glide's duration.
 @export var diagonal_step_multiplier: float = 2.0
 
-## Provisional corner rule (DESIGN §2.2.7). Walls ALWAYS block a diagonal squeeze; this toggle
-## only governs bodies: when true, an occupied flank tile also blocks the diagonal. Default
-## false (Jeff: bodies don't block) — a playtest toggle, flip without touching code.
+## Provisional corner rule (DESIGN §2.2.7, amended 2026-07-21). A diagonal squeeze is refused for
+## WALLS only when BOTH flanks are walls (a single wall corner may be rounded); this toggle governs
+## bodies: when true, EITHER occupied flank also blocks the diagonal. Default false (Jeff: bodies
+## don't block) — a playtest toggle, flip without touching code.
 @export var bodies_block_corners: bool = false
 
 ## Provisional Q4 origin-tile timing (DESIGN Part 4 Q4). When true, the tile a player departs
@@ -130,7 +131,7 @@ func next_weapon(current: WeaponType) -> WeaponType:
 ## The authored player-class roster (v0.10.0). ONE authoring site for the classes a player may BE:
 ## Player._ready seeds a fresh spawn from `class_roster[spawn_index % size]` (this array IS the old
 ## per-slot sprite table), the /class validator resolves the requested class through class_by_name, and
-## every peer maps a class_changed / sync_class event's name back to the same resource through it.
+## every peer maps a class_changed / sync_player_field event's name back to the same resource through it.
 ## Designer-editable (add / reorder .tres here, no code). Read HOST-side for adjudication resolution and
 ## client-side to repaint a sprite from a class event's name — the mirror of weapon_roster above.
 @export var class_roster: Array[PlayerClass] = []
