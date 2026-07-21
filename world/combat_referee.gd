@@ -45,16 +45,23 @@ var _monsters: Node2D = null
 # gate a wind-up on the attacker not already being busy (is_entity_moving). Untyped (its script has
 # no class_name) so its calls resolve dynamically — callers type locals off it explicitly.
 var _move_referee = null
+# The PaceReferee, handed in by Main via activate() (Tactical Zones v1, §2.8.7). Combat stamps each
+# attack's telegraph + recovery window at the ATTACKER's resolved pace through it (beat_sec_for), so an
+# engaged goblin's windup/recovery run at the tactical beat and an out-of-fight attacker's at explore.
+# Untyped (no class_name); null on clients (activate never runs there).
+var _pace = null
 
 
 ## Host-only entry point, called by Main inside its is_server() branch AFTER MoveReferee.activate()
-## and set_monsters() and BEFORE any spawn — so the container enter hooks seed HP for every entity,
-## including the host's own player. Wires both containers' membership signals the same way MoveReferee
-## does. Never called on clients (their combat referee stays inert).
-func activate(players: Node2D, monsters: Node2D, move_referee: Node) -> void:
+## and set_monsters() and the PaceReferee, and BEFORE any spawn — so the container enter hooks seed HP
+## for every entity, including the host's own player, and the pace resolver is on hand the first time an
+## attack window is stamped. Wires both containers' membership signals the same way MoveReferee does.
+## Never called on clients (their combat referee stays inert).
+func activate(players: Node2D, monsters: Node2D, move_referee: Node, pace: Node) -> void:
 	_players = players
 	_monsters = monsters
 	_move_referee = move_referee
+	_pace = pace
 	_players.child_entered_tree.connect(_on_entity_entered)
 	_players.child_exiting_tree.connect(_on_entity_exiting)
 	_monsters.child_entered_tree.connect(_on_entity_entered)
@@ -121,7 +128,7 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 ##  - windup_beats > 0 (or the windupsec= debug override): the full telegraphed wind-up, UNCHANGED
 ##    — busy for the telegraph, post the `windup` event, resolve against the tile windup_sec later
 ##    (the distinct WHIFF outcome survives, DESIGN §2.1). recovery is then brain pacing on top.
-## Both stamp seconds from the LIVE beat (GameManager.current_beat_sec). Returns the total seconds
+## Both stamp seconds from the attacker's RESOLVED pace (PaceReferee, §2.8.7). Returns the total seconds
 ## the brain should wait before its next think (the committed busy plus any post-telegraph recovery)
 ## on success, or -1.0 if DECLINED (attacker not alive / already busy) so the brain distinguishes a
 ## real attack from a back-off. Validates attacker alive + not already busy per MoveReferee first.
@@ -306,32 +313,44 @@ func _max_hp_of(node: Node) -> int:
 
 
 ## The wind-up telegraph duration for a node (seconds) — its MonsterType.windup_beats stamped at the
-## LIVE beat (GameManager.current_beat_sec). A non-monster / missing type falls back to
-## MonsterType.DEFAULT_WINDUP_BEATS — the value's single authoring site — so the accessor is total
-## without a shadow copy of the number here.
+## ATTACKER's resolved pace (PaceReferee, §2.8.7: an engaged monster telegraphs at the tactical beat). A
+## non-monster / missing type falls back to MonsterType.DEFAULT_WINDUP_BEATS — the value's single
+## authoring site — so the accessor is total without a shadow copy of the number here.
 func _windup_duration_of(node: Node) -> float:
 	# Weapon-first (v0.9.3): ANY Entity's equipped_weapon.windup_beats wins (the goblin's 0 lives on
 	# its claw now). Else the per-type monster windup, else DEFAULT_WINDUP_BEATS (the single authoring
 	# site for the telegraph default). Order: weapon → per-kind legacy → DEFAULT.
 	if node is Entity and node.equipped_weapon != null:
-		return GameManager.beats_to_sec(node.equipped_weapon.windup_beats)
+		return node.equipped_weapon.windup_beats * _pace_beat_sec(node)
 	var beats := MonsterType.DEFAULT_WINDUP_BEATS
 	if node is Monster and node.monster_type != null:
 		beats = node.monster_type.windup_beats
-	return GameManager.beats_to_sec(beats)
+	return beats * _pace_beat_sec(node)
 
 
-## The attacker's recovery tail (seconds) — its authored recovery beats stamped at the live beat
-## (DESIGN §2.8). Player: attack_recovery_beats; monster: recovery_beats. The one beats→seconds
-## conversion for a bump tail (bump_duration_of) and an instant strike's busy (wind_up). Unknown /
-## missing-type node reads 0 (no recovery).
+## The attacker's recovery tail (seconds) — its authored recovery beats stamped at the ATTACKER's
+## resolved pace (PaceReferee, §2.8.7: an engaged attacker recovers at the tactical beat; a player's bump
+## tail stamps tactical because _begin_bump armed the forcing window first). Player: attack_recovery_beats;
+## monster: recovery_beats. The one conversion for a bump tail (bump_duration_of) and an instant strike's
+## busy (wind_up). Unknown / missing-type node reads 0 (no recovery).
 func _recovery_duration_of(node: Node) -> float:
 	# Weapon-first (v0.9.3): ANY Entity's equipped_weapon.attack_beats IS its whole occupied window
 	# (no separate cooldown, Part 4 Q9). Order: weapon → per-kind legacy recovery field → hard 0.
 	if node is Entity and node.equipped_weapon != null:
-		return GameManager.beats_to_sec(node.equipped_weapon.attack_beats)
+		return node.equipped_weapon.attack_beats * _pace_beat_sec(node)
 	if node is Player:
-		return GameManager.beats_to_sec(node.attack_recovery_beats)
+		return node.attack_recovery_beats * _pace_beat_sec(node)
 	if node is Monster and node.monster_type != null:
-		return GameManager.beats_to_sec(node.monster_type.recovery_beats)
+		return node.monster_type.recovery_beats * _pace_beat_sec(node)
 	return 0.0
+
+
+## The attacker node's resolved beat (seconds) at stamp time — tactical or explore per PaceReferee
+## (§2.8.7), keyed by the node's entity_id. Falls back to the explore beat when no pace referee is
+## injected or the node is not an Entity (defensive: combat only stamps host-side where Main injects
+## the resolver, and attackers are always Entities). Reading node.entity_id keeps the two duration
+## accessors' signatures unchanged (they already take the resolved attacker node).
+func _pace_beat_sec(node: Node) -> float:
+	if _pace != null and node is Entity:
+		return _pace.beat_sec_for(node.entity_id)
+	return GameManager.explore_beat_sec

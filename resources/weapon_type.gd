@@ -32,7 +32,7 @@ extends Resource
 ## BEATS this attack OCCUPIES on the attacker's one timeline (DESIGN §2.3.7 / §2.8). The whole
 ## action window — there are no separate cooldowns (Part 4 Q9): the attacker is BUSY for this many
 ## beats and cannot act, exactly like a step reserves its beats. The referee stamps it to seconds
-## at the live beat (beats × current_beat_sec) as the bump's occupied window; the attack event
+## at the attacker's resolved pace (beats × beat) as the bump's occupied window; the attack event
 ## carries that duration, so the recovery tell + the weapon rig auto-align to it. dagger 1.0,
 ## longsword 2.0 (the longer commitment carries a damage premium — see `damage`).
 @export var attack_beats: float = 2.0

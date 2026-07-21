@@ -67,6 +67,16 @@ var _entity_id: int = 0
 # shape as _referee/_combat/_entity_id (component pattern; the parent wires the child in
 # activate_brain). Null on a client's inert brain, which never thinks.
 var _monster_type: MonsterType = null
+# The host's PaceReferee (Tactical Zones v1, §2.8.7), injected alongside the referees. Two uses: the
+# brain REPORTS its engagement (aggroed + current chase target) to it every think, and it READS this
+# monster's own resolved beat from it for wake/pacing math (an aggroed monster paces at the tactical
+# beat, matching the referee's tactical stamp of its glide). Untyped, same reason as _referee. Null on
+# a client's inert brain.
+var _pace = null
+# The player id this monster is currently chasing (its leash target), set at the nearest-pick each
+# think and reported to the pace referee; 0 when not chasing (un-aggroed / no target). The leash key
+# the resolver reads so a chased player stays tactical however far they run.
+var _target_id: int = 0
 
 
 # ── Public methods ────────────────────────────────────────────────────────────
@@ -74,14 +84,16 @@ var _monster_type: MonsterType = null
 ## Host-only switch-on, called by the parent monster's activate_brain(). Stores the referees + id +
 ## authored type and kicks off the first think DEFERRED — so the referees' spawn-enter hooks have
 ## already seeded this monster's occupancy + HP and the node's _ready has run before we query anything.
-func activate(referee: Node, combat: Node, entity_id: int, monster_type: MonsterType) -> void:
+func activate(referee: Node, combat: Node, entity_id: int, monster_type: MonsterType, pace: Node) -> void:
 	_referee = referee
 	_combat = combat
 	_entity_id = entity_id
 	_monster_type = monster_type
+	_pace = pace
 	# Fresh life, fresh aggro. Instances are currently always freshly spawned, but a pooled or
-	# re-activated monster must never inherit a previous life's latch and skip the acquire gate.
+	# re-activated monster must never inherit a previous life's latch/target and skip the acquire gate.
 	_aggroed = false
+	_target_id = 0
 	_active = true
 	_think.call_deferred()
 
@@ -103,6 +115,10 @@ func _think() -> void:
 	# rest), but the node's glide_finished (which woke us via on_boundary) fires at the SLIDE boundary
 	# — so a post-slide think lands mid-SETTLE and sees busy. This is the chase-parity hot loop.
 	if _referee.is_entity_moving(_entity_id):
+		# Report engagement each think (Tactical Zones v1, §2.8.7) — this busy branch is the chase-parity
+		# hot loop, so the resolver's leash target must stay fresh as the monster moves. Reads the
+		# post-step tile (this monster's committed destination under conga = its single occupancy entry).
+		_update_engagement(_referee.tile_of_entity(_entity_id), _referee.player_tiles())
 		# Two things happen here, in order:
 		#   1) Compute the always-armed BACKSTOP wake at the remaining SETTLE + epsilon. Settle is
 		#      (1 - slide_fraction) of the glide term plus any rest = 0.3 beats at the defaults, so the
@@ -129,7 +145,7 @@ func _think() -> void:
 			glide_beats *= GameManager.config.diagonal_step_multiplier
 		var slide_fraction := clampf(GameManager.config.slide_fraction, 0.05, 1.0)
 		var settle_beats := (1.0 - slide_fraction) * glide_beats + GameManager.config.move_rest_beats
-		var backstop_sec := GameManager.beats_to_sec(settle_beats) + windup_rethink_epsilon_sec
+		var backstop_sec := settle_beats * _pace_beat_sec() + windup_rethink_epsilon_sec
 		# Arm the backstop ONLY when no step was pipelined this think. A successful pipeline is carried
 		# to the next think by the promoted step's glide_finished, so arming here too would fire a
 		# redundant busy think that re-arms in turn (backstop thinks are themselves busy) — an unbounded
@@ -153,16 +169,18 @@ func _think() -> void:
 	if targets.is_empty():
 		# No players to chase RIGHT NOW (all dead/disconnected). Keep watching: nothing else
 		# wakes this brain (on_boundary needs our own glide), so a joiner would otherwise meet
-		# a permanently dormant monster.
+		# a permanently dormant monster. Report disengagement so the resolver drops this monster's
+		# bubble/leash (and its own tactical pace) while it idle-waits.
+		_report_engagement(false, 0)
 		_reschedule()
 		return
 
-	# Aggro acquisition + persistence (monster_type.aggro_range_tiles + aggro_persists, DESIGN §2.8):
-	# _should_chase latches/leashes _aggroed from the nearest-target Chebyshev distance and reports
-	# whether to engage. Un-acquired / leash-dropped means idle on the re-think cadence. The SAME
-	# helper the busy-think pipeline consults, so both chase paths make the identical acquire decision.
-	var nearest_dist := _nearest_target_dist(my_tile, targets)
-	if not _should_chase(nearest_dist):
+	# Aggro acquisition + persistence + engagement report (Tactical Zones v1, §2.8.7): _update_engagement
+	# latches/leashes _aggroed via _should_chase from the nearest-target Chebyshev distance, records
+	# _target_id, reports (aggroed, target) to the pace referee, and returns whether to engage. Un-acquired
+	# / leash-dropped means idle on the re-think cadence. The SAME _should_chase decision the busy-think
+	# pipeline consults, so both chase paths acquire identically.
+	if not _update_engagement(my_tile, targets):
 		_reschedule()
 		return
 
@@ -288,6 +306,54 @@ func _should_chase(nearest_dist: int) -> bool:
 	return _aggroed
 
 
+## Recompute this monster's engagement from live referee state and REPORT it to the pace referee
+## (Tactical Zones v1, §2.8.7) — called every think so the resolver always has this monster's current
+## (aggroed, chase target) for the tactical bubble + leash. Latches _aggroed via _should_chase, records
+## _target_id as the nearest player's id (0 when not chasing), reports, and returns whether to engage.
+## Empty targets → disengage (report false, clear target). Shared by the idle branch and the busy loop.
+func _update_engagement(my_tile: Vector2i, targets: Array) -> bool:
+	if targets.is_empty():
+		_target_id = 0
+		_report_engagement(false, 0)
+		return false
+	var nearest_dist := _nearest_target_dist(my_tile, targets)
+	var chasing := _should_chase(nearest_dist)
+	# The leash target is the id occupying the nearest tile (authoritative occupancy, not a rendered
+	# position) — the same nearest the aggro decision keyed on. Cleared to 0 when not chasing.
+	_target_id = _referee.entity_at(_nearest_target_tile(my_tile, targets)) if chasing else 0
+	_report_engagement(chasing, _target_id)
+	return chasing
+
+
+## The tile of the nearest target by Chebyshev distance (the twin of _nearest_target_dist, returning
+## the tile instead of the distance). Callers guard an empty list first, so targets[0] is a safe seed.
+func _nearest_target_tile(my_tile: Vector2i, targets: Array) -> Vector2i:
+	var best: Vector2i = targets[0]
+	var nearest := -1
+	for t in targets:
+		var d: int = maxi(absi(t.x - my_tile.x), absi(t.y - my_tile.y))
+		if nearest < 0 or d < nearest:
+			nearest = d
+			best = t
+	return best
+
+
+## Report this monster's engagement to the pace referee (guarded for a client's null-pace inert brain,
+## which never thinks anyway). The ONE call site wrapper so both the idle and busy paths report identically.
+func _report_engagement(aggroed: bool, target_id: int) -> void:
+	if _pace != null:
+		_pace.report_engagement(_entity_id, aggroed, target_id)
+
+
+## This monster's own resolved beat (seconds) at wake time — tactical when aggroed, explore otherwise
+## (§2.8.7), so its pacing math matches the pace the referee stamped its glide at. Explore fallback when
+## no pace referee is injected (defensive: the host always injects; a client's brain never thinks).
+func _pace_beat_sec() -> float:
+	if _pace != null:
+		return _pace.beat_sec_for(_entity_id)
+	return GameManager.explore_beat_sec
+
+
 ## First step DIRECTION toward the nearest player by path length over the walls-only A* grid, or
 ## Vector2i.ZERO if every player is unreachable (sealed/OOB). Body occupancy is deliberately NOT in
 ## that grid (bodies are volatile) — the referee's validator is the authority on whether the chosen
@@ -305,9 +371,10 @@ func _first_step_toward(my_tile: Vector2i, targets: Array) -> Vector2i:
 
 
 ## Schedule one re-think rethink_beats from now (the refused/blocked/no-target back-off cadence),
-## converted at the LIVE beat — not cached, so a tempo change is picked up on the next back-off.
+## converted at THIS monster's resolved pace (§2.8.7) — not cached, so an aggro/tempo change is picked
+## up on the next back-off. An aggroed monster backs off at the tactical beat, matching its glide stamps.
 func _reschedule() -> void:
-	_reschedule_after(GameManager.beats_to_sec(rethink_beats))
+	_reschedule_after(rethink_beats * _pace_beat_sec())
 
 
 ## Schedule one re-think `sec` from now. A get_tree() SceneTreeTimer (not a Timer child) so it

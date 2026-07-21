@@ -54,7 +54,7 @@ signal path_target_cleared
 ## host would bonk ~60×/sec on a wall. A FRESH press bypasses the wait (responsive to deliberate
 ## re-taps); only auto-repeat from a held key is throttled. Converted to seconds at the LIVE beat
 ## when used, not cached (DESIGN §2.8) — client-side PACING only (adjudication stays host-side); the
-## client reads its own current_beat_sec, which matches the host's at session start. 1 beat = one rest.
+## client reads its own explore_beat_sec, which matches the host's at session start. 1 beat = one rest.
 @export var held_retry_beats: float = 1.0
 
 ## Consecutive step rejects that drop a standing walk target. The first reject marks the refused

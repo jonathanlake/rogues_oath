@@ -91,6 +91,16 @@ const DEFAULT_WINDUP_BEATS := 2.0
 ## by MonsterBrain._think.
 @export var aggro_range_tiles: int = 0
 
+## Tactical bubble radius in Chebyshev tiles (Tactical Zones v1, DESIGN §2.8.7). While this monster is
+## AGGROED, every player within this many king-move tiles of it resolves to TACTICAL pace (the "you're
+## in the fight" zone). DELIBERATELY its OWN dial, NOT aggro_range_tiles: "it noticed you" (aggro, e.g.
+## 5) and "you're in the fight" (this, default 3) tune separately, so there is a window to run at
+## explore pace before the fight closes. 0 = projects NO bubble (a monster that leashes/attacks but
+## never slows the room by proximity) — note the real guard is aggroed-only: an idle or brainless
+## monster (the dummy, has_brain=false) never engages, so it projects nothing regardless of this value.
+## Read HOST-side by PaceReferee.
+@export var tactical_radius_tiles: int = 3
+
 ## When true (default), aggro PERSISTS: once the brain acquires a target within aggro_range_tiles it
 ## stays aggroed and the range check is skipped thereafter — the monster keeps chasing across rooms,
 ## never leash-dropping (playtest verdict, Jon/Jeff 2026-07-19). When false, the legacy LEASH

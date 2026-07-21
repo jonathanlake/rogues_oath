@@ -14,14 +14,16 @@ const MENU_SCENE := "res://ui/main_menu/main_menu.tscn"
 ## so authored values win; a missing/broken file falls back to script defaults LOUDLY (see below).
 var config: GameConfig = _load_config()
 
-## The session's live beat (seconds) — the tempo referees read when they stamp a verdict
-## (DESIGN §2.8). Seeded from GameConfig.beat_sec (or the host-only beatsec= override) at session
-## start by main.gd, on EVERY peer, BEFORE the first verdict. Referees read it LIVE at stamp time
-## (same pattern as debug_glide_override_sec below), so a future runtime tempo change takes effect
-## from the next verdict onward — never re-deriving an in-flight commit (stamp-and-bake, §2.8.2).
-## Clients may read it for local PACING only (move_input retry cadence); all adjudication is
-## host-side. Seeded inline from config so it is never 0 before a session opens.
-var current_beat_sec: float = config.beat_sec
+## The session's live EXPLORE beat (seconds) — the default (out-of-combat) tempo dial (DESIGN §2.8).
+## RENAMED from current_beat_sec (v0.9.5, Tactical Zones): with two live paces (explore + tactical,
+## §2.8.7) "current" was ambiguous — pace is now resolved PER ENTITY by PaceReferee, and this is the
+## explore pole it returns when an entity is out of the fight. Seeded from GameConfig.beat_sec (or the
+## host-only beatsec= override) at session start by main.gd, on EVERY peer, BEFORE the first verdict.
+## The pace referee reads it LIVE at stamp time (same pattern as debug_glide_override_sec below), so a
+## runtime tempo change takes effect from the next verdict onward — never re-deriving an in-flight
+## commit (stamp-and-bake, §2.8.2). Clients may read it for local PACING only (move_input retry
+## cadence); all adjudication is host-side. Seeded inline from config so it is never 0 before a session opens.
+var explore_beat_sec: float = config.beat_sec
 
 ## The session's live TACTICAL beat (seconds) — the second tempo dial (DESIGN §2.8.3 groundwork,
 ## v0.9.2). Seeded from GameConfig.tactical_beat_sec at session start by main.gd, on EVERY peer, and
@@ -69,7 +71,7 @@ var all_hostile: bool = false
 ## pacing). Never touched by gameplay code.
 var debug_glide_override_sec: float = 0.0
 
-## DEBUG ONLY. When > 0, main.gd seeds current_beat_sec from this (seconds) at session start
+## DEBUG ONLY. When > 0, main.gd seeds explore_beat_sec from this (seconds) at session start
 ## instead of GameConfig.beat_sec — set host-side via debug.gd's `beatsec=` arg so a scripted run
 ## can test a whole-game tempo (e.g. beatsec=0.40) without editing the .tres. Host-only, mirroring
 ## glidesec=/windupsec=; a client seeds from its own config. Read ONCE at seed time (not live like
@@ -77,7 +79,7 @@ var debug_glide_override_sec: float = 0.0
 var debug_beat_override_sec: float = 0.0
 
 ## DEBUG ONLY. When > 0, the combat referee uses this (seconds) as every monster wind-up's
-## telegraph duration instead of the beats product (MonsterType.windup_beats × current_beat_sec) —
+## telegraph duration instead of the beats product (MonsterType.windup_beats × the attacker's pace) —
 ## set host-side via debug.gd's
 ## `windupsec=` arg (exact mirror of `glidesec=`) to stretch the wind-up window long enough to
 ## script a deterministic dodge/whiff. Read live by CombatReferee when it stamps a wind-up.
@@ -139,13 +141,18 @@ func build_version() -> String:
 	return raw
 
 
-## THE one beats→seconds conversion (DESIGN §2.8), paired with current_beat_sec above. Always a LIVE
-## read of the current beat: because a referee stamps-and-bakes a verdict's seconds at commit time
-## (§2.8.2), callers convert ONLY at verdict/stamp time (or for client-side pacing) — never caching a
-## seconds value that a later tempo change would strand. Every open-coded `beats * current_beat_sec`
-## routes through here so the conversion can't drift or be applied at the wrong moment.
+## THE beats→seconds conversion at the EXPLORE beat (DESIGN §2.8), paired with explore_beat_sec above.
+## Always a LIVE read: because a referee stamps-and-bakes a verdict's seconds at commit time (§2.8.2),
+## callers convert ONLY at verdict/stamp time (or for client-side pacing) — never caching a seconds
+## value that a later tempo change would strand.
+## DELIBERATE-CONVERSION NOTE (Tactical Zones v1, §2.8.7): with two paces, this is the EXPLORE conversion
+## specifically — it is NOT the pace-resolved stamp any more. Today's callers are exactly: (a) tempo UI
+## text (explore-labelled, correct), and (b) fallbacks where no pace referee is present. The live STAMP
+## sites (MoveReferee step/rest, CombatReferee windup/recovery) and brain pacing route through
+## PaceReferee.beat_sec_for(entity_id) instead. Any FUTURE periodic-effect timing (§2.4 — a poison tick,
+## a regen pulse) MUST choose its conversion deliberately: explore (this) vs the actor's resolved pace.
 func beats_to_sec(beats: float) -> float:
-	return beats * current_beat_sec
+	return beats * explore_beat_sec
 
 
 ## Beats-per-minute for a given beat (seconds), rounded to a whole number for display. Guards a

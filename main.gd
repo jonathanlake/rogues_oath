@@ -101,6 +101,11 @@ const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN
 # clients contract — activate() runs only in the is_server() branch. Held so the monster spawn path
 # can hand it to each brain and the late-join snap can query liveness.
 @onready var _combat := $CombatReferee
+# Host-only pace resolver (Tactical Zones v1, §2.8.7), beside the other referees. Same inert-on-clients
+# contract — activate() runs only in the is_server() branch. THE single site that decides, per entity at
+# stamp time, whether a committed window stamps from the explore or tactical beat; injected into the two
+# stamping referees + each monster brain so every stamp routes through it.
+@onready var _pace := $PaceReferee
 # Death SFX (placeholder — pitch-shifted bonk). Played on every peer from the `died` event, at Main
 # level because the dying entity's own node vanishes with the event (can't play a sound on a freed node).
 @onready var _death_sfx: AudioStreamPlayer = $DeathSfx
@@ -156,12 +161,13 @@ var _local_avatar: Node2D = null
 
 
 func _ready() -> void:
-	# Seed the session tempo (DESIGN §2.8) BEFORE any verdict is stamped, on EVERY peer: the authored
-	# GameConfig.beat_sec, or the host-only beatsec= debug override when set (mirrors glidesec=). The
-	# referees read GameManager.current_beat_sec LIVE at stamp time from here; a future runtime tempo
-	# knob (§2.8.3) rebroadcasts a new value. Same value on host and client at start (same authored
-	# config, same build), so client-side pacing matches until the knob ships.
-	GameManager.current_beat_sec = GameManager.debug_beat_override_sec if GameManager.debug_beat_override_sec > 0.0 else GameManager.config.beat_sec
+	# Seed the session EXPLORE tempo (DESIGN §2.8) BEFORE any verdict is stamped, on EVERY peer: the
+	# authored GameConfig.beat_sec, or the host-only beatsec= debug override when set (mirrors glidesec=).
+	# PaceReferee reads GameManager.explore_beat_sec LIVE at stamp time from here (the explore pole of the
+	# per-entity resolve, §2.8.7); a future runtime tempo knob (§2.8.3) rebroadcasts a new value. Same
+	# value on host and client at start (same authored config, same build), so client-side pacing matches
+	# until the knob ships.
+	GameManager.explore_beat_sec = GameManager.debug_beat_override_sec if GameManager.debug_beat_override_sec > 0.0 else GameManager.config.beat_sec
 	# Seed the TACTICAL beat (the second dial, DESIGN §2.8.3 groundwork, v0.9.2) from config on EVERY
 	# peer, alongside the explore beat. No debug override for it (no gameplay reads it yet — groundwork
 	# only); the [ / ] keys nudge it live via set_tactical_tempo, a late joiner adopts it via sync_tempo.
@@ -247,7 +253,7 @@ func _ready() -> void:
 		# false is inert scenery-with-HP (the training dummy) — it seeds HP and takes damage through
 		# the referee like any monster, but never moves and never attacks (no brain to think).
 		if multiplayer.is_server() and monster.monster_type != null and monster.monster_type.has_brain:
-			monster.activate_brain.call_deferred(_referee, _combat)
+			monster.activate_brain.call_deferred(_referee, _combat, _pace)
 		print("[peer %d] spawned monster '%s' (entity %d) at tile %s" % [
 			multiplayer.get_unique_id(), monster.name, monster.entity_id, tile])
 		return monster
@@ -274,11 +280,17 @@ func _ready() -> void:
 		# enter hook seeds occupancy for the goblin. set_monsters connects the referee's seed hook
 		# first; the goblin spawns later in this same _ready, after the host's own player.
 		_referee.set_monsters(_monsters)
-		# Host-only: activate the combat referee AFTER the movement referee is set up and BEFORE any
-		# spawn — its container enter hooks then seed HP for every entity (host player + goblin), and
-		# the two referees hold each other's references so bump/AoO/wind-up/death can cross-call. Then
-		# hand the movement referee the combat reference so its first adjudication has it.
-		_combat.activate(_players, _monsters, _referee)
+		# Host-only: activate the pace resolver (Tactical Zones v1, §2.8.7) AFTER the movement referee has
+		# its containers wired (so its tile reads resolve) and BEFORE any spawn (so its monster-exit hook
+		# is armed for every spawn). It reads authoritative tiles through the movement referee. Then inject
+		# it into the movement referee so its step/rest stamps route through beat_sec_for.
+		_pace.activate(_players, _monsters, _referee)
+		_referee.set_pace(_pace)
+		# Host-only: activate the combat referee AFTER the movement + pace referees are set up and BEFORE
+		# any spawn — its container enter hooks then seed HP for every entity (host player + goblin), and
+		# the referees hold each other's references so bump/AoO/wind-up/death can cross-call and every attack
+		# window stamps at the attacker's resolved pace. Then hand the movement referee the combat reference.
+		_combat.activate(_players, _monsters, _referee, _pace)
 		_referee.set_combat(_combat)
 		# Host-only: snap autonomous movers to truth for a late joiner (no event replay exists,
 		# §2.7). Fires as each new PLAYER node enters; wired here before the host's own player spawns.
@@ -289,7 +301,7 @@ func _ready() -> void:
 		# Host-only: the tempo referee (DESIGN §2.8.3). ANY peer submits a set_tempo intent on the same
 		# pipe; this validator clamps/snaps/applies host-side, and the accepted intent broadcasts back as
 		# a set_tempo event (intent-name == event-name, like "chat") that every peer adopts. Gameplay only
-		# ever reads GameManager.current_beat_sec, which no client can write (§2.5 stands).
+		# ever reads GameManager.explore_beat_sec (via PaceReferee), which no client can write (§2.5 stands).
 		NetEvents.register_handler("set_tempo", _validate_set_tempo)
 		# Host-only: the tactical-tempo referee (DESIGN §2.8.3 groundwork, v0.9.2). Mirrors set_tempo
 		# exactly — ANY peer submits set_tactical_tempo, this validator clamps/snaps against the SAME
@@ -558,7 +570,7 @@ func _handle_died_event(_event: Dictionary) -> void:
 ## added by game_log off this same event; in-flight commits keep their baked seconds (stamp-and-bake).
 func _handle_tempo_changed_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
-	_apply_tempo(float(data.get("beat_sec", GameManager.current_beat_sec)))
+	_apply_tempo(float(data.get("beat_sec", GameManager.explore_beat_sec)))
 
 
 ## All peers: adopt a host-stamped TACTICAL tempo change (§2.8.3 groundwork, v0.9.2). The exact twin of
@@ -614,7 +626,7 @@ func _update_camera() -> void:
 ## and there is one place to extend when adoption grows a side effect. Adjudication stays host-side by
 ## construction (only the host stamps verdicts); a client's local beat drives display + pacing only.
 func _apply_tempo(beat_sec: float) -> void:
-	GameManager.current_beat_sec = beat_sec
+	GameManager.explore_beat_sec = beat_sec
 	_update_tempo_display()
 
 
@@ -632,7 +644,7 @@ func _apply_tactical_tempo(beat_sec: float) -> void:
 ## two paces at a glance (the tactical dial is groundwork; nothing stamps from it yet). BPM derives through
 ## GameManager.bpm_of so the 0-guard and rounding match every other readout (§2.8.3).
 func _update_tempo_display() -> void:
-	var explore := GameManager.current_beat_sec
+	var explore := GameManager.explore_beat_sec
 	var tactical := GameManager.tactical_beat_sec
 	_tempo_label.text = "explore %.2fs · %d BPM   |   tactical %.2fs · %d BPM" % [
 		explore, GameManager.bpm_of(explore), tactical, GameManager.bpm_of(tactical)]
@@ -644,7 +656,7 @@ func _update_tempo_display() -> void:
 ## second clamp here would only be a place for the two to drift. We never change our own beat here; it
 ## changes only when the host's accepted set_tempo event returns.
 func _request_tempo(delta: float) -> void:
-	NetEvents.submit_intent("set_tempo", { "beat_sec": GameManager.current_beat_sec + delta })
+	NetEvents.submit_intent("set_tempo", { "beat_sec": GameManager.explore_beat_sec + delta })
 
 
 ## Any peer: request a TACTICAL tempo nudge of `delta` seconds/beat (v0.9.2 groundwork), the twin of
@@ -1077,7 +1089,7 @@ func _validate_chat(sender_peer_id: int, data: Dictionary) -> Dictionary:
 ## trusts. The wire is never coerced: a malformed beat_sec (wrong type or non-positive) is REFUSED, not
 ## clamped (mirrors _validate_glide's type-guard). Ignores a no-op (unchanged) request so the log/display
 ## don't churn (its silent reject is by design — game_log ignores set_tempo rejects). Applies to
-## current_beat_sec HOST-side and returns the stamped beat + the requester's server-resolved name; every
+## explore_beat_sec HOST-side and returns the stamped beat + the requester's server-resolved name; every
 ## peer (host too, via call_local) then adopts it in _handle_tempo_changed_event. Only FUTURE verdicts read
 ## the new beat — in-flight commits keep their baked seconds (stamp-and-bake, §2.8.2). No re-derivation here.
 func _validate_set_tempo(sender_peer_id: int, data: Dictionary) -> Dictionary:
@@ -1088,14 +1100,14 @@ func _validate_set_tempo(sender_peer_id: int, data: Dictionary) -> Dictionary:
 		return { "ok": false, "reason": "malformed" }
 	var cfg := GameManager.config
 	var beat := clampf(snappedf(float(raw), cfg.tempo_step_sec), cfg.tempo_min_sec, cfg.tempo_max_sec)
-	if is_equal_approx(beat, GameManager.current_beat_sec):
+	if is_equal_approx(beat, GameManager.explore_beat_sec):
 		return { "ok": false, "reason": "no change" }
 	# Membership: only a peer with a live player node is in the session (mirrors _validate_chat) —
 	# the name is resolved server-side, never from the payload.
 	var player_node := _players.get_node_or_null(str(sender_peer_id))
 	if player_node == null:
 		return { "ok": false, "reason": "not in session" }
-	GameManager.current_beat_sec = beat
+	GameManager.explore_beat_sec = beat
 	return { "ok": true, "data": { "beat_sec": beat, "by": player_node.player_name } }
 
 
@@ -1103,7 +1115,7 @@ func _validate_set_tempo(sender_peer_id: int, data: Dictionary) -> Dictionary:
 ## MIRROR of _validate_set_tempo for the second dial: same type/range guard, the SAME clamp/snap band
 ## (cfg.tempo_step_sec / tempo_min_sec / tempo_max_sec — deliberately shared pending the mode design), the
 ## same no-op reject, the same server-resolved sender name and broadcast. The ONLY differences: it reads and
-## writes GameManager.tactical_beat_sec, not current_beat_sec. GROUNDWORK: this stores the value and every
+## writes GameManager.tactical_beat_sec, not explore_beat_sec. GROUNDWORK: this stores the value and every
 ## peer displays it, but no verdict reads the tactical beat for stamping — that awaits the open mode design.
 func _validate_set_tactical_tempo(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# Type/range guard first — the wire is never trusted (mirrors _validate_set_tempo).
@@ -1304,7 +1316,7 @@ func peer_ready(p_name: String, client_version: String) -> void:
 		# frame this peer is admitted, and drift between the host's config default and the joiner's (a
 		# mismatched .tres). Syncing every join closes both; a redundant equal-beat adopt is a no-op display
 		# refresh, and this is targeted rpc_id so existing peers see nothing regardless.
-		sync_tempo.rpc_id(peer_id, GameManager.current_beat_sec, GameManager.tactical_beat_sec)
+		sync_tempo.rpc_id(peer_id, GameManager.explore_beat_sec, GameManager.tactical_beat_sec)
 		# Late-join weapon sync (M3.7, DESIGN §2.3.7): hand the joiner every EXISTING player's CURRENT
 		# weapon over a targeted host->client RPC, so a non-default weapon (someone swapped, or the host's
 		# weapon= knob) shows on the joiner's rig immediately instead of the scene default. Same

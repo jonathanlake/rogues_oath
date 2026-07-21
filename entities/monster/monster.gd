@@ -88,12 +88,14 @@ func _ready() -> void:
 ## Main's monster spawn path INSIDE its is_server() guard (component pattern — the parent wires the
 ## child). The monster owns the brain<->boundary handshake so the brain never reaches up to its
 ## parent: it connects its OWN glide_finished to the brain's boundary hook here. Inert on clients.
-func activate_brain(referee: Node, combat: Node) -> void:
+func activate_brain(referee: Node, combat: Node, pace: Node) -> void:
 	glide_finished.connect(_brain.on_boundary)
 	# Hand the brain this monster's own fields (id + authored type) alongside the referees — the
 	# parent reads them off itself and injects them, so the brain never reaches up (component pattern).
-	# monster_type carries the aggro-range leash the brain reads each think (v0.6.0 rhythm build).
-	_brain.activate(referee, combat, entity_id, monster_type)
+	# monster_type carries the aggro-range leash the brain reads each think (v0.6.0 rhythm build); the
+	# pace referee (Tactical Zones v1, §2.8.7) receives this monster's engagement each think and stamps
+	# its wake/pacing math at its own resolved beat.
+	_brain.activate(referee, combat, entity_id, monster_type, pace)
 
 
 ## Hostility test (DESIGN §2.2.6, plan decision 6), read HOST-side. A monster is hostile to any

@@ -8,7 +8,7 @@ extends Resource
 ## The global beat (seconds) — the unit every action duration is authored against (DESIGN §2.8).
 ## Every gameplay resource expresses its timings as designer-editable BEAT MULTIPLES (glide_beats,
 ## windup_beats, recovery_beats, move_rest_beats); seconds exist only when a referee stamps a
-## verdict. Seeded into GameManager.current_beat_sec at session start; the runtime tempo knob
+## verdict. Seeded into GameManager.explore_beat_sec at session start; the runtime tempo knob
 ## (§2.8.3, future chunk) adjusts the live value from there. NOT a global tick — actions still
 ## start on commit and share only their unit (§2.4.1 stands).
 @export var beat_sec: float = 0.25
@@ -31,6 +31,23 @@ extends Resource
 ## tempo_step_sec above) pending that mode design; when tactical earns its own band, split them here.
 ## Seeded into GameManager.tactical_beat_sec at session start on every peer. Default 0.50s (120 BPM).
 @export var tactical_beat_sec: float = 0.5
+
+## Tactical Zones v1 (DESIGN §2.8.7). FORCING WINDOW in BEATS: after a player lands a hostile action
+## (its bump — including hitting the training dummy; the rule is uniform), it stays TACTICAL for this
+## many tactical beats. Anti-cheese rationale: without it a player could tap an enemy and instantly
+## revert to explore pace between swings, out-tempoing the fight it started. The window is measured in
+## TACTICAL beats (tactical_force_beats × tactical_beat_sec seconds) so it scales with the fight's own
+## cadence, not the explore dial. Spec range 2–4; default 3.0. Read HOST-side by PaceReferee.
+@export var tactical_force_beats: float = 3.0
+
+## Tactical Zones v1 (DESIGN §2.8.7). HYSTERESIS exit delay in SECONDS: once a player STOPS qualifying
+## for tactical (left every bubble, no longer leashed, forcing window elapsed) it stays tactical until
+## this many seconds of continuously qualifying for EXPLORE have passed. Rationale: a player skimming a
+## bubble edge would otherwise flip pace every step (flicker) — this holds the last pace across the
+## boundary so the switch reads as one deliberate change. A player with NO history (fresh spawn / late
+## join) skips the delay and starts explore immediately. Seconds, NOT beats — it is real-time UI-feel
+## smoothing, independent of either tempo dial. Default 1.5. Read HOST-side by PaceReferee.
+@export var tactical_exit_sec: float = 1.5
 
 ## Rest beats appended to every movement step's committed window (DESIGN §2.8/§2.2). A step is now
 ## 1 beat TOTAL — this defaults to 0.0. Kept as a reversible, now-ANSWERED experiment: the v0.7.0

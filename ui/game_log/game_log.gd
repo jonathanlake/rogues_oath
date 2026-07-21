@@ -136,7 +136,7 @@ func _on_event_received(event: Dictionary) -> void:
 			# its own action name (like "chat"). One line naming who changed it, on every peer, so a live
 			# tempo change is legible in the log alongside the always-on readout. Names go through
 			# add_line's sink escape like every other system line.
-			var beat := float(data.get("beat_sec", GameManager.current_beat_sec))
+			var beat := float(data.get("beat_sec", GameManager.explore_beat_sec))
 			add_line("Tempo: %s — set by %s." % [GameManager.tempo_log_text(beat), str(data.get("by", "someone"))])
 		"set_tactical_tempo":
 			# The tactical dial's twin of set_tempo (v0.9.2 groundwork): one line naming who changed it,

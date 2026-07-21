@@ -33,7 +33,7 @@ const _SPRITE_TILES: Array[Vector2i] = [
 
 ## Recovery in BEATS after a bump lands: damage is instant, then the attacker is BUSY for this many
 ## beats — the symmetric attack shape (DESIGN §2.8) and the Commitment Rule tail (decision 2). The
-## referee converts it to seconds at stamp time (beats × current_beat_sec) into the from==to busy
+## referee converts it to seconds at stamp time (beats × the attacker's resolved pace) into the from==to busy
 ## record; the local attacker mirrors that window as blocked input (commit_in_place) and every peer
 ## plays the recovery tell for it. 2.0 → attack rate = movement rate (a step is glide + 1 rest beat).
 ## NO-WEAPON FALLBACK (M3.7): this and melee_damage are read by the referee ONLY when equipped_weapon

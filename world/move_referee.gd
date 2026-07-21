@@ -28,7 +28,7 @@ const _NO_TILE := Vector2i(0, 0)
 
 ## Fallback per-step glide time in BEATS used only when a mover has no GlideSpeed resource
 ## assigned — a misconfiguration guard, warned once. The real value comes from the mover's tier.
-## Converted to seconds (× current_beat_sec) at stamp time like every authored beat value.
+## Converted to seconds at the mover's resolved pace (× beat) at stamp time like every authored beat value.
 @export var fallback_glide_beats: float = 1.0
 
 # The Players container, handed in by Main via activate(). We read child Player nodes from it
@@ -44,6 +44,12 @@ var _monsters: Node2D = null
 # a dead entity's occupancy and to read a wind-up's target tile. Untyped (combat's script has no
 # class_name) so its calls resolve dynamically — locals off it are typed explicitly. Null on clients.
 var _combat = null
+# The PaceReferee, handed in by Main via set_pace() on the HOST only (Tactical Zones v1, §2.8.7). Every
+# step/rest window this referee stamps reads the mover's resolved beat through it (beat_sec_for), so an
+# entity in the fight stamps tactical and one out of it stamps explore — the ONE pace decision, shared
+# by all stamp sites. Also armed for a player's bump: _begin_bump reports the hostile action to it
+# BEFORE stamping the bump's own window (no fast first swing). Untyped (no class_name); null on clients.
+var _pace = null
 
 # Authoritative occupancy: tile (Vector2i) -> ENTITY ID. THE adjudication truth; a node's `tile`
 # is only presentation. An entity id is a peer id (> 0) for a player or a host-assigned negative
@@ -112,6 +118,13 @@ func set_monsters(monsters: Node2D) -> void:
 ## is adjudicated. Null on clients (their referee is inert and never adjudicates).
 func set_combat(combat: Node) -> void:
 	_combat = combat
+
+
+## Host-only, called by Main right after the PaceReferee is activated and BEFORE any spawn — so the
+## first step/rest window this referee stamps already routes through the resolver. Null on clients
+## (their referee is inert and never stamps).
+func set_pace(pace: Node) -> void:
+	_pace = pace
 
 
 ## The one id -> node resolver (plan decision 5). Positive ids are players, negatives are monsters;
@@ -329,8 +342,8 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# it (rest defaults 0 in v0.8.0, so the action window equals the glide term). slide_sec is the
 	# VISIBLE tween that rides the broadcast — slide_fraction of the GLIDE TERM, never of glide+rest;
 	# the settle (action − slide) is the on-tile grid tell and exists even at rest 0.
-	var glide_sec := _step_duration(mover, dir)          # the GLIDE term (tier beats × beat × mult)
-	var busy_sec := glide_sec + _rest_duration()          # ACTION window (rest default 0 in v0.8.0)
+	var glide_sec := _step_duration(mover, dir, sender_peer_id)  # GLIDE term (tier beats × PACE beat × mult)
+	var busy_sec := glide_sec + _rest_duration(sender_peer_id)   # ACTION window (rest default 0 in v0.8.0)
 	var slide_sec := _slide_fraction() * glide_sec        # visible tween: fraction of the glide term
 
 	# Pipelined accept: the mover is mid-glide, so this step is committed NOW (occupancy swaps one
@@ -385,13 +398,14 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 
 
 ## Compute a step's GLIDE term seconds — NOT the visible tween (that is slide_fraction of this, see
-## _slide_fraction) and NOT the busy window (glide + rest, see _rest_duration). The mover's tier
-## beats (or the warned fallback), converted to seconds at the LIVE beat (GameManager.current_beat_sec),
-## then the diagonal multiplier on the GLIDE portion only. The debug glidesec= override, when set, replaces
-## the final glide seconds BEFORE the multiplier so a diagonal debug step still stamps override ×
-## multiplier — the exact mirror of the beat product it stands in for. `mover` is untyped: a Player
-## or a Monster, both of which expose glide_speed (the referee reads only that).
-func _step_duration(mover, dir: Vector2i) -> float:
+## _slide_fraction) and NOT the busy window (glide + rest, see _rest_duration). The mover's tier beats
+## (or the warned fallback), converted to seconds at the mover's RESOLVED PACE (PaceReferee.beat_sec_for
+## — explore or tactical per §2.8.7, read at stamp time so an in-flight commit keeps its baked seconds),
+## then the diagonal multiplier on the GLIDE portion only. The debug glidesec= override, when set,
+## replaces the final glide seconds BEFORE the multiplier so a diagonal debug step still stamps override
+## × multiplier — the exact mirror of the beat product it stands in for. `mover` is untyped: a Player or
+## a Monster, both of which expose glide_speed (the referee reads only that); mover_id keys the pace resolve.
+func _step_duration(mover, dir: Vector2i, mover_id: int) -> float:
 	var glide_beats := fallback_glide_beats
 	if mover.glide_speed == null:
 		if not _warned_null_speed:
@@ -399,7 +413,7 @@ func _step_duration(mover, dir: Vector2i) -> float:
 			_warned_null_speed = true
 	else:
 		glide_beats = mover.glide_speed.glide_beats
-	var base := GameManager.beats_to_sec(glide_beats)
+	var base := glide_beats * _pace_beat_sec(mover_id)
 	if GameManager.debug_glide_override_sec > 0.0:
 		base = GameManager.debug_glide_override_sec
 	if dir.x != 0 and dir.y != 0:
@@ -407,13 +421,24 @@ func _step_duration(mover, dir: Vector2i) -> float:
 	return base
 
 
-## The REST seconds appended to every step's action window (DESIGN §2.8): move_rest_beats converted
-## at the live beat. Defaults to 0 as of v0.8.0 (the committed-rest experiment was answered/retired;
-## the visible slide carries the pause now — see slide_fraction). Still a SEPARATE term from the
-## glide — the diagonal multiplier does NOT scale the rest (a diagonal step glides longer but rests
-## the same). Baked into busy_sec at stamp time (stamp-and-bake): a later tempo change never re-derives it.
-func _rest_duration() -> float:
-	return GameManager.beats_to_sec(GameManager.config.move_rest_beats)
+## The mover's resolved beat (seconds) at stamp time — tactical or explore per PaceReferee (§2.8.7).
+## Falls back to the explore beat when no pace referee is injected (a defensive path: this referee only
+## ever stamps host-side, where Main injects the resolver — the fallback is for parse/unit safety, not a
+## live code path).
+func _pace_beat_sec(entity_id: int) -> float:
+	if _pace != null:
+		return _pace.beat_sec_for(entity_id)
+	return GameManager.explore_beat_sec
+
+
+## The REST seconds appended to every step's action window (DESIGN §2.8): move_rest_beats converted at
+## the mover's RESOLVED PACE (§2.8.7 — same pace as the glide term, keyed by mover_id). Defaults to 0 as
+## of v0.8.0 (the committed-rest experiment was answered/retired; the visible slide carries the pause now
+## — see slide_fraction). Still a SEPARATE term from the glide — the diagonal multiplier does NOT scale
+## the rest (a diagonal step glides longer but rests the same). Baked into busy_sec at stamp time
+## (stamp-and-bake): a later tempo change never re-derives it.
+func _rest_duration(mover_id: int) -> float:
+	return GameManager.config.move_rest_beats * _pace_beat_sec(mover_id)
 
 
 ## The clamped visible-slide fraction (DESIGN §2.8, v0.8.0). Read live from GameConfig and clamped
@@ -432,6 +457,16 @@ func _slide_fraction() -> float:
 ## record. Damage/duration come from the combat referee (stats live in ONE place); `attacker` is
 ## untyped so the reads duck-type across player (the only M3 bumper) and a future monster bumper.
 func _begin_bump(attacker_id: int, attacker, target_id: int, target) -> Dictionary:
+	# Anti-cheese, ordered FIRST (Tactical Zones v1, §2.8.7): a bump is the ONLY way a player attacks in
+	# M3, and _begin_bump is where that attack's own window (bump_duration_of, below) is stamped. Report
+	# the hostile action to the pace resolver BEFORE that stamp so the triggering swing is ITSELF a
+	# tactical-pace action (no fast first swing) AND the forcing window keeps the attacker tactical for
+	# a beat afterward — even against the brainless dummy (the rule is uniform). attacker_id is always a
+	# player here (only players bump). Deviation from the plan's literal "combat_referee.apply_damage"
+	# placement: apply_damage runs AFTER this window is already stamped, so reporting there would miss
+	# the ordering the spec's "before stamping that attack's own window" clause requires.
+	if _pace != null:
+		_pace.report_hostile_action(attacker_id)
 	var damage: int = _combat.damage_of(attacker)
 	var duration: float = _combat.bump_duration_of(attacker)
 	commit_in_place(attacker_id, duration)

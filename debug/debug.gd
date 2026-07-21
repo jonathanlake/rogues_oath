@@ -175,7 +175,7 @@ func _ready() -> void:
 	# (hosts never send peer_ready), so it's applied in the client branch alongside join=.
 	var fake_version := ""
 	# host-only beat override (seconds); inert on the client and without the arg. Sets the whole-game
-	# tempo (GameManager.current_beat_sec seed) so a scripted run can test a slower/faster beat
+	# tempo (GameManager.explore_beat_sec seed) so a scripted run can test a slower/faster beat
 	# end-to-end — e.g. beatsec=0.40 — without editing the .tres. Unlike glidesec=/windupsec= (which
 	# override a single FINAL duration), this scales EVERYTHING authored in beats together.
 	var beat_override := 0.0
@@ -287,7 +287,7 @@ func _ready() -> void:
 		# is capacity-kicked — a two-window test for the kick path.
 		if max_players > 0:
 			GameManager.config.max_players = max_players
-		# beatsec= is host-only: main.gd seeds current_beat_sec from this override at session start
+		# beatsec= is host-only: main.gd seeds explore_beat_sec from this override at session start
 		# (before any verdict), so setting it before host_game() is enough. Inert on the client (it
 		# seeds from its own config) — the host stamps every duration, so both windows' visible cadence
 		# still matches. Independent of glidesec=/windupsec= (this scales all beats; those pin one value).
