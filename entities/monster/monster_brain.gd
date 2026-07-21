@@ -17,16 +17,22 @@ extends Node
 ## resolution, since a wind-up busy record ends without a glide_finished to wake it. Otherwise it
 ## paths one step toward the nearest player via WorldGrid.find_path (walls-only A*) and submits it
 ## through the referee's host-local validator. A refused step or an empty path schedules a re-think
-## rethink_beats later, and a busy gate (mid glide+rest) polls on the tight epsilon — both are the
-## hot-loop guard (a brain never re-thinks twice in one frame) and mirror MoveInput's retry cadence.
+## rethink_beats later.
+##
+## Chase parity (v0.9.3): at a BUSY boundary think (glide_finished fires at the SLIDE boundary while
+## the referee still holds this monster committed through the SETTLE), the brain PIPELINES its next
+## step — submits it mid-glide so the referee's _pending slot promotes+broadcasts it at the exact
+## action-window boundary, ZERO gap, the identical machinery a held-key player rides. An always-armed
+## epsilon BACKSTOP (settle + epsilon = status-quo timing) recovers the chase whenever the pipeline
+## is refused (blocked/corner/adjacent/no-path/hold-origin). See _think's busy gate for the full why.
 
 ## Re-think delay in BEATS after a refused/blocked action (a contested tile back-off) — converted at
 ## the live beat when used, not cached (DESIGN §2.8; matches MoveInput's held-retry cadence so a
 ## monster and a player back off a contested tile together). 1 beat = one movement step. NOTE: the
-## BUSY-gate case (the referee still showing this monster mid action window) does NOT use this delay — it
-## schedules ONE wake at exactly the remaining SETTLE ((1 - slide_fraction) of the glide term + any rest,
-## plus a small epsilon), so the monster resumes right as its action window ends rather than a whole
-## back-off beat later — cadence stays uniform, speed parity with players preserved (see _think).
+## BUSY-gate case (the referee still showing this monster mid action window) does NOT use this delay —
+## it pipelines the next step (zero-gap promotion) and, as a recovery BACKSTOP, arms ONE wake at the
+## remaining SETTLE ((1 - slide_fraction) of the glide term + any rest, plus a small epsilon) so a
+## refused pipeline resumes right as the action window ends — cadence stays uniform (see _think).
 @export var rethink_beats: float = 1.0
 
 ## Small margin (seconds) added past a wind-up's duration when the brain schedules its own
@@ -93,18 +99,27 @@ func on_boundary() -> void:
 func _think() -> void:
 	if not _active:
 		return
-	# Busy gate: only ever act between committed steps. The referee holds this monster busy for the whole
-	# ACTION window (glide term + rest), but the node's glide_finished (which woke us via on_boundary)
-	# fires at the SLIDE boundary — so a post-slide think lands mid-SETTLE and sees busy. The remaining
-	# busy is then the settle remainder, so schedule ONE wake there + epsilon rather than polling: the
-	# monster resumes right as its window ends, no busy loop. Should the gate ever trip from a rarer
-	# mid-slide wake, the same delay simply re-checks a little later and converges — self-healing, never a lockup.
+	# Busy gate: the referee holds this monster committed for the whole ACTION window (glide term +
+	# rest), but the node's glide_finished (which woke us via on_boundary) fires at the SLIDE boundary
+	# — so a post-slide think lands mid-SETTLE and sees busy. This is the chase-parity hot loop.
 	if _referee.is_entity_moving(_entity_id):
-		# glide_finished woke us at the SLIDE boundary, but the referee holds us busy for the whole
-		# ACTION window (glide term + rest). The remaining busy is the SETTLE: (1 - slide_fraction) of
-		# the glide term, plus any rest. Schedule ONE wake there (+ epsilon) so we resume right as the
-		# window ends — no poll. Under-shoot (e.g. a diagonal step's longer window) just re-checks and
-		# converges (self-healing); over-shoot wakes a hair late. Own tier read via the injected type.
+		# Two things happen here, in order:
+		#   1) Compute the always-armed BACKSTOP wake at the remaining SETTLE + epsilon. Settle is
+		#      (1 - slide_fraction) of the glide term plus any rest = 0.3 beats at the defaults, so the
+		#      wake lands windup_rethink_epsilon_sec (0.05s) PAST the action-window boundary — the exact
+		#      per-step wall-clock the pre-v0.9.3 code paid on EVERY step. Now purely a recovery path.
+		#   2) PIPELINE the next chase step NOW (_try_pipeline_next_step). On success the referee's
+		#      _pending slot promotes+broadcasts it at the action boundary with ZERO gap — the identical
+		#      held-key machinery — and the promoted step's glide_finished drives the next think, so we
+		#      skip the backstop. Any refusal falls through and the backstop recovers at status-quo timing.
+		#
+		# WHY: the epsilon-wake WAS the open-field chase gap (v0.9.2 playtest, Jon+Jeff). Scheduling it
+		# on every step cost a fixed windup_rethink_epsilon_sec (0.05s, NOT beat-scaled) of wall-clock
+		# per step, so a goblin lost 0.05/beat_sec of ground each step — 20% at a 0.25s beat, 10% at
+		# 0.50s — while a held-key player rode the referee's zero-gap _pending promotion. Pipelining the
+		# step puts the monster on that same promotion path: exact open-field parity (Jon's decision —
+		# escapes come from corners/body-blocking, never raw speed; per-monster glide_beats stays the
+		# future speed dial). Losing one step at a corner is INTENDED; the backstop re-decides there.
 		var glide_beats := 1.0
 		if _monster_type != null and _monster_type.glide_speed != null:
 			glide_beats = _monster_type.glide_speed.glide_beats
@@ -114,7 +129,16 @@ func _think() -> void:
 			glide_beats *= GameManager.config.diagonal_step_multiplier
 		var slide_fraction := clampf(GameManager.config.slide_fraction, 0.05, 1.0)
 		var settle_beats := (1.0 - slide_fraction) * glide_beats + GameManager.config.move_rest_beats
-		_reschedule_after(GameManager.beats_to_sec(settle_beats) + windup_rethink_epsilon_sec)
+		var backstop_sec := GameManager.beats_to_sec(settle_beats) + windup_rethink_epsilon_sec
+		# Arm the backstop ONLY when no step was pipelined this think. A successful pipeline is carried
+		# to the next think by the promoted step's glide_finished, so arming here too would fire a
+		# redundant busy think that re-arms in turn (backstop thinks are themselves busy) — an unbounded
+		# timer cascade. Not-pipelined is the ONLY case needing recovery, and it always gets it. (This
+		# is the one deliberate refinement of the plan's "arm at every busy think": it faithfully keeps
+		# the plan's stated intent that the backstop "no-ops if the pipelined step ran".)
+		if _try_pipeline_next_step():
+			return
+		_reschedule_after(backstop_sec)
 		return
 	var my_tile: Vector2i = _referee.tile_of_entity(_entity_id)
 	# tile_of_entity returns a wall-sentinel tile when the entity is untracked (e.g. despawned
@@ -134,33 +158,16 @@ func _think() -> void:
 		return
 
 	# Aggro acquisition + persistence (monster_type.aggro_range_tiles + aggro_persists, DESIGN §2.8):
-	# nearest player by Chebyshev (king-move) distance. aggro_range_tiles <= 0 = unlimited (whole-room
-	# aggro), so an un-ranged monster skips the gate entirely. Otherwise the brain ACQUIRES when the
-	# nearest is within range (latching _aggroed) and, with aggro_persists true (the default), IGNORES
-	# range from then on — the chase never leash-drops, following the target across rooms. With
-	# aggro_persists false the legacy LEASH returns: _aggroed tracks current in-range state and the
-	# chase drops the instant the target breaks range. Type is null only on a client's inert brain,
-	# which never reaches here; the guard keeps a misconfig from crashing.
-	var nearest_dist: int = -1
-	for t in targets:
-		var d: int = maxi(absi(t.x - my_tile.x), absi(t.y - my_tile.y))
-		if nearest_dist < 0 or d < nearest_dist:
-			nearest_dist = d
-	if _monster_type != null and _monster_type.aggro_range_tiles > 0:
-		var in_range := nearest_dist <= _monster_type.aggro_range_tiles
-		if in_range:
-			_aggroed = true
-		elif not _monster_type.aggro_persists:
-			# Legacy leash: aggro drops the moment the target breaks range (persistence off).
-			_aggroed = false
-		# Un-acquired, or leash-dropped, means idle on the re-think cadence. A latched persistent
-		# aggro skips straight past this — range no longer matters once acquired.
-		if not _aggroed:
-			_reschedule()
-			return
+	# _should_chase latches/leashes _aggroed from the nearest-target Chebyshev distance and reports
+	# whether to engage. Un-acquired / leash-dropped means idle on the re-think cadence. The SAME
+	# helper the busy-think pipeline consults, so both chase paths make the identical acquire decision.
+	var nearest_dist := _nearest_target_dist(my_tile, targets)
+	if not _should_chase(nearest_dist):
+		_reschedule()
+		return
 
 	# Adjacent to a hostile player? (M3: every player is hostile to the monster — the faction rule;
-	# when neutral factions exist this filters by is_hostile_to.) Chunk-2 seam: request a wind-up.
+	# when neutral factions exist this filters by is_hostile_to.) Request a wind-up.
 	for t in targets:
 		if maxi(absi(t.x - my_tile.x), absi(t.y - my_tile.y)) == 1:
 			# Request an attack against that tile (decision 3; DESIGN §2.8). The combat referee runs
@@ -183,13 +190,8 @@ func _think() -> void:
 	# Not adjacent: step toward the NEAREST player by path length over the walls-only grid. Body
 	# occupancy is deliberately not in that grid (bodies are volatile), so the referee's validator
 	# is the authority on whether the chosen step is actually free.
-	var best_path: Array[Vector2i] = []
-	for t in targets:
-		var path := WorldGrid.find_path(my_tile, t)
-		# find_path returns [] for unreachable (sealed/OOB) and a >= 2 path when a step exists.
-		if path.size() >= 2 and (best_path.is_empty() or path.size() < best_path.size()):
-			best_path = path
-	if best_path.is_empty():
+	var dir := _first_step_toward(my_tile, targets)
+	if dir == Vector2i.ZERO:
 		# Every player unreachable (walls only — a corridor-blocking PLAYER is handled as the
 		# adjacent-attack case above, so the single-goblin M3 can't softlock here). A monster
 		# blocked by another MONSTER would re-think forever — known M3 limitation; multi-monster
@@ -197,7 +199,6 @@ func _think() -> void:
 		_reschedule()
 		return
 
-	var dir := best_path[1] - my_tile
 	# Remember the step's shape for the settle wake: a DIAGONAL step's action window carries the
 	# diagonal multiplier (the referee stamps it), so the busy-gate's settle math must match or the
 	# wake fires early and burns an extra reschedule per diagonal step (speed-parity leak at any
@@ -209,6 +210,98 @@ func _think() -> void:
 	# schedules nothing here; only a refusal falls through to the re-think.
 	if not _referee.submit_monster_intent(_entity_id, dir):
 		_reschedule()
+
+
+## Busy-think MOVEMENT pipeline (chase parity, v0.9.3). Called ONLY from the busy gate, where
+## glide_finished woke us mid-SETTLE (the current step still committed in the referee). Computes the
+## next chase step from our POST-STEP tile — the current glide's DESTINATION, which under the conga
+## toggle is already this entity's single occupancy entry (tile_of_entity returns it) — and submits
+## it into the referee's _pending slot, which promotes+broadcasts it at the exact action-window
+## boundary the current step ends on. That is the identical zero-gap machinery a held-key player
+## rides. Returns true ONLY when a step was actually pipelined (the caller then skips the backstop and
+## lets the promoted step's glide_finished drive the next think); any refusal returns false so the
+## caller arms the status-quo backstop.
+##
+## MOVEMENT ONLY: if the nearest target is Chebyshev-adjacent to our post-step tile we do NOT pipeline
+## — a monster never bumps, so a step there would waste the slot; the backstop wake fires the normal
+## attack think instead (the 0.05s then only delays ENTERING melee, imperceptible; the hot chase loop
+## stays zero-gap). Gated on the SAME conga toggle players pipeline under (origin_frees_at_glide_start)
+## — under hold-origin the slot is off for everyone and the backstop recovers at status-quo timing.
+func _try_pipeline_next_step() -> bool:
+	# Pipelining only exists under conga; the referee refuses a held-origin pipeline anyway, but gate
+	# here too so we fall straight to the backstop rather than eating a guaranteed-refused submit.
+	if not GameManager.config.origin_frees_at_glide_start:
+		return false
+	# Post-step tile = the current glide's destination (our one occupancy entry under conga).
+	var my_tile: Vector2i = _referee.tile_of_entity(_entity_id)
+	if WorldGrid.is_wall(my_tile):
+		return false
+	var targets: Array = _referee.player_tiles()
+	if targets.is_empty():
+		return false
+	var nearest_dist := _nearest_target_dist(my_tile, targets)
+	# Same acquire/leash decision the idle branch makes — never pipeline a chase we wouldn't start.
+	if not _should_chase(nearest_dist):
+		return false
+	# Movement only: adjacency is the attack think's job, fired by the backstop next boundary.
+	if nearest_dist <= 1:
+		return false
+	var dir := _first_step_toward(my_tile, targets)
+	if dir == Vector2i.ZERO:
+		return false
+	# Pipelined steps aim at the target's submit-time position (one think stale — the same trade a
+	# held-key player makes; the next boundary think re-aims). Only update _last_step_was_diagonal on
+	# a SUCCESSFUL submit: on a refusal it must stay the CURRENT (still-gliding) step's shape so the
+	# caller's already-computed backstop settle math still matches.
+	if _referee.submit_monster_intent(_entity_id, dir):
+		_last_step_was_diagonal = dir.x != 0 and dir.y != 0
+		return true
+	return false
+
+
+## Nearest target by Chebyshev (king-move) distance from `my_tile`. Returns -1 only for an empty
+## target list (callers guard that first). Shared by the idle branch and the busy-think pipeline so
+## both read distance identically.
+func _nearest_target_dist(my_tile: Vector2i, targets: Array) -> int:
+	var nearest := -1
+	for t in targets:
+		var d: int = maxi(absi(t.x - my_tile.x), absi(t.y - my_tile.y))
+		if nearest < 0 or d < nearest:
+			nearest = d
+	return nearest
+
+
+## Aggro acquire + leash decision (monster_type.aggro_range_tiles + aggro_persists, DESIGN §2.8),
+## with the _aggroed latch side effect. aggro_range_tiles <= 0 (or a null type — a client's inert
+## brain, which never reaches here) = UNLIMITED aggro, so the gate is skipped and we always chase.
+## Otherwise ACQUIRE when the nearest is within range (latching _aggroed); with aggro_persists true
+## (default) range no longer matters once latched — the chase never leash-drops, following across
+## rooms. With aggro_persists false the legacy LEASH returns: _aggroed tracks current in-range state
+## and the chase drops the instant the target breaks range. Returns whether to engage.
+func _should_chase(nearest_dist: int) -> bool:
+	if _monster_type == null or _monster_type.aggro_range_tiles <= 0:
+		return true
+	if nearest_dist <= _monster_type.aggro_range_tiles:
+		_aggroed = true
+	elif not _monster_type.aggro_persists:
+		_aggroed = false
+	return _aggroed
+
+
+## First step DIRECTION toward the nearest player by path length over the walls-only A* grid, or
+## Vector2i.ZERO if every player is unreachable (sealed/OOB). Body occupancy is deliberately NOT in
+## that grid (bodies are volatile) — the referee's validator is the authority on whether the chosen
+## step is actually free. Shared by the idle branch and the busy-think pipeline.
+func _first_step_toward(my_tile: Vector2i, targets: Array) -> Vector2i:
+	var best_path: Array[Vector2i] = []
+	for t in targets:
+		var path := WorldGrid.find_path(my_tile, t)
+		# find_path returns [] for unreachable and a >= 2 path when a step exists.
+		if path.size() >= 2 and (best_path.is_empty() or path.size() < best_path.size()):
+			best_path = path
+	if best_path.is_empty():
+		return Vector2i.ZERO
+	return best_path[1] - my_tile
 
 
 ## Schedule one re-think rethink_beats from now (the refused/blocked/no-target back-off cadence),

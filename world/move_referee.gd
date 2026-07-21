@@ -58,11 +58,13 @@ var _gliding: Dictionary = {}
 # origin_frees_at_glide_start=false branch, where the origin is held until arrival, so the
 # destination must be reserved separately for the duration of the glide. Empty in the true branch.
 var _reserved: Dictionary = {}
-# Pending pipelined step: peer_id -> {from, to, duration}. At most ONE per mover — the next step,
-# adjudicated AT ACCEPT (origin = the current glide's destination) but its broadcast HELD until
-# that glide's completion boundary (_finish_glide promotes it). Players ONLY: the pipeline exists
-# to hide client RTT, and monsters (negative ids) are host-local brains with no RTT that think at
-# step boundaries — the pipelined branch gates on id > 0, so a monster never enters this slot.
+# Pending pipelined step: entity_id -> {from, to, slide_sec, busy_sec}. At most ONE per mover — the
+# next step, adjudicated AT ACCEPT (origin = the current glide's destination) but its broadcast HELD
+# until that glide's completion boundary (_finish_glide promotes it). Players use it to hide client
+# RTT; MONSTERS (negative ids) use it too as of v0.9.3 (chase parity) — the host-local brain submits
+# its next step at the SLIDE boundary so the promotion lands at the action-window boundary with zero
+# gap, the identical held-key machinery (see monster_brain._try_pipeline_next_step). The gate no
+# longer excludes negative ids; only the conga toggle + a free slot admit a step, for any mover.
 #
 # Adjudicate-at-accept is NOT a prediction under origin_frees_at_glide_start=true: occupancy
 # mutates ONLY at sequential accepts (the pending slot swaps _occupied immediately, one step
@@ -140,12 +142,18 @@ func is_tile_free(tile: Vector2i) -> bool:
 ## the brain can back off and re-think. A brain-submitted intent bypasses NetEvents._handle_intent
 ## (which is what broadcasts a player's accepted verdict), so the referee must post the event here.
 ##
-## Monsters never pipeline, so a deferred verdict can't occur here; if one somehow did it's an
-## invariant break (a monster wrongly holding a pending slot) — treat it as a non-accept.
+## As of v0.9.3 monsters DO pipeline (chase parity): a mid-glide submit returns a DEFERRED accept —
+## the referee already committed the step (occupancy swapped one deeper) and HELD the broadcast for
+## _finish_glide's promotion at the action-window boundary. That is a success with nothing to post
+## here; report accepted so the brain skips its backstop and lets the promoted step's glide_finished
+## drive the next think. (Monsters never bump, so a deferred monster verdict is always a pipelined
+## accept — never the bump path's deferred shape, which is players-only.)
 func submit_monster_intent(entity_id: int, dir: Vector2i) -> bool:
 	var verdict := _validate_glide(entity_id, { "dir": dir })
-	if not verdict.get("ok", false) or verdict.get("deferred", false):
+	if not verdict.get("ok", false):
 		return false
+	if verdict.get("deferred", false):
+		return true
 	var data: Dictionary = verdict["data"]
 	NetEvents.post_event("glide_to", data, entity_id)
 	return true
@@ -258,10 +266,14 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# step's origin, so walkable/corner/dest-free/duration all adjudicate against the right tile.
 	var is_pipelined := false
 	if _gliding.has(sender_peer_id):
-		# Monsters (id <= 0) never pipeline: host-local brains have no RTT and only think at step
-		# boundaries, so a mid-glide monster intent is a bug/backstop and just gets "already moving"
-		# (the slot is players-only — see _pending). Players pipeline only under the conga toggle.
-		if sender_peer_id <= 0 or not GameManager.config.origin_frees_at_glide_start or _pending.has(sender_peer_id):
+		# A mover already gliding may commit ONE next step into the pending slot — but only under the
+		# conga toggle, and only if the slot is free; a third intent (one gliding + one held) is the
+		# same "already moving" bonk as before. Players pipeline to hide client RTT; MONSTERS pipeline
+		# too as of v0.9.3 (chase parity) — the host-local brain submits its next step at the SLIDE
+		# boundary (mid-settle, still committed) so the promotion lands at the action-window boundary
+		# with zero gap, exactly the held-key path. Negative ids are no longer excluded here; the
+		# promotion in _finish_glide resolves the mover untyped so it handles players AND monsters.
+		if not GameManager.config.origin_frees_at_glide_start or _pending.has(sender_peer_id):
 			return { "ok": false, "reason": "already moving" }
 		is_pipelined = true
 
@@ -507,9 +519,10 @@ func _finish_glide(peer_id: int, token: int) -> void:
 		var busy_sec: float = slot["busy_sec"]
 		# Re-resolve the mover: exit cleanup erases the slot, so a live pending slot should always
 		# have a live node — a miss is a real invariant break, worth a log line, never a silent
-		# no-op. Erase the stale _gliding record and bail defensively. Pending is players-only, so
-		# this id is always positive and _node_of_id lands in the Players container.
-		var mover := _node_of_id(peer_id) as Player
+		# no-op. Erase the stale _gliding record and bail defensively. The slot holds players AND
+		# monsters (chase parity, v0.9.3), so resolve UNTYPED through _node_of_id — the code below
+		# only touches the duck-typed AoO surface (is_hostile_to), never a Player-only member.
+		var mover = _node_of_id(peer_id)
 		if mover == null:
 			push_warning("[MoveReferee] pending slot for peer %d has no node — dropping" % peer_id)
 			_gliding.erase(peer_id)
@@ -562,8 +575,9 @@ func _on_entity_entered(node: Node) -> void:
 
 ## Forget an entity wholesale as its node leaves (disconnect / despawn / teardown): drop its resting
 ## tile, any in-flight glide, any pending slot, and any reservation, so a stale timer or a rejoin
-## finds clean state. Shared by players and monsters: monsters never enter _pending (guarded in the
-## validator) or _reserved under conga, but those erases are harmless no-ops there.
+## finds clean state. Shared by players and monsters. Both can now hold a _pending slot (chase
+## parity, v0.9.3), so erasing it here is the SOLE cancel path for a monster's held step too — a
+## despawned/killed monster mid-pipeline drops it cleanly. (_reserved stays a no-op under conga.)
 func _on_entity_exiting(node: Node) -> void:
 	if not (node is Entity):
 		return
