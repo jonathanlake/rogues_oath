@@ -49,6 +49,18 @@ extends Resource
 ## smoothing, independent of either tempo dial. Default 1.5. Read HOST-side by PaceReferee.
 @export var tactical_exit_sec: float = 1.5
 
+## Tactical Zones v1 (DESIGN §2.8.7). PLAYER TACTICAL BUBBLE radius in Chebyshev tiles (v0.10.3): a
+## player who is NOT directly in a fight still resolves to TACTICAL pace when within this many king-move
+## tiles of a teammate who qualifies via a MONSTER source (forcing window, leash, or monster bubble).
+## Rationale (Jon): "the group fights together" — a nearby ally in combat pulls you into the fight's
+## cadence too. DELIBERATELY smaller than the enemy bubble (goblin 5) at default 3, so proximity to an
+## engaged teammate is a tighter zone than the monster's own reach. NO CHAINING: only the monster-sourced
+## teammate projects this pull — a merely-pulled or hysteresis-lingering player projects nothing, so two
+## allies can't hold each other tactical forever after the fight ends (enforced by PaceReferee's two-pass
+## resolve). 0 = no player pull (the bubble is disabled; only direct monster sources make a player
+## tactical). Read HOST-side by PaceReferee.
+@export var player_tactical_radius_tiles: int = 3
+
 ## Rest beats appended to every movement step's committed window (DESIGN §2.8/§2.2). A step is now
 ## 1 beat TOTAL — this defaults to 0.0. Kept as a reversible, now-ANSWERED experiment: the v0.7.0
 ## committed rest (go-stop-go) read as lag in feel-testing, so the pause moved out of the action

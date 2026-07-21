@@ -22,16 +22,36 @@ extends Node2D
 @export var aggro_color: Color = Color(1.0, 0.15, 0.15, 0.15)
 ## Fill for the tactical radius (monster_type.tactical_radius_tiles), drawn OVER the aggro fill.
 @export var tactical_color: Color = Color(1.0, 0.9, 0.1, 0.15)
+## Fill for the LIVE player tactical bubble (v0.10.3) — a green disc of radius
+## GameConfig.player_tactical_radius_tiles drawn around each player currently resolved TACTICAL. Unlike
+## the red/yellow monster fills (static authored ranges), this one IS live: it tracks the host's
+## broadcast pace_changed events, so the ring shows only while that player is actually in the fight.
+@export var player_bubble_color: Color = Color(0.2, 1.0, 0.3, 0.15)
 
 # The Monsters container, handed in by Main via set_monsters on EVERY peer (component pattern — the
 # overlay never reaches up to read a sibling). Null until wired; a null ref draws nothing.
 var _monsters: Node2D = null
+# The Players container + the live per-player pace dict (entity_id -> is_tactical), handed in by Main via
+# set_players on EVERY peer (v0.10.3). The dict is Main's _tactical_players, mirrored from ALL pace_changed
+# events in both directions and pruned on death — passed BY REFERENCE, so the overlay reads Main's live
+# values without recomputing anything (broadcast-driven, no client inference → no flicker). Null/empty
+# until wired; a null container draws no player rings.
+var _players: Node2D = null
+var _tactical_players: Dictionary = {}
 
 
 ## Component wiring (v0.10.1): Main hands the overlay its Monsters container so it never reaches up to
 ## read a sibling itself (CLAUDE.md: components never reach up). A null ref draws nothing.
 func set_monsters(monsters: Node2D) -> void:
 	_monsters = monsters
+
+
+## Component wiring (v0.10.3): Main hands the overlay its Players container + the live pace dict (the same
+## object Main mutates, shared by reference) so the overlay can draw a green ring around each player the
+## host has resolved TACTICAL — without reaching up to a sibling or recomputing pace itself.
+func set_players(players: Node2D, tactical_players: Dictionary) -> void:
+	_players = players
+	_tactical_players = tactical_players
 
 
 func _ready() -> void:
@@ -65,9 +85,25 @@ func _draw() -> void:
 		var monster := child as Monster
 		if monster == null or monster.monster_type == null:
 			continue
-		# Aggro first (red), tactical second (yellow) so yellow wins where the two radii overlap.
+		# Aggro first (red), tactical second (yellow) so yellow wins where the two radii overlap. The
+		# tactical value comes from MonsterType.resolved_tactical_radius() — the SAME sentinel resolver
+		# PaceReferee reads — so the overlay paints exactly the ring the host adjudicates (never a
+		# -1-wide rect). A positive override draws verbatim; 0 draws nothing.
 		_draw_radius(monster.tile, monster.monster_type.aggro_range_tiles, aggro_color)
-		_draw_radius(monster.tile, monster.monster_type.tactical_radius_tiles, tactical_color)
+		_draw_radius(monster.tile, monster.monster_type.resolved_tactical_radius(), tactical_color)
+
+	# LIVE player tactical bubbles (v0.10.3): a green ring around each player the host has resolved
+	# TACTICAL, radius from the shared authored config (same value every peer). Only nodes present in BOTH
+	# $Players AND the live dict (value true) draw — a freed/disconnected player's stale dict entry is inert
+	# because its node is gone (Main also prunes on death). Broadcast-driven: no client recompute, no flicker.
+	if _players != null:
+		var player_radius := int(GameManager.config.player_tactical_radius_tiles)
+		for child in _players.get_children():
+			if not (child is Entity):
+				continue
+			if not bool(_tactical_players.get(child.entity_id, false)):
+				continue
+			_draw_radius(child.tile, player_radius, player_bubble_color)
 
 
 ## Fill every tile within `radius` Chebyshev (king-move) tiles of `center` with `color`. radius <= 0

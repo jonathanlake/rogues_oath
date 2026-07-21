@@ -75,6 +75,49 @@ mouse_filter = 2
 color = Color(0.7, 0, 0, 1)
 modulate = Color(1, 1, 1, 0)
 
+[node name="TacticalBorder" type="CanvasLayer" parent="."]
+layer = 10
+
+[node name="Border" type="Control" parent="TacticalBorder"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+modulate = Color(1, 1, 1, 0)
+
+[node name="Top" type="ColorRect" parent="TacticalBorder/Border"]
+anchor_right = 1.0
+offset_bottom = 6.0
+grow_horizontal = 2
+mouse_filter = 2
+color = Color(0.85, 0.05, 0.05, 0.18)
+
+[node name="Bottom" type="ColorRect" parent="TacticalBorder/Border"]
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -6.0
+grow_horizontal = 2
+mouse_filter = 2
+color = Color(0.85, 0.05, 0.05, 0.18)
+
+[node name="Left" type="ColorRect" parent="TacticalBorder/Border"]
+anchor_bottom = 1.0
+offset_right = 6.0
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.85, 0.05, 0.05, 0.18)
+
+[node name="Right" type="ColorRect" parent="TacticalBorder/Border"]
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -6.0
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.85, 0.05, 0.05, 0.18)
+
 [node name="Camera" type="Camera2D" parent="." unique_id=100000001]
 zoom = Vector2(1, 1)
 position_smoothing_enabled = true

@@ -113,6 +113,12 @@ const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN
 # (main.tscn), alpha 0 at rest, pulsed ONLY when OUR OWN avatar takes a hit. mouse_filter IGNORE so
 # it never eats input. Pure local presentation — never replicated, never adjudication.
 @onready var _hurt_vignette: ColorRect = $HurtVignette/Overlay
+# LOCAL-only tactical screen border (v0.10.3, §2.8.7 pace ENTRY cue): a thin red edge frame (four
+# ColorRects under one Control) on its own CanvasLayer (main.tscn), alpha 0 at rest, faded IN when OUR
+# OWN pace flips to tactical and OUT on explore. modulate is tweened on the parent Control so all four
+# edges fade together. Distinct from the hurt vignette pulse (which stays a per-hit red flash). Pure
+# local presentation — never replicated, never adjudication. mouse_filter IGNORE so it never eats input.
+@onready var _tactical_border: Control = $TacticalBorder/Border
 # Per-peer follow camera (M3.5). Lives under Main (not the avatar) so it SURVIVES the local avatar's
 # despawn on death — _update_camera stops tracking and it holds its last position instead of the view
 # snapping to origin. Pure local presentation: it reads only THIS peer's own avatar node, nothing
@@ -166,6 +172,9 @@ var _leaving: bool = false
 var _peer_ready_attempts: int = 0
 # Kill-prior slot for the local hurt vignette pulse (v0.6.3), so rapid hits replace rather than stack.
 var _vignette_tween: Tween = null
+# Kill-prior slot for the tactical-border fade (v0.10.3), so a rapid tactical/explore flip replaces the
+# in-flight fade rather than stacking competing tweens on the same modulate.
+var _border_tween: Tween = null
 # The local peer's own avatar node, tracked by _update_camera. Null until our player spawns (or after
 # our death); (re)acquired lazily from $Players by our peer id, so first spawn, late join, and F5
 # respawn all re-attach the camera uniformly. Local presentation only — never read for adjudication.
@@ -174,6 +183,11 @@ var _local_avatar: Node2D = null
 # host-authored pace_changed event for our own id, read by _update_tempo_display to emphasize the active
 # dial. Defaults false (explore emphasized), the correct pre-fight state on every peer before any flip.
 var _local_pace_tactical: bool = false
+# EVERY player's current pace (v0.10.3), entity_id -> is_tactical, mirrored on EVERY peer from ALL
+# pace_changed events in BOTH directions (seeds included) and pruned on `died`. Handed to the range
+# overlay by reference (set_players) so its F7 green player-bubble rings track the host's live pace with
+# no client recompute. Presentation only — never adjudication (the host owns the real resolve).
+var _tactical_players: Dictionary = {}
 # Host-only cache: the scene-default weapon's display_name, lazily read once from a fresh Player probe by
 # _scene_default_weapon_name for the late-join sync filter. Empty until first read.
 var _default_weapon_name: String = ""
@@ -207,6 +221,10 @@ func _ready() -> void:
 	# Wire the F7 range overlay its Monsters container on EVERY peer (component pattern — the overlay
 	# never reaches up to read a sibling itself). A null ref draws nothing; here it always resolves.
 	_range_overlay.set_monsters(_monsters)
+	# Also hand it the Players container + the live pace dict (v0.10.3) so it can draw a green ring around
+	# each player the host has resolved TACTICAL. The dict is shared BY REFERENCE — Main mirrors every
+	# pace_changed event into it (both directions) and the overlay reads it live, no recompute.
+	_range_overlay.set_players(_players, _tactical_players)
 
 	# Departure lines come from TRANSPORT truth now (v0.6.3), NOT node-exit. The old
 	# _players.child_exiting_tree "X left." hook fired on death AND on F5 reset too — both keep the
@@ -650,9 +668,17 @@ func _handle_died_event(event: Dictionary) -> void:
 	# this the tempo bar would FREEZE on whatever emphasis it last held (tactical, if we died mid-fight).
 	# Local presentation only — no wire event; a fresh spawn (F5) re-seeds via on_player_spawned.
 	var data: Dictionary = event.get("data", {})
-	if int(data.get("entity_id", 0)) == multiplayer.get_unique_id():
+	var dead_id := int(data.get("entity_id", 0))
+	# Prune the dead entity from the overlay's live pace dict (v0.10.3) — its node frees so a stale entry is
+	# already inert (no node to ring), but drop it for hygiene so the dict tracks only living players.
+	_tactical_players.erase(dead_id)
+	if dead_id == multiplayer.get_unique_id():
 		_local_pace_tactical = false
 		GameManager.local_pace_is_tactical = false
+		# Own death clears the tactical screen border too (§2.8.7, A): the host posts no further pace_changed
+		# for a gone entity, so without this the border would freeze on whatever it last held (red, if we died
+		# mid-fight). Local presentation only — a fresh spawn (F5) re-seeds via on_player_spawned.
+		_set_tactical_border(false)
 		_update_tempo_display()
 
 
@@ -708,15 +734,21 @@ func _handle_class_changed_event(event: Dictionary) -> void:
 	player.set_class(player_class)
 
 
-## All peers: adopt a host-resolved pace flip (Tactical Zones v1, §2.8.7). Filter to OUR OWN player id —
-## the cue emphasizes YOUR active dial, so a flip for someone else never repaints our bar (each peer runs
-## this only for itself). Store the local pace and refresh the readout; the own-player log line rides the
-## same event via game_log. No local inference — the pace is host-authored, played from the event.
+## All peers: adopt a host-resolved pace flip (Tactical Zones v1, §2.8.7). Mirrors EVERY player's pace
+## (both directions, seeds included) into _tactical_players so the F7 overlay can ring every tactical
+## player (v0.10.3); the OWN-player branch below additionally repaints THIS peer's tempo bar + screen
+## border. No local inference — the pace is host-authored, played from the event.
 func _handle_pace_changed_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
-	if int(data.get("entity_id", 0)) != multiplayer.get_unique_id():
+	var entity_id := int(data.get("entity_id", 0))
+	var is_tactical := str(data.get("pace", "explore")) == "tactical"
+	# Mirror ALL players (any id, both directions) for the overlay's green rings — NOT filtered to self.
+	_tactical_players[entity_id] = is_tactical
+	# The cue below emphasizes YOUR active dial, so only OUR OWN flip repaints our bar/border.
+	if entity_id != multiplayer.get_unique_id():
 		return
-	_local_pace_tactical = str(data.get("pace", "explore")) == "tactical"
+	_local_pace_tactical = is_tactical
+	_set_tactical_border(is_tactical)
 	# Mirror the pace into GameManager so move_input's retry/hold throttles cadence to the host's stamped
 	# window during fights (§2.8.7, C). Seeds count too — a joiner spawning into a fight adopts the right
 	# cadence at once. Presentation/pacing only; adjudication stays host-side (never reads this).
@@ -819,6 +851,18 @@ func _flash_hurt_vignette() -> void:
 	_hurt_vignette.modulate.a = 0.35
 	_vignette_tween = create_tween()
 	_vignette_tween.tween_property(_hurt_vignette, "modulate:a", 0.0, 0.25)
+
+
+## LOCAL-only tactical screen border (§2.8.7 pace ENTRY cue, v0.10.3): fade the red edge frame IN when
+## our OWN pace flips to tactical, OUT on explore. Driven from _handle_pace_changed_event (own-id branch)
+## and cleared to explore on own death / round reset. Kill-prior slot so a rapid flip replaces the
+## in-flight fade. 0.3s tween, target alpha 1.0 (the edges' own 0.18 alpha sets the actual subtlety).
+## Distinct from _flash_hurt_vignette (the per-hit pulse) — different node, different cue.
+func _set_tactical_border(active: bool) -> void:
+	if _border_tween != null and _border_tween.is_valid():
+		_border_tween.kill()
+	_border_tween = create_tween()
+	_border_tween.tween_property(_tactical_border, "modulate:a", 1.0 if active else 0.0, 0.3)
 
 
 ## Host-only: a new PLAYER node just entered — mend autonomous-mover state for a possible late joiner.
@@ -1051,6 +1095,17 @@ func _reset_round() -> void:
 		node.free()
 	for node in _monsters.get_children():
 		node.free()
+
+	# Clear the local tactical border (v0.10.3): a reset frees every avatar without posting a `died` event,
+	# so nothing else would drop it on the resetting peer. On EVERY OTHER peer the respawn's seed
+	# pace_changed(explore) drives _set_tactical_border(false) via _handle_pace_changed_event — the same
+	# mechanism that re-seeds the tempo bar — so this host-side clear plus that seed cover all peers.
+	_set_tactical_border(false)
+	# Drop the pace mirror wholesale (GLM v0.10.3 review #1): entity ids are PEER ids, so a respawn
+	# reuses them — a stale `true` from before the reset would paint a phantom green ring on the fresh
+	# spawn for the frame(s) until its seed pace_changed(explore) lands. Clearing here (and letting the
+	# seeds repopulate) closes that window on the resetting peer and caps cross-round growth.
+	_tactical_players.clear()
 
 	# d. Clear the slot bookkeeping so the respawn assigns fresh — the exit hooks above have already
 	# run to completion, so referee occupancy is provably empty HERE, no wait of any kind.

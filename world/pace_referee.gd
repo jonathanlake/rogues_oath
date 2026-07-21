@@ -82,6 +82,15 @@ var _last_broadcast: Dictionary = {}
 # The coarse re-check Timer (host-only), created + started in activate(). Server-internal — it drives
 # the EXIT flush no state update signals (hysteresis expiry). Held so its ownership is unambiguous.
 var _poll_timer: Timer = null
+# PASS-1 cache (Tactical Zones v1 two-pass resolve, v0.10.3): player id -> MONSTER-SOURCED qualification
+# (forcing window ∨ leash ∨ monster bubble), the ONLY qualification that PROJECTS a teammate-pull bubble
+# (pass 2). Recomputed fresh at the top of every resolve BATCH — each _flush_pace_changes and each
+# single-player _resolve_tactical — and reused across the players within that batch, so pass 2's proximity
+# check reads a precomputed map instead of recomputing pass 1 per player (no O(n²) recompute of the
+# engagement loop). NEVER cached across batches: player tiles move between polls and no state event
+# signals that, so a fresh batch always re-reads authoritative tiles. Holds PURE reads (no hysteresis
+# side effect) — the hysteresis writer is _resolve_player_tactical, downstream of this.
+var _pass1: Dictionary = {}
 
 
 # ── Public methods ────────────────────────────────────────────────────────────
@@ -185,23 +194,50 @@ func report_hostile_action(player_id: int) -> void:
 
 # ── Private methods ───────────────────────────────────────────────────────────
 
-## THE one pace resolve, shared by beat_sec_for (stamps) and _flush_pace_changes (poll) so the two can
-## never disagree — and the hysteresis WRITER: any resolve that lands tactical for a player stamps
-## _last_qualified as a side effect. Monsters: tactical iff engaged (aggroed — always inside their own
-## bubble), no hysteresis/forcing. Players: qualify now (bubble ∨ leash ∨ forcing) → tactical + stamp the
-## clock; else hold tactical until tactical_exit_sec since the last qualify (hysteresis, no flicker at a
-## bubble edge); no _last_qualified entry = never qualified = explore immediately (fresh spawns / joiners).
+## THE one pace resolve, shared by beat_sec_for (stamps), on_player_spawned (seed) and — via
+## _resolve_player_tactical — _flush_pace_changes (poll), so the stamp verdict and the poll verdict for
+## the same instant can never disagree. Monsters: tactical iff engaged (aggroed — always inside their own
+## bubble), no hysteresis/forcing, no pass-1 map. Players: this single-entity entry refreshes the pass-1
+## map for the whole party (so the player's teammate-pull reads current qualifications) then defers to
+## _resolve_player_tactical, which is the qualify + hysteresis half.
 func _resolve_tactical(entity_id: int) -> bool:
+	# Monsters: tactical iff engaged (always inside their own bubble); no hysteresis/forcing, no pass 1.
 	if entity_id < 0:
 		return _engagements.has(entity_id)
-	if _player_qualifies_tactical(entity_id):
-		_last_qualified[entity_id] = Time.get_ticks_msec()
+	# Single-player resolve (a stamp via beat_sec_for, or the spawn seed): refresh the pass-1 map for the
+	# whole party first so this player's pass-2 teammate-pull reads current qualifications, THEN resolve.
+	# The flush path recomputes ONCE for its whole loop and calls _resolve_player_tactical directly instead.
+	_recompute_pass1()
+	return _resolve_player_tactical(entity_id)
+
+
+## The per-player half of the resolve — assumes _pass1 is already fresh for this batch (caller's job).
+## Applies the hysteresis and is the hysteresis WRITER: any resolve that lands tactical (monster-sourced
+## OR teammate-pulled) stamps _last_qualified as a side effect, so a pulled player earns its own exit
+## hysteresis the moment its puller's real source is gone. No _last_qualified entry = never qualified =
+## explore immediately (fresh spawns / joiners).
+func _resolve_player_tactical(player_id: int) -> bool:
+	if _player_qualifies_tactical(player_id):
+		_last_qualified[player_id] = Time.get_ticks_msec()
 		return true
-	if _last_qualified.has(entity_id):
-		var elapsed_ms := Time.get_ticks_msec() - int(_last_qualified[entity_id])
+	if _last_qualified.has(player_id):
+		var elapsed_ms := Time.get_ticks_msec() - int(_last_qualified[player_id])
 		if elapsed_ms < int(GameManager.config.tactical_exit_sec * 1000.0):
 			return true
 	return false
+
+
+## Refresh the PASS-1 map (monster-sourced qualification for every live player) for the current resolve
+## batch. Pure reads only — _monster_sourced_qualifies has no side effects — so recomputing it here and
+## again for the resolving player itself (in _player_qualifies_tactical) is cheap and can never disturb
+## hysteresis. Called once per _flush_pace_changes and once per single-player _resolve_tactical.
+func _recompute_pass1() -> void:
+	_pass1 = {}
+	if _players == null:
+		return
+	for child in _players.get_children():
+		if child is Entity and child.entity_id > 0:
+			_pass1[child.entity_id] = _monster_sourced_qualifies(child.entity_id)
 
 
 ## Re-resolve every live player and post a `pace_changed` for each whose pace flipped since the last
@@ -212,13 +248,17 @@ func _resolve_tactical(entity_id: int) -> bool:
 func _flush_pace_changes() -> void:
 	if _players == null:
 		return
+	# Recompute the pass-1 map ONCE for this whole flush (not per player), then resolve each player
+	# against it — pass 2's teammate-pull reads the precomputed map, so the O(n) engagement work runs
+	# per player only once, never n times per player. The _last_broadcast flip diff is unchanged.
+	_recompute_pass1()
 	for child in _players.get_children():
 		if not (child is Entity):
 			continue
 		var player_id: int = child.entity_id
 		if player_id <= 0:
 			continue
-		var tactical := _resolve_tactical(player_id)
+		var tactical := _resolve_player_tactical(player_id)
 		if not _last_broadcast.has(player_id) or bool(_last_broadcast[player_id]) != tactical:
 			_last_broadcast[player_id] = tactical
 			NetEvents.post_event("pace_changed", { "entity_id": player_id, "pace": _pace_name(tactical) })
@@ -230,9 +270,44 @@ func _pace_name(tactical: bool) -> String:
 	return "tactical" if tactical else "explore"
 
 
-## Does this player qualify for tactical RIGHT NOW (bubble ∨ leash ∨ forcing window)? Pure read of
-## live engagement + forcing state + authoritative tiles — the hysteresis is applied by the caller.
+## PASS 1 + PASS 2 combined: does this player qualify for tactical RIGHT NOW? Pass 1 =
+## _monster_sourced_qualifies (this player, directly). Pass 2 = TEAMMATE PULL: within Chebyshev
+## player_tactical_radius_tiles of any teammate whose PASS-1 (monster-sourced) qualification is true.
+## Reading _pass1 (monster-sourced only) for the pull — NOT broadcast pace, NOT the puller's hysteresis —
+## is what prevents chaining and mutual-lock: a merely-pulled or hysteresis-lingering teammate has a
+## false _pass1 entry and projects nothing, so when the real monster source is gone every pulled player
+## drops to its own hysteresis and the whole group exits orderly. Pure read; the hysteresis is applied by
+## the caller (_resolve_player_tactical). Assumes _pass1 is fresh for this batch (caller recomputed it).
 func _player_qualifies_tactical(player_id: int) -> bool:
+	# Pass 1: this player's own monster-sourced qualification (the common, in-the-fight case). Recomputed
+	# directly here (not read from _pass1) so a stamp for a player not in the just-built map still resolves
+	# its own source correctly — one extra cheap call, and it can never be stale for self.
+	if _monster_sourced_qualifies(player_id):
+		return true
+	# Pass 2: teammate pull. Disabled at radius <= 0, and needs this player's live tile.
+	var radius := int(GameManager.config.player_tactical_radius_tiles)
+	if radius <= 0:
+		return false
+	var puller_tile := _tile_of(player_id)
+	if puller_tile == _NO_TILE:
+		return false
+	for other_id in _pass1:
+		# Only MONSTER-SOURCED teammates project the pull (no chaining); skip self and non-sourced.
+		if int(other_id) == player_id or not bool(_pass1[other_id]):
+			continue
+		var other_tile := _tile_of(int(other_id))
+		if other_tile == _NO_TILE:
+			continue
+		if maxi(absi(puller_tile.x - other_tile.x), absi(puller_tile.y - other_tile.y)) <= radius:
+			return true
+	return false
+
+
+## PASS 1: does this player qualify for tactical from a MONSTER SOURCE right now (monster bubble ∨ leash ∨
+## forcing window)? Pure read of live engagement + forcing state + authoritative tiles — no hysteresis,
+## no teammate pull. This is the ONLY qualification that PROJECTS a pull bubble onto teammates (pass 2),
+## so a bubble-pulled or hysteresis-lingering player never appears here — that is the anti-chain guarantee.
+func _monster_sourced_qualifies(player_id: int) -> bool:
 	# Forcing window (anti-cheese) — a recent hostile action keeps the actor tactical regardless of
 	# proximity, so a player can't tap-and-flee to cheese explore pace between swings. Stays AHEAD of the
 	# engagement loop: a cheap map probe that short-circuits before any per-monster work.
@@ -283,7 +358,11 @@ func _radius_of(monster_id: int) -> int:
 		return 0
 	var node := _monsters.get_node_or_null(str(monster_id))
 	if node is Monster and node.monster_type != null:
-		return node.monster_type.tactical_radius_tiles
+		# The -1 "match aggro" sentinel resolves inside MonsterType.resolved_tactical_radius() — the one
+		# shared resolver (the F7 overlay reads the same method), so the sentinel never reaches the
+		# Chebyshev comparison in _monster_sourced_qualifies. (If aggro is 0 = unlimited, the match is
+		# 0 = no proximity bubble; the qualify loop skips radius <= 0 — leash/forcing still apply.)
+		return node.monster_type.resolved_tactical_radius()
 	return 0
 
 

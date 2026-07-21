@@ -540,6 +540,19 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.10.3 (2026-07-21)** — Tactical clarity (overnight batch chunk 2). §2.8.7 amendments:
+  (1) a monster's tactical bubble now DEFAULTS to its aggro range — `tactical_radius_tiles`
+  ships as a -1 "match aggro" sentinel resolved in one shared place
+  (`MonsterType.resolved_tactical_radius()`), so the goblin's in-the-fight zone = its
+  noticed-you zone (5) unless a designer splits them; (2) NEW player tactical bubble
+  (`player_tactical_radius_tiles`, default 3 — deliberately tighter than the enemy 5): a
+  player near a teammate who's genuinely in a fight gets pulled to tactical pace too. No
+  chaining by construction — only MONSTER-sourced players project the pull (two-pass
+  resolve reads qualification, never broadcast pace), so allies can't hold each other
+  tactical after combat ends (verified: adjacent players exit orderly). F7 overlay adds a
+  live green ring around tactical players (broadcast-driven via a per-peer pace mirror,
+  pruned on death/reset); a subtle red screen border fades in while YOUR pace is tactical.
+  Feel= for Jon+Jeff: border alpha (0.18), green tint, player radius 3.
 - **v0.10.2 (2026-07-21)** — Feedback polish (Jon+Jeff v0.10.0 playtest, overnight batch
   chunk 1). Bumping a hostile you can't attack yet (pipelined/mid-glide step into an enemy)
   now rejects with a distinct `occupied_hostile` reason and the client suppresses the bonk
