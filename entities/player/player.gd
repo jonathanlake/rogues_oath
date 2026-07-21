@@ -37,24 +37,15 @@ const _SPRITE_TILES: Array[Vector2i] = [
 ## record; the local attacker mirrors that window as blocked input (commit_in_place) and every peer
 ## plays the recovery tell for it. 2.0 → attack rate = movement rate (a step is glide + 1 rest beat).
 ## NO-WEAPON FALLBACK (M3.7): this and melee_damage are read by the referee ONLY when equipped_weapon
-## is null — a weapon's attack_beats/damage win when one is equipped.
+## is null — a weapon's attack_beats/damage win when one is equipped. equipped_weapon itself, the rig
+## reference, set_weapon, and play_weapon_swing now live on Entity (v0.9.3, shared with Monster); this
+## node keeps only the player-specific swap flow (the swap intent/validator/event and late-join sync).
 @export var attack_recovery_beats: float = 2.0
-
-## The player's currently equipped weapon (M3.7, DESIGN §2.3.7). Drives the WeaponRig's idle sprite
-## + swing on EVERY peer, and is read HOST-side by the combat referee for this attacker's damage +
-## occupied window (attack_beats). player.tscn assigns longsword.tres (today's feel preserved). The
-## host sets it AUTHORITATIVELY in the swap validator; every peer adopts it via the swap event
-## (set_weapon) — so a client never adjudicates from a self-set value. Null falls back to
-## melee_damage / attack_recovery_beats above.
-@export var equipped_weapon: WeaponType = null
 
 @onready var _move_input := $MoveInput
 @onready var _path_marker: Node2D = $PathMarker
 @onready var _commit_audio: AudioStreamPlayer = $CommitSent
 @onready var _bonk_audio: AudioStreamPlayer = $Bonk
-# The action-timeline weapon rig (M3.7). A component this node WIRES — the rig never reaches up: this
-# node seeds its weapon at spawn, updates it on a swap event, and drives its swing off the attack event.
-@onready var _weapon_rig := $WeaponRig
 
 # Assigned by main.gd's spawn_function (from the replicated spawn config) before this
 # node enters the tree, so _ready can read them on every peer.
@@ -140,23 +131,6 @@ func commit_in_place(duration_sec: float) -> void:
 	if _move_input.enabled:
 		_move_input.on_accepted(tile)
 	get_tree().create_timer(duration_sec).timeout.connect(func(): glide_finished.emit())
-
-
-## Adopt a weapon (M3.7), driven on EVERY peer by the swap event (and the late-join sync): update the
-## authoritative-on-host equipped_weapon AND repaint the rig's idle sprite. The one place both move
-## together, so a swap can never leave the rig showing the old weapon. This node wires the rig; the
-## rig never reaches up. A null weapon hides the rig (the no-weapon fallback).
-func set_weapon(weapon: WeaponType) -> void:
-	equipped_weapon = weapon
-	_weapon_rig.set_weapon(weapon)
-
-
-## Drive the equipped weapon's swing toward `dir` over the stamped `duration_sec` (M3.7). Called by
-## Main off THIS player's `attack` event on every peer (the event carries the stamped window + the
-## weapon field that gates rig playback). Forwards to the rig — this node wires it, the rig owns the
-## choreography. Composes with the body lunge (play_attack) and the recovery tint (play_recovery).
-func play_weapon_swing(dir: Vector2i, duration_sec: float) -> void:
-	_weapon_rig.play_swing(dir, duration_sec)
 
 
 ## Rejection feedback (§2.3.4): a distinct red flash + a short 2px shake + the thud, all three, so

@@ -43,7 +43,17 @@ const DEFAULT_WINDUP_BEATS := 2.0
 ## spawn; the combat referee owns the live value and applies damage against it.
 @export var max_hp: int = 10
 
+## The monster's held weapon (v0.9.3 — monster attacks joined the WeaponType + WeaponRig system,
+## the same object a player equips). null (default) = WEAPONLESS: no rig sprite, no swing, no weapon
+## field on its attack events (the training dummy). When set, the weapon WINS over the legacy
+## attack fields below at all three CombatReferee read sites (damage / windup / recovery) — those
+## fields remain the null-weapon fallbacks. Seeded onto the Monster's equipped_weapon in _ready;
+## monsters don't swap, so it is read once at spawn. Authored as a .tres path (never streamed).
+@export var weapon: WeaponType = null
+
 ## Hit points removed per landed attack (deterministic — no to-hit roll, DESIGN §2.3 amendment).
+## NULL-WEAPON FALLBACK (v0.9.3): read by CombatReferee.damage_of ONLY when `weapon` is null — an
+## equipped weapon's `damage` wins.
 @export var attack_damage: int = 3
 
 ## Telegraph duration in BEATS between a monster committing its attack and the damage resolving
@@ -52,6 +62,8 @@ const DEFAULT_WINDUP_BEATS := 2.0
 ## now a per-monster DIAL set to 0 on the goblin: at 0 the attack is an instant deterministic
 ## strike (no telegraph, no whiff window) followed by recovery_beats. At > 0 the full telegraph/
 ## whiff machinery runs unchanged (CombatReferee.wind_up) — preserved behind the dial, not deleted.
+## NULL-WEAPON FALLBACK (v0.9.3): read by CombatReferee._windup_duration_of ONLY when `weapon` is
+## null — an equipped weapon's `windup_beats` wins (the goblin's 0 now lives on the claw).
 @export var windup_beats: float = DEFAULT_WINDUP_BEATS
 
 ## Recovery in BEATS the monster is BUSY after an instant strike (windup_beats == 0) resolves — the
@@ -62,6 +74,9 @@ const DEFAULT_WINDUP_BEATS := 2.0
 ## rate. Read HOST-side by CombatReferee (stamped to seconds) and MonsterBrain (post-attack pacing).
 ## Non-zero DEFAULT (like the windup's) so a fresh windup-0 monster never gets a zero-length busy
 ## by omission — attacking every brain poll must be an explicit authoring choice, never a default.
+## NULL-WEAPON FALLBACK (v0.9.3): CombatReferee._recovery_duration_of reads this ONLY when `weapon`
+## is null — an equipped weapon's `attack_beats` (its whole occupied window) wins (the goblin's 2.0
+## now lives on the claw's attack_beats). The brain's post-attack pacing still reads wind_up's return.
 @export var recovery_beats: float = 2.0
 
 ## Movement speed tier — a shared GlideSpeed resource, same mechanism players use. The referee

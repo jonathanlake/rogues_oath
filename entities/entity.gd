@@ -58,6 +58,16 @@ signal glide_finished
 ## placeholder the spawn config always writes over before the brain or referee reads it).
 @export var max_hp: int = 20
 
+## This entity's equipped weapon (M3.7 → unified onto every Entity, v0.9.3, DESIGN §2.3.7). Drives
+## the WeaponRig's swing on EVERY peer and is read HOST-side by the combat referee for this
+## attacker's damage + occupied window (weapon-first, ahead of the per-kind legacy fallbacks). How
+## it is set differs by kind: a PLAYER authors it in player.tscn (longsword) and the host reassigns
+## it authoritatively via the swap validator (every peer adopts it through set_weapon on the swap
+## event); a MONSTER seeds it in _ready from MonsterType.weapon (null = weaponless, e.g. the training
+## dummy). Null falls back to the subclass's legacy attack fields (Player.melee_damage /
+## MonsterType.attack_damage etc.). A client never adjudicates from a self-set value — the host reads it.
+@export var equipped_weapon: WeaponType = null
+
 # ── Public state ──────────────────────────────────────────────────────────────
 
 ## Entity id in the referees' ONE occupancy/HP space (plan decision 5): positive = a player's
@@ -91,6 +101,11 @@ var tile: Vector2i
 # A child on both scenes; play_hurt drives it with the strike direction so the streak reads
 # directional, and it rides the same attack event on every peer.
 @onready var _slash_fx: SlashFx = $SlashFx
+# The action-timeline weapon rig (M3.7 → shared by every Entity, v0.9.3). A component this node
+# WIRES — the rig never reaches up: the subclass seeds its weapon at spawn (set_weapon) and every
+# peer drives its swing off the attack event (play_weapon_swing). Present on both scenes (a null
+# weapon leaves it hidden — the no-weapon fallback for a weaponless monster like the dummy).
+@onready var _weapon_rig := $WeaponRig
 
 # The glide's position tween, held so a newer server event can kill it and catch up (never to
 # cancel a commitment — see glide_to). The flash/shake tweens are tracked separately so a real
@@ -105,7 +120,8 @@ func _ready() -> void:
 	# Contract guard: the shared presentation requires these exact child names. An @onready miss
 	# resolves silently to null and only explodes at first use — name the missing node NOW instead.
 	for missing in [["Sprite2D", _sprite], ["NameLabel", _name_label], ["HpLabel", _hp_label],
-			["Attack", _attack_audio], ["Hit", _hit_audio], ["SlashFx", _slash_fx]]:
+			["Attack", _attack_audio], ["Hit", _hit_audio], ["SlashFx", _slash_fx],
+			["WeaponRig", _weapon_rig]]:
 		if missing[1] == null:
 			push_error("[Entity] %s (entity %d) scene is missing required child '%s'" % [
 				name, entity_id, missing[0]])
@@ -199,6 +215,25 @@ func play_recovery(duration_sec: float) -> void:
 ## event carries. max rides the event so no peer needs to query the referee.
 func set_hp_display(hp: int, max_value: int) -> void:
 	_hp_label.text = "%d/%d" % [hp, max_value]
+
+
+## Adopt a weapon (M3.7 → shared by every Entity, v0.9.3): update the authoritative-on-host
+## equipped_weapon AND repaint the rig's idle region in ONE place, so a swap (player) or a spawn
+## seed (monster) can never leave the rig showing the old weapon. This node wires the rig; the rig
+## never reaches up. A null weapon hides the rig (the no-weapon fallback — a weaponless monster).
+## Player drives this on the swap event + late-join sync; Monster seeds it once at spawn.
+func set_weapon(weapon: WeaponType) -> void:
+	equipped_weapon = weapon
+	_weapon_rig.set_weapon(weapon)
+
+
+## Drive the equipped weapon's swing toward `dir` over the stamped `duration_sec` (M3.7 → any
+## Entity, v0.9.3). Called by Main off THIS entity's `attack` event on every peer (the event carries
+## the stamped window + the weapon field that gates rig playback). Forwards to the rig — this node
+## wires it, the rig owns the choreography. Composes with the body lunge (play_attack / a monster's
+## whiff bowstring) and the recovery tint (play_recovery), exactly as a player's swing does.
+func play_weapon_swing(dir: Vector2i, duration_sec: float) -> void:
+	_weapon_rig.play_swing(dir, duration_sec)
 
 
 # ── Private methods ───────────────────────────────────────────────────────────

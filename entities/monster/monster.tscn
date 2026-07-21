@@ -9,6 +9,8 @@
 [ext_resource type="AudioStream" uid="uid://by8wkshbhc6rw" path="res://assets/audio/slash.wav" id="7_slash"]
 [ext_resource type="AudioStream" uid="uid://dlrk1yqd7picf" path="res://assets/audio/SFX_CombatHitDesigned02.wav" id="8_hit"]
 [ext_resource type="Script" uid="uid://nngt3qv36bvj" path="res://entities/slash_fx.gd" id="9_slashfx"]
+[ext_resource type="Script" path="res://entities/player/weapon_rig.gd" id="10_rig"]
+[ext_resource type="Texture2D" uid="uid://5r3hjjukcluj" path="res://assets/32rogues/items.png" id="11_items"]
 
 ; Windup white-flash material (v0.6.1). resource_local_to_scene = true so EACH monster instance
 ; gets its OWN ShaderMaterial copy — a scene-assigned material is shared by default, which with
@@ -67,3 +69,13 @@ pitch_scale = 0.4
 
 [node name="SlashFx" type="Node2D" parent="." unique_id=928471635]
 script = ExtResource("9_slashfx")
+
+[node name="WeaponRig" type="Node2D" parent="." unique_id=928471636]
+script = ExtResource("10_rig")
+
+[node name="Sprite2D" type="Sprite2D" parent="WeaponRig" unique_id=928471637]
+visible = false
+texture_filter = 1
+texture = ExtResource("11_items")
+region_enabled = true
+region_rect = Rect2(96, 0, 32, 32)

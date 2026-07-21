@@ -507,12 +507,15 @@ func _handle_attack_event(event: Dictionary) -> void:
 	# host's busy record on the wire — no new sync, same event the whole party already receives.
 	if attacker != null:
 		attacker.play_recovery(float(data.get("duration_sec", 0.0)))
-	# Weapon rig swing (M3.7, DESIGN §2.3.7): played on EVERY peer for a weapon-bearing PLAYER attacker.
-	# Gate on FIELD PRESENCE + non-empty (a defaulted string never triggers it) AND the attacker having
-	# a rig (Player) — monster attacks carry no weapon field, so their existing cues stay untouched. It
-	# rides the SAME stamped duration_sec as the recovery tell, so the choreography auto-aligns to the
+	# Weapon rig swing (M3.7 → any Entity, v0.9.3, DESIGN §2.3.7): played on EVERY peer for a
+	# weapon-bearing attacker of EITHER kind. This tail runs for BOTH the landed and whiff branches
+	# above, so a whiffed weapon swing animates too (the whiff event now carries the weapon field).
+	# Gate on FIELD PRESENCE + non-empty (a defaulted string never triggers it) AND the attacker being
+	# an Entity (the rig + play_weapon_swing now live on Entity) — a weaponless attacker (bare-handed
+	# player, the training dummy) carries no weapon field, so its existing cues stay untouched. It rides
+	# the SAME stamped duration_sec as the recovery tell, so the choreography auto-aligns to the
 	# occupied window; the rig normalizes the phase fractions inside it.
-	if attacker is Player and data.has("weapon") and str(data.get("weapon", "")) != "":
+	if attacker is Entity and data.has("weapon") and str(data.get("weapon", "")) != "":
 		attacker.play_weapon_swing(dir, float(data.get("duration_sec", 0.0)))
 	# Local attacker's swing-busy mirror for a bump (decision 2) — players only (positive id), so
 	# commit_in_place is Player surface: deliberate narrow cast, not cruft.

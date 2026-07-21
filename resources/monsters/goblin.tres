@@ -2,12 +2,12 @@
 
 [ext_resource type="Resource" path="res://resources/speed_tiers/speed_slow.tres" id="1_dekqg"]
 [ext_resource type="Script" uid="uid://cl3pdmosdok4g" path="res://resources/monster_type.gd" id="1_type"]
+[ext_resource type="Resource" path="res://resources/weapons/claw.tres" id="2_claw"]
 
 [resource]
 script = ExtResource("1_type")
 display_name = "Goblin"
 atlas_coords = Vector2i(2, 0)
-windup_beats = 0.0
-recovery_beats = 2.0
 aggro_range_tiles = 5
 glide_speed = ExtResource("1_dekqg")
+weapon = ExtResource("2_claw")

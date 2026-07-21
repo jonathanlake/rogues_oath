@@ -54,6 +54,14 @@ func _ready() -> void:
 		_name_label.text = display_name
 		return
 	glide_speed = monster_type.glide_speed
+	# Seed the equipped weapon from the authored type (v0.9.3 — monster attacks joined the weapon
+	# system). null = weaponless: the training dummy shows no rig sprite, plays no swing, and stamps no
+	# weapon field on its (never-fired) attack events. set_weapon (Entity) repaints the rig on every
+	# peer; the goblin's claw drives both its swing choreography and the host-side damage/occupied-window
+	# reads (weapon-first in CombatReferee), with MonsterType.attack_damage/windup/recovery as the
+	# null-weapon fallbacks. Seeded once at spawn — monsters don't swap.
+	equipped_weapon = monster_type.weapon
+	set_weapon(equipped_weapon)
 	# Sprite: an optional atlas_texture override points this monster at a different sheet than the
 	# scene default (monsters.png); an optional non-zero atlas_region gives an explicit rect for a
 	# non-grid sheet, else derive the region from atlas_coords × TILE_PX as usual. Both are authored

@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="WeaponType" format=3]
+
+[ext_resource type="Script" path="res://resources/weapon_type.gd" id="1_weapon"]
+
+[resource]
+script = ExtResource("1_weapon")
+display_name = "claw"
+attack_beats = 2.0
+damage = 3
+windup_beats = 0.0
+atlas_coords = Vector2i(0, 8)
+attack_style = "slash"
+arc_degrees = 120.0
+orbit_radius_px = 12.0
+reach_px = 8.0

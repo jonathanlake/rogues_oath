@@ -101,10 +101,10 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 		"whiff": false,
 		"duration_sec": duration_sec,
 	}
-	# M3.7: a PLAYER attacker with a weapon stamps its `weapon` id so every peer animates the right
-	# rig (the guard is field-presence + non-empty in playback). Monster attacks carry NO weapon
-	# field — they keep their existing cues untouched.
-	if attacker is Player and attacker.equipped_weapon != null:
+	# Weapon stamp (v0.9.3): ANY Entity attacker with an equipped weapon stamps its `weapon` id so
+	# every peer animates the right rig (the guard is field-presence + non-empty in playback). A
+	# weaponless attacker (a bare-handed player, the training dummy) stamps no field — its cues stay.
+	if attacker is Entity and attacker.equipped_weapon != null:
 		attack_data["weapon"] = attacker.equipped_weapon.display_name
 	NetEvents.post_event("attack", attack_data, attacker_id)
 	if new_hp <= 0:
@@ -175,10 +175,11 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 ## export keeps its tuned name melee_damage (pinned in player.tscn), so the two stats keep their
 ## own names and this accessor stays the one translation point.
 func damage_of(node: Node) -> int:
+	# Weapon-first (v0.9.3): ANY Entity's equipped_weapon.damage wins for both kinds; the per-kind
+	# legacy field is the null-weapon fallback, then a hard 0. Explicit order: weapon → legacy → DEFAULT.
+	if node is Entity and node.equipped_weapon != null:
+		return node.equipped_weapon.damage
 	if node is Player:
-		# M3.7: the equipped weapon's damage wins; melee_damage is the no-weapon fallback only.
-		if node.equipped_weapon != null:
-			return node.equipped_weapon.damage
 		return node.melee_damage
 	if node is Monster and node.monster_type != null:
 		return node.monster_type.attack_damage
@@ -221,7 +222,7 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 	# Whiff: swing into empty/vacated ground. Distinct outcome — no damage, hp_after -1 (absent),
 	# target_tile carried so the client renders the swing toward the committed tile. recovery_sec
 	# still rides so the instant-strike attacker shows its recovery tell even on a (rare) whiff.
-	NetEvents.post_event("attack", {
+	var whiff_data := {
 		"attacker_id": attacker_id,
 		"attacker_name": _name_of(attacker),
 		"target_id": _NO_ENTITY,
@@ -233,7 +234,13 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 		"kind": kind,
 		"whiff": true,
 		"duration_sec": recovery_sec,
-	}, attacker_id)
+	}
+	# Weapon stamp on the WHIFF too (v0.9.3): a whiffed weapon swing still animates the rig arc, so a
+	# missed strike plays the weapon (it composes with the monster's whiff bowstring, exactly as a
+	# landed hit's swing composes with play_attack). A weaponless attacker stamps no field.
+	if attacker is Entity and attacker.equipped_weapon != null:
+		whiff_data["weapon"] = attacker.equipped_weapon.display_name
+	NetEvents.post_event("attack", whiff_data, attacker_id)
 
 
 ## Resolve a lethal hit SYNCHRONOUSLY (decision 7, Q1 placeholder). Erase HP, then erase the dead
@@ -303,6 +310,11 @@ func _max_hp_of(node: Node) -> int:
 ## MonsterType.DEFAULT_WINDUP_BEATS — the value's single authoring site — so the accessor is total
 ## without a shadow copy of the number here.
 func _windup_duration_of(node: Node) -> float:
+	# Weapon-first (v0.9.3): ANY Entity's equipped_weapon.windup_beats wins (the goblin's 0 lives on
+	# its claw now). Else the per-type monster windup, else DEFAULT_WINDUP_BEATS (the single authoring
+	# site for the telegraph default). Order: weapon → per-kind legacy → DEFAULT.
+	if node is Entity and node.equipped_weapon != null:
+		return GameManager.beats_to_sec(node.equipped_weapon.windup_beats)
 	var beats := MonsterType.DEFAULT_WINDUP_BEATS
 	if node is Monster and node.monster_type != null:
 		beats = node.monster_type.windup_beats
@@ -314,11 +326,11 @@ func _windup_duration_of(node: Node) -> float:
 ## conversion for a bump tail (bump_duration_of) and an instant strike's busy (wind_up). Unknown /
 ## missing-type node reads 0 (no recovery).
 func _recovery_duration_of(node: Node) -> float:
+	# Weapon-first (v0.9.3): ANY Entity's equipped_weapon.attack_beats IS its whole occupied window
+	# (no separate cooldown, Part 4 Q9). Order: weapon → per-kind legacy recovery field → hard 0.
+	if node is Entity and node.equipped_weapon != null:
+		return GameManager.beats_to_sec(node.equipped_weapon.attack_beats)
 	if node is Player:
-		# M3.7: the equipped weapon's attack_beats IS the bump's occupied window (the whole action
-		# window — no separate cooldown, Part 4 Q9); attack_recovery_beats is the no-weapon fallback.
-		if node.equipped_weapon != null:
-			return GameManager.beats_to_sec(node.equipped_weapon.attack_beats)
 		return GameManager.beats_to_sec(node.attack_recovery_beats)
 	if node is Monster and node.monster_type != null:
 		return GameManager.beats_to_sec(node.monster_type.recovery_beats)
