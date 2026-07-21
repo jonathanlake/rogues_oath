@@ -115,8 +115,11 @@ Consistency, not law:
 ## Assets
 
 `assets/32rogues/` — 2D roguelike sprite tileset (tiles, monsters, items, rogues, animals,
-animated tiles), committed to the repo with its `LICENSE.txt`. Placeholder-to-possibly-final:
-use it for all prototyping; re-check the license terms before any public release.
+animated tiles). **LOCAL-ONLY, gitignored** (v0.11.0, public-repo prep): the license bars
+redistribution, so the folder lives on each dev machine and was purged from git history —
+never commit it. Shipped game builds (the exported .exe) may contain it; that's the licensed
+use. Fresh clones need the folder dropped in before the project runs (see README).
+Placeholder-to-possibly-final: use it for all prototyping.
 
 ---
 

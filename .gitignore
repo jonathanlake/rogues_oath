@@ -1,2 +1,6 @@
 .godot/
 .glm-red-input.txt
+# 32rogues is a licensed asset pack ("may not redistribute") — kept LOCAL only, never pushed.
+# History was purged of it (2026-07-21) so the repo could go public. Fresh clones: get the
+# folder from Jon (or buy the pack from Seth Boyles on itch.io) and drop it in before running.
+assets/32rogues/
