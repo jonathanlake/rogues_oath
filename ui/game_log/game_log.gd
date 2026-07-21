@@ -125,11 +125,12 @@ func _on_event_received(event: Dictionary) -> void:
 				add_line("You died.")
 			else:
 				add_line("%s dies." % str(data.get("name", "")))
-		"round_reset":
-			# The host-authored dev round-reset (v0.5.4, disposable — M6's run flow replaces it).
-			# One distinct line on BOTH peers' logs so the re-seed is legible, never confusable with
-			# the "X joined." spam the respawn also produces (feedback rule §2.3.4).
-			add_line("— Round reset —")
+		"dev_reset_round":
+			# The dev round-reset outcome (v0.9.4 — was the anonymous host-authored "round_reset"; now
+			# rides the intent pipe so a CLIENT F5 resets too, and NAMES the presser). One distinct line on
+			# BOTH peers' logs — the ONE reset marker (feedback rule §2.3.4) — never confusable with the
+			# "X joined." spam the respawn also produces. Name goes through add_line's sink escape.
+			add_line("— Round reset (%s) —" % str(data.get("name", "Someone")))
 		"set_tempo":
 			# The host's tempo referee outcome (§2.8.3): an accepted set_tempo intent broadcasts under
 			# its own action name (like "chat"). One line naming who changed it, on every peer, so a live

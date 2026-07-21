@@ -301,6 +301,11 @@ func _ready() -> void:
 		# authoritatively (host single-threaded — the spawn happens in-validator, like swap_weapon),
 		# then broadcasts so both logs show "X summoned a goblin." A corridor presser is refused.
 		NetEvents.register_handler("dev_spawn_goblin", _validate_dev_spawn_goblin)
+		# Host-only: the F5 dev round-reset referee (v0.9.4). ANY peer submits dev_reset_round (like F6);
+		# this validator resolves the sender's name, defers the world re-seed (so it never runs mid-RPC-
+		# dispatch), and broadcasts one marker so both logs show "— Round reset (X) —". No world state
+		# rides the verdict — the respawns replicate via the spawners as they always have.
+		NetEvents.register_handler("dev_reset_round", _validate_dev_reset_round)
 		# Host-only: the weapon-swap referee (M3.7, DESIGN §2.3.7). A peer submits swap_weapon for its
 		# OWN player; this validator refuses it while the player is busy, otherwise toggles within the
 		# roster host-side and broadcasts. A dev-era control (M5's inventory replaces the hardwired roster).
@@ -355,20 +360,17 @@ func _notification(what: int) -> void:
 		_leaving = true
 
 
-## Host-only dev round-reset key (v0.5.4, F5) — a wire-session facility, NOT a game mechanic (see
-## _reset_round for the WORLD-re-seed framing). Host-gated at the source: only the server acts, so
-## there is no client->host RPC surface and no client-side reset lever — a client's F5 is a silent
-## no-op, which is acceptable for a dev key and stated here so it reads as deliberate, not a missing
-## branch. Handled (_unhandled_input) so a focused chat LineEdit consumes its own keys first; the
-## event is consumed whenever the action fires so F5 never falls through to anything else.
-## call_deferred, not a direct call: the reset frees nodes synchronously, and doing that from
-## inside input dispatch could perturb the same frame's input iteration — deferring runs the whole
-## reset in the idle deferred-flush phase, where the reset body is the only thing on the stack.
-## (Held-key echoes are already filtered: is_action_pressed defaults to allow_echo=false.)
+## Dev round-reset key (v0.5.4, F5) — a wire-session facility, NOT a game mechanic (see _reset_round
+## for the WORLD-re-seed framing). Open to EVERY peer (v0.9.4): F5 rides the intent pipe exactly like
+## F6 dev_spawn_goblin, so a CLIENT press resets too — the host validator (_validate_dev_reset_round)
+## adjudicates and defers the reset, then broadcasts one marker naming the presser. A DELIBERATE dev-era
+## decision: all dev tools stay open to all peers until they're removed for M6's real run flow; there is
+## no per-peer gate to justify here. Handled (_unhandled_input) so a focused chat LineEdit consumes its
+## own keys first; the event is consumed whenever the action fires so F5 never falls through to anything
+## else. (Held-key echoes are already filtered: is_action_pressed defaults to allow_echo=false.)
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("dev_reset_round"):
-		if multiplayer.is_server():
-			_reset_round.call_deferred()
+		NetEvents.submit_intent("dev_reset_round", {})
 		get_viewport().set_input_as_handled()
 	# Dev summon (F6, v0.9.2): ANY peer spawns a goblin in the room it is standing in. Unlike F5's
 	# host-only direct reset, this rides the intent pipe (submit_intent) so a CLIENT press works too —
@@ -897,10 +899,10 @@ func _reset_round() -> void:
 	if GameManager.spawn_monsters:
 		_spawn_goblins()
 
-	# f. One marker on the shared pipe so BOTH peers' logs show the reset distinctly (feedback rule
-	# §2.3.4): host-authored, peer 0 (server-originated, no validator). game_log renders "— Round reset —".
-	# Named specifically (not bare "reset") so M6's real run start/end events have namespace room.
-	NetEvents.post_event("round_reset", {})
+	# The reset marker is NOT posted here anymore (v0.9.4): the accepted dev_reset_round intent is the
+	# ONE source of the "— Round reset (X) —" log line (named after the presser), so a second anonymous
+	# marker here would double-log. _reset_round now does world re-seed only; the log line is the
+	# validator's broadcast. See _validate_dev_reset_round.
 
 
 ## Host-only. Spawn a goblin at each of GOBLIN_SPAWN_TILES, up to GameManager.monster_spawn_cap
@@ -1146,6 +1148,21 @@ func _validate_dev_spawn_goblin(sender_peer_id: int, _data: Dictionary) -> Dicti
 		"tile": spawn_tile,
 	})
 	return { "ok": true, "data": { "name": player_node.display_name } }
+
+
+## Host-only F5 dev round-reset referee (v0.9.4), registered with NetEvents in _ready. Mirrors the F6
+## dev_spawn_goblin path: ANY peer submits dev_reset_round (empty data), this validator resolves the
+## sender's display name (null-safe — a not-yet-spawned or mid-join sender falls back to "Someone", never
+## a crash) and DEFERS _reset_round so the synchronous mass-free runs in the idle deferred-flush phase,
+## never mid-RPC-dispatch (the same call_deferred discipline the old direct F5 used). The accepted intent
+## broadcasts as the dev_reset_round event carrying only the name — no world state rides the verdict; the
+## respawns replicate through the spawners exactly as before. game_log renders "— Round reset (X) —",
+## the ONE reset marker (feedback rule §2.3.4). Never refused: a reset has no world precondition.
+func _validate_dev_reset_round(sender_peer_id: int, _data: Dictionary) -> Dictionary:
+	var player_node := _players.get_node_or_null(str(sender_peer_id)) as Player
+	var presser_name := player_node.display_name if player_node != null else "Someone"
+	_reset_round.call_deferred()
+	return { "ok": true, "data": { "name": presser_name } }
 
 
 ## Host-only. Pick a spawn tile for the F6 summon inside `room` (a Rect2i): a RANDOM free walkable tile,

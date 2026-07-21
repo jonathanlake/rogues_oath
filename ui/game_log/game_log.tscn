@@ -7,13 +7,13 @@ script = ExtResource("1_gamelog")
 
 [node name="Panel" type="PanelContainer" parent="." unique_id=212293670]
 self_modulate = Color(1, 1, 1, 0.6)
-custom_minimum_size = Vector2(240, 90)
+custom_minimum_size = Vector2(200, 72)
 anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 8.0
-offset_top = -98.0
-offset_right = 248.0
+offset_top = -80.0
+offset_right = 208.0
 offset_bottom = -8.0
 grow_vertical = 0
 
@@ -23,12 +23,12 @@ layout_mode = 2
 [node name="Log" type="RichTextLabel" parent="Panel/VBox" unique_id=1191652504]
 layout_mode = 2
 size_flags_vertical = 3
-theme_override_font_sizes/normal_font_size = 8
-theme_override_font_sizes/bold_font_size = 8
+theme_override_font_sizes/normal_font_size = 6
+theme_override_font_sizes/bold_font_size = 6
 bbcode_enabled = true
 scroll_following = true
 
 [node name="Input" type="LineEdit" parent="Panel/VBox" unique_id=1976000619]
 layout_mode = 2
-theme_override_font_sizes/font_size = 8
+theme_override_font_sizes/font_size = 6
 placeholder_text = "Press Enter to chat"

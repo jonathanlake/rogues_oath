@@ -6,7 +6,7 @@
 script = ExtResource("1_weapon")
 display_name = "claw"
 attack_beats = 2.0
-damage = 3
+damage = 2
 windup_beats = 0.0
 atlas_coords = Vector2i(0, 8)
 attack_style = "slash"

@@ -80,20 +80,15 @@ func _on_latency_measured(latency_sec: float) -> void:
 func _compose_stats() -> String:
 	var fps := Engine.get_frames_per_second()
 	var frame_ms := 1000.0 / fps if fps > 0.0 else 0.0
-	var text := "FPS %d  (%.1f ms/frame)" % [int(fps), frame_ms]
+	var text := "FPS %d · %.1f ms" % [int(fps), frame_ms]
+	# The live-tempo line is deliberately gone (v0.9.4): it duplicated the always-on TempoDisplay bar
+	# exactly, so the overlay keeps only what that bar does NOT show — FPS and verdict latency.
 	if _samples.is_empty():
-		text += "\nmove verdict (ms): no samples yet"
+		text += "\nverdict ms last/med/p95: no samples yet"
 	else:
-		text += "\nmove verdict (ms, last %d): last %.1f | med %.1f | p95 %.1f" % [
-			_samples.size(), _samples.back() * 1000.0,
-			_percentile(0.5) * 1000.0, _percentile(0.95) * 1000.0]
-	# Live tempo (§2.8.3), both dials, read straight from GameManager so they track a set_tempo /
-	# set_tactical_tempo event within a refresh (the tactical dial is v0.9.2 groundwork — displayed, not
-	# yet read for stamping).
-	var explore := GameManager.current_beat_sec
-	var tactical := GameManager.tactical_beat_sec
-	text += "\nexplore %.2fs · %d BPM  |  tactical %.2fs · %d BPM" % [
-		explore, GameManager.bpm_of(explore), tactical, GameManager.bpm_of(tactical)]
+		text += "\nverdict ms last/med/p95: %.1f / %.1f / %.1f (n=%d)" % [
+			_samples.back() * 1000.0, _percentile(0.5) * 1000.0,
+			_percentile(0.95) * 1000.0, _samples.size()]
 	return text
 
 
