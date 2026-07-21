@@ -540,6 +540,20 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.10.1 (2026-07-21)** — Review fix pass on v0.10.0 (10 verified findings). Dev tuning
+  clamps every field to a named range (no more negative-damage heals — apply_damage also
+  floors amount at 0 — dead-on-arrival spawns, or overlay-stalling radii); godded hits
+  suppress the hurt presentation (white flash, slash streak, red vignette) so god mode reads
+  as the grey-0 no-op it is; the whiff "miss" popup — previously unreachable dead code —
+  spawns from the event's committed tile and actually renders; the F7 overlay draws one
+  room-clamped rect per radius (pixel-identical, stall-proof) and is parent-wired per the
+  component rule; three stale corner-rule docstrings rewritten; weapon/class late-join sync
+  collapses into one sync_player_field RPC filtered to changed-from-default; the tuning
+  pipeline and the godded event dict are single-sourced; /help derives its lists from the
+  shared tables and roster (can no longer lie); the dev-command subsystem extracts from
+  main.gd into debug/dev_commands.gd and popup FX into ui/fx_layer.gd (~190 lines out of
+  Main). Verified on temp ports while Jon+Jeff playtested, then on-screen: godded assault
+  with zero hurt feedback and frozen HP, batched overlay rects, popup rendering post-refactor.
 - **v0.10.0 (2026-07-21)** — Feature pass from Jon's playtest list. MOVEMENT FEEL: the diagonal
   corner rule relaxes to the classic form — blocked only when BOTH flanking orthogonals are
   walls (§2.2.7 amendment, playtest verdict; you can round a single wall corner, never squeeze
