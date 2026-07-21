@@ -198,6 +198,21 @@ func player_tiles() -> Array[Vector2i]:
 	return tiles
 
 
+## Brain accessor (v0.10.4): every OTHER monster's authoritative tile — occupancy values < 0, excluding
+## exclude_id (the querying monster's own tile must never be treated as an obstacle). Mirrors
+## player_tiles(); a monster brain hands the result to WorldGrid.find_path as `avoid` so it routes AROUND
+## its waiting siblings instead of submitting a blocked straight step every boundary. Under conga a
+## gliding sibling's entry sits at its DESTINATION, so the chaser routes around where the sibling is
+## heading — the honest Commitment-Rule read (a committed tile is as good as taken).
+func monster_tiles(exclude_id: int) -> Array[Vector2i]:
+	var tiles: Array[Vector2i] = []
+	for tile in _occupied:
+		var id: int = _occupied[tile]
+		if id < 0 and id != exclude_id:
+			tiles.append(tile)
+	return tiles
+
+
 ## The authoritative entity id resting on / claiming a tile, or 0 (never a real id) if free. Used by
 ## CombatReferee to resolve a wind-up's target-tile occupant. Mirrors is_tile_free's union: a body
 ## sits in _occupied (both timing branches), or _reserved while gliding onto the tile (hold-origin).

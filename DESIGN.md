@@ -540,6 +540,17 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.10.4 (2026-07-21)** — Goblins route around blockers + ghost-cam (overnight batch
+  chunk 3). Monster pathing now feeds sibling-occupied tiles into A* as temp-solids
+  (`MoveReferee.monster_tiles` → `find_path(avoid)`), with a walls-only fallback so a truly
+  sealed corridor still queues instead of dithering — the M3 "monster blocked by monster"
+  limitation is retired (verified: a goblin blocked behind its sibling in the 1-wide
+  corridor took the alternate loop through rooms E and D and attacked from the far side).
+  The referee stays the final arbiter (same-tile races: loser waits one boundary).
+  Ghost-cam: when YOUR avatar dies, your camera follows the nearest living teammate
+  (sticky; re-picks only when that node frees; own respawn always wins back; pre-first-
+  spawn intro hold unchanged) with a local "Following <name>." log line. Pure client-side
+  presentation — no wire changes.
 - **v0.10.3 (2026-07-21)** — Tactical clarity (overnight batch chunk 2). §2.8.7 amendments:
   (1) a monster's tactical bubble now DEFAULTS to its aggro range — `tactical_radius_tiles`
   ships as a -1 "match aggro" sentinel resolved in one shared place

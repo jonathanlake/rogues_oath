@@ -179,6 +179,15 @@ var _border_tween: Tween = null
 # our death); (re)acquired lazily from $Players by our peer id, so first spawn, late join, and F5
 # respawn all re-attach the camera uniformly. Local presentation only — never read for adjudication.
 var _local_avatar: Node2D = null
+# Ghost-cam follow target (v0.10.4): while OUR avatar is absent (dead), the camera follows a LIVING
+# teammate node instead of holding its last position. STICKY — re-picked only when this node is freed/
+# invalid. Cleared the instant our own avatar exists again (respawn/F5), which always wins the camera
+# back. Local presentation only — never networked, never read for adjudication. See _update_camera.
+var _spectate_target: Node2D = null
+# True once OUR avatar has existed at least once this session (set on every camera acquire). Gates the
+# ghost-cam: before our FIRST spawn the camera holds the intro view exactly as pre-v0.10.4 — spectate is
+# a death behavior, not a joining behavior (no "Following X." line while our own spawn replicates in).
+var _had_own_avatar: bool = false
 # The LOCAL player's current pace (Tactical Zones v1, §2.8.7 cue). Presentation only — set from the
 # host-authored pace_changed event for our own id, read by _update_tempo_display to emphasize the active
 # dial. Defaults false (explore emphasized), the correct pre-fight state on every peer before any flip.
@@ -756,25 +765,70 @@ func _handle_pace_changed_event(event: Dictionary) -> void:
 	_update_tempo_display()
 
 
-## Per-peer local camera follow (M3.5). Track OUR OWN avatar's position each frame; the avatar's glide
-## tween is already smooth, so the camera rides it smoothly (pure presentation — nothing networked).
-## (Re)acquire the avatar from $Players by our peer id whenever we don't hold a live one — covering
-## first spawn, late join, and F5 respawn — and snap the camera on (re)acquire. On our death the avatar
-## frees, re-acquire finds nothing, and the camera simply HOLDS its last position (no snap to origin).
+## Per-peer local camera follow (M3.5 + ghost-cam v0.10.4). Track OUR OWN avatar's position each frame;
+## the avatar's glide tween is already smooth, so the camera rides it smoothly (pure presentation —
+## nothing networked). (Re)acquire the avatar from $Players by our peer id whenever we don't hold a live
+## one — covering first spawn, late join, and F5 respawn — and snap the camera on (re)acquire; our own
+## avatar ALWAYS wins the camera back (and clears any spectate target). When our avatar is absent (dead),
+## GHOST-CAM follows a living teammate instead of holding on a corpse: a STICKY pick (nearest to the
+## camera's current position at pick time), re-chosen only when the followed node frees, glided over with
+## the existing position_smoothing (no snap on switch). Still holds in place only if no teammate exists.
 func _update_camera() -> void:
 	var acquired := false
 	if not is_instance_valid(_local_avatar):
 		_local_avatar = _players.get_node_or_null(str(multiplayer.get_unique_id())) as Node2D
-		# Nothing to follow (pre-first-spawn, or after our death) — hold the last position, no snap.
-		if _local_avatar == null:
-			return
-		acquired = true
-	# One unconditional follow assignment for both the acquire frame and every steady-state frame.
-	_camera.global_position = _local_avatar.global_position
-	if acquired:
-		# Snap on (re)acquire: the camera uses position_smoothing (main.tscn), so without this the view
-		# would ease in from its held position instead of snapping onto the freshly (re)acquired avatar.
-		_camera.reset_smoothing()
+		if _local_avatar != null:
+			acquired = true
+	if is_instance_valid(_local_avatar):
+		# Own avatar present — it always wins the camera back. Drop any ghost-cam target so a later death
+		# re-picks fresh from that moment's living teammates.
+		_had_own_avatar = true
+		_spectate_target = null
+		# One unconditional follow assignment for both the acquire frame and every steady-state frame.
+		_camera.global_position = _local_avatar.global_position
+		if acquired:
+			# Snap on (re)acquire: the camera uses position_smoothing (main.tscn), so without this the view
+			# would ease in from its held position instead of snapping onto the freshly (re)acquired avatar.
+			_camera.reset_smoothing()
+		return
+	# Ghost-cam: our avatar is absent AFTER having existed (i.e. we died). Follow a LIVING teammate,
+	# STICKY — re-pick only when the followed node is freed/invalid (is_instance_valid poll;
+	# _update_camera runs every frame). No reset_smoothing on switch, so the camera GLIDES over to the
+	# new target rather than snapping. Pre-FIRST-spawn is excluded (_had_own_avatar): a joining peer
+	# keeps the held intro view until its own avatar replicates in, exactly as before v0.10.4.
+	if not _had_own_avatar:
+		return
+	if not is_instance_valid(_spectate_target):
+		_spectate_target = _pick_spectate_target()
+		var spectated := _spectate_target as Player
+		if spectated != null and is_instance_valid(_game_log):
+			# One local combat-log line per switch (NOT sent over the wire — each dead peer logs its own).
+			# Guarded cast: a non-Player node under $Players just follows silently, never crashes the line.
+			_game_log.add_line("Following %s." % spectated.player_name)
+	if is_instance_valid(_spectate_target):
+		_camera.global_position = _spectate_target.global_position
+	# else: no living teammate to follow either — hold the last position, no snap (unchanged pre-spawn feel).
+
+
+## Ghost-cam target pick (v0.10.4): the LIVING teammate whose node is nearest the camera's current
+## position, or null when no other player node exists. Every child of $Players is a live avatar (dead
+## players' nodes are freed on death), so mere presence = alive. Called only while our own avatar is
+## invalid, but exclude our own id anyway so a same-frame respawn can never pick our own node.
+func _pick_spectate_target() -> Node2D:
+	var my_name := str(multiplayer.get_unique_id())
+	var best: Node2D = null
+	var best_dist := INF
+	for child in _players.get_children():
+		if child.name == my_name:
+			continue
+		var node := child as Node2D
+		if node == null:
+			continue
+		var d := _camera.global_position.distance_squared_to(node.global_position)
+		if d < best_dist:
+			best_dist = d
+			best = node
+	return best
 
 
 ## The one adopt-beat chokepoint (§2.8.3): set the LOCAL GameManager beat, then refresh the readout.

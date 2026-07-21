@@ -206,10 +206,11 @@ func _think() -> void:
 	# is the authority on whether the chosen step is actually free.
 	var dir := _first_step_toward(my_tile, targets)
 	if dir == Vector2i.ZERO:
-		# Every player unreachable (walls only — a corridor-blocking PLAYER is handled as the
-		# adjacent-attack case above, so the single-goblin M3 can't softlock here). A monster
-		# blocked by another MONSTER would re-think forever — known M3 limitation; multi-monster
-		# pathing is future work.
+		# Every player unreachable even by the walls-only fallback (a corridor-blocking PLAYER is handled
+		# as the adjacent-attack case above). As of v0.10.4 monsters path AROUND other monsters toward
+		# players (_first_step_toward's `avoid`) and, at a true monster-blocked chokepoint, fall back to a
+		# blocked straight step the referee refuses → queue. So ZERO here means a genuine WALL seal, not a
+		# monster traffic jam — back off on the re-think cadence and wait for the map to open.
 		_reschedule()
 		return
 
@@ -336,13 +337,34 @@ func _report_engagement(aggroed: bool, target_id: int) -> void:
 
 
 ## First step DIRECTION toward the nearest player by path length over the walls-only A* grid, or
-## Vector2i.ZERO if every player is unreachable (sealed/OOB). Body occupancy is deliberately NOT in
-## that grid (bodies are volatile) — the referee's validator is the authority on whether the chosen
-## step is actually free. Shared by the idle branch and the busy-think pipeline.
+## Vector2i.ZERO if every player is unreachable. Body occupancy is deliberately NOT baked into that grid
+## (bodies are volatile) — but as of v0.10.4 a monster ROUTES AROUND its waiting siblings: every OTHER
+## monster's tile (from _referee.monster_tiles) is handed to find_path as `avoid` (temp-solid for THAT
+## query only, then restored), so a goblin behind another goblin detours instead of stalling. FALLBACK:
+## if NO target is reachable while avoiding siblings (a corridor genuinely blocked by monsters — a true
+## chokepoint), retry WITHOUT avoid so we still return the blocked straight step; the referee then refuses
+## it (a sibling holds the tile) and the caller reschedules = orderly queueing at the choke. A monster must
+## never dither pathless when a route exists through a waiting sibling. The referee's validator remains the
+## authority on whether the chosen step is actually free. Shared by the idle branch and the busy-think pipeline.
 func _first_step_toward(my_tile: Vector2i, targets: Array) -> Vector2i:
+	var avoid: Array[Vector2i] = _referee.monster_tiles(_entity_id)
+	var dir := _best_first_step(my_tile, targets, avoid)
+	if dir != Vector2i.ZERO:
+		return dir
+	# No sibling-avoiding route to ANY target — fall back to the straight walls-only path (keep today's
+	# blocked-step-then-queue behavior at a true chokepoint). Skips the retry when there was nothing to
+	# avoid (avoid empty ⇒ the first scan already used the walls-only grid).
+	if avoid.is_empty():
+		return Vector2i.ZERO
+	return _best_first_step(my_tile, targets, [])
+
+
+## The shared path scan: first step DIRECTION toward the NEAREST reachable target over the walls-only A*
+## grid with `avoid` tiles temp-solid, or Vector2i.ZERO if every target is unreachable under that avoid set.
+func _best_first_step(my_tile: Vector2i, targets: Array, avoid: Array[Vector2i]) -> Vector2i:
 	var best_path: Array[Vector2i] = []
 	for t in targets:
-		var path := WorldGrid.find_path(my_tile, t)
+		var path := WorldGrid.find_path(my_tile, t, avoid)
 		# find_path returns [] for unreachable and a >= 2 path when a step exists.
 		if path.size() >= 2 and (best_path.is_empty() or path.size() < best_path.size()):
 			best_path = path
