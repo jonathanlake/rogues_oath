@@ -79,8 +79,8 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    one step per beat. Fresh presses use the EXPLICIT slide boundary (`glide_finished`):
    during the visible SLIDE a fresh tap stays dropped (you are visibly mid-move); from slide
    end to action-window end (the SETTLE — visibly standing) a fresh press queues via the
-   pipeline slot with the §2.2.8 commit-sent cue (inputs never silently vanish while you look
-   ready). A CONTINUING hold needs the threshold in ANY phase — so a hold that merely
+   pipeline slot (§2.2.8 — the queued step's own glide is the acknowledgment; the separate
+   commit-sent flash was retired v0.10.2). A CONTINUING hold needs the threshold in ANY phase — so a hold that merely
    outlasts the shorter slide no longer free-fires a second step (the v0.7.1 double-step bug
    fix: any press >~0.18s used to become two tiles). The server contract is unchanged — the
    threshold gates whether a next-step intent is submitted, never when a committed step starts.
@@ -104,11 +104,14 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    corners, bodies don't — with the `bodies_block_corners` GameConfig toggle as the playtest
    alternative: flip it and an occupied flank blocks the diagonal too (EITHER flank, unchanged).
    Diagonal LoS math is still deferred to the dungeon-visibility milestone.
-8. **Commit feedback (added v0.3).** The feedback rule (2.3.4) applies to movement:
-   pressing a move renders an instant, local **"commit sent"** acknowledgment, so the
-   player always knows the input registered. The **verdict** — glide start, or a rejection
-   "bonk" (sound + visual) when the destination is reserved (2.2.5) — always comes from
-   the server. The client never predicts the outcome, in either direction; there is no
+8. **Commit feedback (added v0.3; AMENDED v0.10.2, Jon).** The feedback rule (2.3.4)
+   applies to movement: the **verdict** — glide start, or a rejection "bonk" (sound +
+   visual) when the destination is reserved (2.2.5) — always comes from the server, and
+   the glide starting IS the input acknowledgment. (The original separate local
+   "commit sent" flash was retired in v0.10.2 — movement is responsive enough that it
+   read as noise; the rejection bonk remains this section's reject seam, and a bump into
+   a hostile you can't attack yet rejects silently by design — the next from-idle step
+   IS the attack.) The client never predicts the outcome, in either direction; there is no
    client-side authority anywhere. A rejected move must never be confusable with dropped
    input, and a locally-guessed rejection must never contradict a server accept.
 9. **Click-to-move pathing (added M2.1, 2026-07-17; walk rule tightened 2026-07-18;
@@ -357,10 +360,13 @@ a party member's fight), and a supporter chooses between ranged help from outsid
 zone at explore pace or stepping inside and accepting tactical pace — reach vs tempo
 becomes a positioning decision.
 
-- **v1 decisions (Jon, 2026-07-20, shipped):** the bubble radius is its OWN per-monster dial
-  (`MonsterType.tactical_radius_tiles`, default 3) — deliberately NOT aggro range, so "it
-  noticed you" (chase starts, still explore) and "you're in the fight" (pace drops) tune
-  separately. And the LEASH rule: being an aggroed monster's chase target keeps you tactical
+- **v1 decisions (Jon, 2026-07-20; AMENDED v0.10.3, Jon playtest):** the bubble radius is
+  its own per-monster dial (`MonsterType.tactical_radius_tiles`) but now DEFAULTS to
+  **-1 = match `aggro_range_tiles`** — the playtest verdict was that a bubble smaller than
+  aggro read as arbitrary; "it noticed you" and "you're in the fight" are the same ring
+  (goblin 5) unless a designer authors a positive override to split the two dials. A
+  player tactical bubble also exists now (`GameConfig.player_tactical_radius_tiles`,
+  default 3, no chaining) — see the v0.10.3 changelog entry. And the LEASH rule: being an aggroed monster's chase target keeps you tactical
   at ANY distance — **provisional; revisit candidate: both chaser and chased revert to
   explore beyond the radius (full-speed pursuit at exact parity), if the hard leash feels
   bad in play.**

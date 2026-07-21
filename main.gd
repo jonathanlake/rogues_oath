@@ -184,16 +184,18 @@ var _local_avatar: Node2D = null
 # invalid. Cleared the instant our own avatar exists again (respawn/F5), which always wins the camera
 # back. Local presentation only — never networked, never read for adjudication. See _update_camera.
 var _spectate_target: Node2D = null
-# True once OUR avatar has existed at least once this session (set on every camera acquire). Gates the
-# ghost-cam: before our FIRST spawn the camera holds the intro view exactly as pre-v0.10.4 — spectate is
-# a death behavior, not a joining behavior (no "Following X." line while our own spawn replicates in).
-var _had_own_avatar: bool = false
+# True while WE are dead (set by our own `died` event, cleared on camera re-acquire). Gates the
+# ghost-cam: spectate is a DEATH behavior only — a joining peer's pre-spawn frames and an F5 reset's
+# despawn-respawn window (which posts no `died`) both keep the held view, so no spurious "Following X."
+# line can fire outside a real death (review fix pass, v0.11.0).
+var _local_dead: bool = false
 # The LOCAL player's current pace (Tactical Zones v1, §2.8.7 cue). Presentation only — set from the
 # host-authored pace_changed event for our own id, read by _update_tempo_display to emphasize the active
 # dial. Defaults false (explore emphasized), the correct pre-fight state on every peer before any flip.
 var _local_pace_tactical: bool = false
 # EVERY player's current pace (v0.10.3), entity_id -> is_tactical, mirrored on EVERY peer from ALL
-# pace_changed events in BOTH directions (seeds included) and pruned on `died`. Handed to the range
+# pace_changed events in BOTH directions (seeds included) and pruned on ANY player-node exit (death,
+# disconnect, reset — the child_exiting_tree hook below) plus the `died` event for hygiene. Handed to the range
 # overlay by reference (set_players) so its F7 green player-bubble rings track the host's live pace with
 # no client recompute. Presentation only — never adjudication (the host owns the real resolve).
 var _tactical_players: Dictionary = {}
@@ -234,6 +236,13 @@ func _ready() -> void:
 	# each player the host has resolved TACTICAL. The dict is shared BY REFERENCE — Main mirrors every
 	# pace_changed event into it (both directions) and the overlay reads it live, no recompute.
 	_range_overlay.set_players(_players, _tactical_players)
+	# Prune the pace mirror on ANY player-node exit (v0.11.0 review fix): death already prunes via the
+	# `died` event, but a DISCONNECT frees the node with no died — this hook covers every exit path on
+	# every peer, so the dict can never accumulate stale entries across a long session. (Entries are
+	# inert without a live node either way — this is hygiene, keeping the mirror ≡ living players.)
+	_players.child_exiting_tree.connect(func(node: Node) -> void:
+		if node is Entity:
+			_tactical_players.erase((node as Entity).entity_id))
 
 	# Departure lines come from TRANSPORT truth now (v0.6.3), NOT node-exit. The old
 	# _players.child_exiting_tree "X left." hook fired on death AND on F5 reset too — both keep the
@@ -691,6 +700,9 @@ func _handle_died_event(event: Dictionary) -> void:
 	# already inert (no node to ring), but drop it for hygiene so the dict tracks only living players.
 	_tactical_players.erase(dead_id)
 	if dead_id == multiplayer.get_unique_id():
+		# Arm the ghost-cam (v0.11.0 review fix): only a REAL death — this event — permits spectating,
+		# so reset/pre-spawn avatar absences can never pan the camera or log "Following X.".
+		_local_dead = true
 		_local_pace_tactical = false
 		GameManager.local_pace_is_tactical = false
 		# Own death clears the tactical screen border too (§2.8.7, A): the host posts no further pace_changed
@@ -791,11 +803,14 @@ func _update_camera() -> void:
 	if is_instance_valid(_local_avatar):
 		# Own avatar present — it always wins the camera back. Drop any ghost-cam target so a later death
 		# re-picks fresh from that moment's living teammates.
-		_had_own_avatar = true
 		_spectate_target = null
 		# One unconditional follow assignment for both the acquire frame and every steady-state frame.
 		_camera.global_position = _local_avatar.global_position
 		if acquired:
+			# Clear the death flag ONLY on (re)acquire, never per-frame: the `died` event lands a frame or
+			# more BEFORE the avatar's replicated despawn, and a per-frame clear in that gap would wipe the
+			# flag and dead-lock the ghost-cam (found live in the v0.11.0 fix-pass re-verify).
+			_local_dead = false
 			# Snap on (re)acquire: the camera uses position_smoothing (main.tscn), so without this the view
 			# would ease in from its held position instead of snapping onto the freshly (re)acquired avatar.
 			_camera.reset_smoothing()
@@ -803,9 +818,9 @@ func _update_camera() -> void:
 	# Ghost-cam: our avatar is absent AFTER having existed (i.e. we died). Follow a LIVING teammate,
 	# STICKY — re-pick only when the followed node is freed/invalid (is_instance_valid poll;
 	# _update_camera runs every frame). No reset_smoothing on switch, so the camera GLIDES over to the
-	# new target rather than snapping. Pre-FIRST-spawn is excluded (_had_own_avatar): a joining peer
-	# keeps the held intro view until its own avatar replicates in, exactly as before v0.10.4.
-	if not _had_own_avatar:
+	# new target rather than snapping. Gated on _local_dead (our own `died` event): pre-first-spawn
+	# frames and F5 reset despawn windows keep the held view, exactly as before v0.10.4.
+	if not _local_dead:
 		return
 	if not is_instance_valid(_spectate_target):
 		_spectate_target = _pick_spectate_target()

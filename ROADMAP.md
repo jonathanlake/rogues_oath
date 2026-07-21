@@ -200,6 +200,13 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
 
 Not scheduled — pulled in when their moment comes:
 
+- Crit system + yellow damage numbers (v0.10.2 made player→enemy numbers white and
+  deliberately reserved yellow for crits — Jon, 2026-07-21)
+- Class starting weapons (`PlayerClass.starting_weapon`; Jon deferred 2026-07-21 — Tab swap
+  covers it for now; revisit when classes grow stats)
+- Backstab vs never-moved targets (v0.11.0 design call: spawn facing = ZERO = un-backstabbable;
+  Jeff to rule on sneak-attack flavor — should an idle/unaggroed monster have a default facing?)
+
 - Host round-reset key (v0.5.4) — F5 re-seeds the whole world in place; a disposable wire-session dev
   facility that stands in for M6's real run start/end flow, which replaces it when M6 lands
 - Death design — Q1's real answer replaces the M3 spectate placeholder
