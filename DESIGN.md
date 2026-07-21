@@ -344,7 +344,7 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    zone design), both display on-screen, both sync to late joiners. As of v0.9.3 nothing
    stamps from the tactical dial — it goes live with tactical zones below.
 
-#### 2.8.7 Tactical zones (v1 spec — agreed direction, NOT yet scheduled)
+#### 2.8.7 Tactical zones (v1 SHIPPED — v0.9.5)
 
 Converged by Jon + Jeff (2026-07-20, with a ChatGPT consult). The framing that won: a
 zone does not say "you are fighting" — it says **"the pace of the world in this area is
@@ -355,6 +355,13 @@ a party member's fight), and a supporter chooses between ranged help from outsid
 zone at explore pace or stepping inside and accepting tactical pace — reach vs tempo
 becomes a positioning decision.
 
+- **v1 decisions (Jon, 2026-07-20, shipped):** the bubble radius is its OWN per-monster dial
+  (`MonsterType.tactical_radius_tiles`, default 3) — deliberately NOT aggro range, so "it
+  noticed you" (chase starts, still explore) and "you're in the fight" (pace drops) tune
+  separately. And the LEASH rule: being an aggroed monster's chase target keeps you tactical
+  at ANY distance — **provisional; revisit candidate: both chaser and chased revert to
+  explore beyond the radius (full-speed pursuit at exact parity), if the hard leash feels
+  bad in play.**
 - **v1 entry rules** (a player is at tactical pace if ANY hold):
   1. Inside an enemy's tactical bubble (radius per-monster, expected to key off aggro state).
   2. They directly interact with combat — today that means attacking; heal / buff /
@@ -531,6 +538,22 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.9.5 (2026-07-20)** — TACTICAL ZONES v1 SHIPPED (§2.8.7): the two dials come alive.
+  A new host-side PaceReferee is the single resolver both stamping referees and every brain
+  consult per entity, per action: players go tactical inside an aggroed monster's bubble
+  (`tactical_radius_tiles`, own dial, default 3 — Jon's call, deliberately not aggro range),
+  while LEASHED (an aggroed monster's chase target, any distance — provisional, revisit
+  candidate recorded), or inside the anti-cheese forcing window (`tactical_force_beats` 3,
+  armed BEFORE the triggering attack stamps — no fast first swing; hitting the dummy
+  counts); explore returns after `tactical_exit_sec` 1.5 hysteresis. Monsters are tactical
+  iff aggroed — chaser and leashed target share the beat, preserving v0.9.3 chase parity.
+  Stamp-and-bake untouched; pace reads happen at verdict time only. `pace_changed` events
+  broadcast per flip (poll + flush-on-change), late joiners seeded; the tempo bar
+  emphasizes YOUR live pace and the log marks own-player flips. `current_beat_sec` renamed
+  `explore_beat_sec`. Two-instance verified end-to-end: entry event on aggro, the player's
+  own bump stamping the tactical window, exit after hysteresis on the goblin's death, an
+  unengaged player gliding at explore through someone else's fight, and both bar states
+  captured on-screen.
 - **v0.9.4 (2026-07-20)** — Quick pass from the v0.9.3 playtest. UI SHRINK: game log/chat
   fonts 8→6 with a tighter panel (200×72); debug overlay to font 5 with two terse lines
   (FPS, verdict latency) — its tempo line removed as a duplicate of the tempo bar, which
