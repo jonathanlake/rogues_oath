@@ -337,6 +337,46 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    window. VISUAL ONLY — occupancy and adjudication read the full action window unchanged.
    1.0 = no settle (continuous glide); low = teleport-y. The one knob that replaced the
    retired committed-rest experiment as the grid-tell control.
+7. **Two paces, two dials (v0.9.2 — Jeff's two-dial model).** The beat splits into an
+   EXPLORE pace (+/- keys, the live beat everything stamps from today) and a TACTICAL
+   pace (`[`/`]` keys, `tactical_beat_sec`, default 0.50). Both are any-peer adjustable
+   through the intent pipe with the same clamps (shared deliberately pending §2.8.7's
+   zone design), both display on-screen, both sync to late joiners. As of v0.9.3 nothing
+   stamps from the tactical dial — it goes live with tactical zones below.
+
+#### 2.8.7 Tactical zones (v1 spec — agreed direction, NOT yet scheduled)
+
+Converged by Jon + Jeff (2026-07-20, with a ChatGPT consult). The framing that won: a
+zone does not say "you are fighting" — it says **"the pace of the world in this area is
+tactical."** Anyone and anything inside — friend, enemy, summon, projectile — operates on
+the tactical beat; outside it, the explore beat. This answers the two hard questions
+directly: a player two rooms from a fight is simply outside every zone (never slowed by
+a party member's fight), and a supporter chooses between ranged help from outside the
+zone at explore pace or stepping inside and accepting tactical pace — reach vs tempo
+becomes a positioning decision.
+
+- **v1 entry rules** (a player is at tactical pace if ANY hold):
+  1. Inside an enemy's tactical bubble (radius per-monster, expected to key off aggro state).
+  2. They directly interact with combat — today that means attacking; heal / buff /
+     debuff / summon / fire-projectile-into-combat join this list as those actions come to exist.
+  3. A hostile targets them (safety net).
+- **Support bubbles deferred to v2** (entering tactical via proximity to an engaged ALLY),
+  with the anti-cascade cap recorded now: support bubbles must never emanate from players
+  who are themselves only tactical via a support bubble — no chain-dragging a spread party.
+- **Exit: short timer** — a few seconds clear of all bubbles/triggers before returning to
+  explore pace (hysteresis; pace must not flicker at a bubble edge).
+- **Anti-cheese:** any hostile action forces tactical pace for N beats regardless of
+  position (no attacking at explore pace from a bubble's edge). Intended range N = 2–4
+  beats — a dial, but the range is part of the spec.
+- **Implementation shape:** ONE host-side pace resolver per player — inputs: zone
+  membership, direct-interaction triggers, and the N-beat forcing window (a stateful
+  per-player deadline, not a per-action flag). BOTH referees' stamp sites (already
+  per-action, §2.8.2) consult that single resolver; never three independent checks
+  scattered across stamp sites. Membership changes broadcast as events (§2.5); each
+  player gets a UI cue for which pace they're in.
+- **v1 scope discipline** (the consult's closing advice, adopted): enemy bubbles +
+  interaction triggers + short exit timer, then PLAY it — radii and whether support
+  bubbles are even necessary are tuning questions, not architecture.
 
 ## Part 3 — Appendix: Why (short version)
 
@@ -491,6 +531,23 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.9.3 (2026-07-20)** — Feedback pass 3 (Jon+Jeff playtest of v0.9.2). CHASE PARITY:
+  diagnosed why players outran goblins (worse at faster beats) — both sides are authored at
+  1.0 glide_beats, but the goblin's brain paid a FIXED 0.05s epsilon-wake per step
+  (0.05/beat_sec of lost ground: 20% at 0.25s, 10% at 0.50s) while held-key players rode the
+  referee's zero-gap `_pending` promotion. Fix: the busy think now PIPELINES the next chase
+  step through that same machinery (the referee's pipeline opens to monster ids) — exact
+  open-field parity by construction; the epsilon wake survives only as the recovery/attack
+  handoff. Decision: exact parity — escapes come from corners and body-blocking, never raw
+  speed; per-monster `glide_beats` is the future speed dial. MONSTER WEAPONS: the v0.9.0
+  deferral resolved — the weapon surface (equipped_weapon + WeaponRig + swing) moves up to
+  Entity, MonsterType gains a `weapon` ref, the combat referee reads weapon-first with the
+  legacy fields as null-weapon fallbacks, and every armed attacker's events (whiffs
+  included) carry the weapon for the arc-swing playback. Goblin wields a new `claw`
+  WeaponType (club sprite; its exact old numbers). The training dummy stays weaponless.
+  NEW **§2.8.7**: the tactical-zones v1 spec (area-pace framing, entry rules, deferred
+  support bubbles with the anti-cascade cap, exit hysteresis, N-beat anti-cheese, the
+  single-pace-resolver implementation shape) — agreed direction, not yet scheduled.
 - **v0.9.2 (2026-07-20)** — Feedback pass 2 (Jon+Jeff playtest of v0.9.1). NUDGE-DRIFT FIX:
   `Entity._bowstring`/`_shake` now base on tile-centre, never the live rendered position — the
   settle-at-centre invariant moves from the Monster override into Entity, killing the sender-only
