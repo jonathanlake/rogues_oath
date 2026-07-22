@@ -206,6 +206,18 @@ Not scheduled — pulled in when their moment comes:
   covers it for now; revisit when classes grow stats)
 - Backstab vs never-moved targets (v0.11.0 design call: spawn facing = ZERO = un-backstabbable;
   Jeff to rule on sneak-attack flavor — should an idle/unaggroed monster have a default facing?)
+- Late-join party sync (v0.12.0 review): a joiner sees full HP for damaged teammates (own-bar
+  is accurate; OTHERS' state has no snapshot) and no record of already-dead ones — wants an
+  hp/death roster on the `peer_ready` targeted sync; also unlocks party-frame re-enable
+- Party frames revival (v0.13.0 turned them OFF; `ui/hud/party_frame.gd/.tscn` dormant on
+  disk, `GameLog.dock_into` + a left column are the re-enable path)
+- HUD event wiring cleanup (v0.12.0 review, deferred): main.gd hand-fans per-event calls to
+  the HUD; the codebase idiom is game_log.gd's direct NetEvents subscription — migrate when
+  next touching HUD events (caveat: read class/weapon from event data or defer, connection
+  order vs main's handler)
+- Camera offset for the right-column HUD (v0.13.0 Feel item): player sits ~3 tiles right of
+  the visible area's centre; a small `Camera2D.offset` compensation is the follow-up if
+  Jon+Jeff want re-centering
 
 - Host round-reset key (v0.5.4) — F5 re-seeds the whole world in place; a disposable wire-session dev
   facility that stands in for M6's real run start/end flow, which replaces it when M6 lands
@@ -246,7 +258,11 @@ Not scheduled — pulled in when their moment comes:
   then (M2.1)
 - Rhythm-experiment reversions (v0.6.0, all single-value edits): speed-tier variation
   (three .tres values), diagonal multiplier off 1.0, AoO re-enable (now explicitly PAIRED
-  with the attack-cooldown milestone — DESIGN Part 4 Q9), click pathing re-enable, longer
+  with the attack-cooldown milestone — DESIGN Part 4 Q9), click pathing re-enable *(NOTE
+  v0.12.0: when re-enabling, gate MoveInput clicks on the HUD's world-frame rect — clicks
+  currently pass through the opaque right column to hidden world tiles, and a pathing click
+  there would commit an unseen, key-uncancelable walk; script default was flipped to false
+  so the config-load fallback can't silently arm it)*, longer
   windup telegraph — each waits on Jon+Jeff playtest verdicts.
   *The go-stop-go REST is no longer a pending reversion — it was ANSWERED and retired in
   v0.8.0 (read as lag; kept behind `move_rest_beats=0`); the visible-slide `slide_fraction`

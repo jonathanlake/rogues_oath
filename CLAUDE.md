@@ -20,9 +20,15 @@ irrevocable the moment you make them. 2D top-down, Godot 4.x, GL Compatibility r
 
 ## Git Workflow
 
-- Commit directly to `master`, locally. One commit per completed task, descriptive messages.
-- When a GitHub remote exists (i.e. when Jeff joins development), switch to branch-per-task +
-  PR-per-feature.
+- Commit directly to `master` and push to `origin` (github.com/jonathanlake/rogues_oath —
+  a PUBLIC repo whose history was purged of the 32rogues assets; see Assets before adding
+  any asset). One commit per completed task, descriptive messages.
+- Switch to branch-per-task + PR-per-feature when Jeff starts contributing code (the remote
+  existing alone doesn't trigger it — it's there for sharing/releases; Jon's call, 2026-07-21).
+- Each version lands with a git tag + a GitHub Release: patch notes written for Jeff (plain
+  language, what changed and why) + the exported `.exe` attached — the Releases page is the
+  single "notes + download" link. Notes may summarize the DESIGN changelog entry, never
+  contradict it.
 
 ---
 
