@@ -14,6 +14,7 @@ extends CanvasLayer
 ## chat + combat volume across a run that grows unbounded, so we drop the oldest past this.
 @export var max_lines: int = 200
 
+@onready var _panel: PanelContainer = $Panel
 @onready var _log: RichTextLabel = $Panel/VBox/Log
 @onready var _input: LineEdit = $Panel/VBox/Input
 
@@ -48,10 +49,27 @@ func _ready() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if (event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER) and not _input.has_focus():
+			# In the HUD's tiny-dev-window fallback the docked log Panel is HIDDEN; grabbing focus on a
+			# hidden LineEdit silently SUCCEEDS and wedges movement (the gate then sees a focused LineEdit
+			# forever — empirically verified). Skip entirely when not visible — and do NOT consume the
+			# Enter either, so it stays available to whatever else might want it.
+			if not _input.is_visible_in_tree():
+				return
 			_input.grab_focus()
 			get_viewport().set_input_as_handled()
 
 # ── Public methods ────────────────────────────────────────────────────────────
+
+## Reparent this log's Panel into the given HUD slot (v0.12.0, called once at HUD init by main.gd). The
+## GameLog CanvasLayer stays the script/signal holder; only its Panel Control moves to DRAW inside the
+## HUD's left column. Full-rect in the slot, min-size cleared so it can't overflow the narrow column.
+## After this the Panel lives UNDER THE HUD, not this CanvasLayer — the @onready refs into it (_panel,
+## _log, _input) resolved in _ready before the move, so they survive the reparent.
+func dock_into(slot: Control) -> void:
+	_panel.reparent(slot, false)
+	_panel.custom_minimum_size = Vector2.ZERO
+	_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
 
 ## Append one PLAIN-TEXT line — the input is escaped here at the sink, so callers never worry
 ## about a name or reason containing bbcode. Every system line (join/left/reject) flows through

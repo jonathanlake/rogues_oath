@@ -72,8 +72,7 @@ func _ready() -> void:
 	if monster_type.atlas_region.size != Vector2.ZERO:
 		_sprite.region_rect = monster_type.atlas_region
 	else:
-		var cell := monster_type.atlas_coords
-		_sprite.region_rect = Rect2(cell.x * WorldGrid.TILE_PX, cell.y * WorldGrid.TILE_PX, WorldGrid.TILE_PX, WorldGrid.TILE_PX)
+		_sprite.region_rect = WorldGrid.atlas_region(monster_type.atlas_coords)
 	# Nameplate is name-only, seeded from the pre-tree display_name; the HP readout rides its own
 	# label under the feet, seeded from the authored max locally (max_hp is known everywhere) via
 	# set_hp_display, the single formatting site. The combat referee drives updates from attack

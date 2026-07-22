@@ -50,6 +50,17 @@ func _process(delta: float) -> void:
 	_label.text = _compose_stats()
 
 
+## Nudge the F3 stats label to sit inside the WorldFrame's top-right (v0.12.0 HUD), not the canvas
+## top-right — which under stretch/aspect="expand" now falls inside the right HUD column. Wired by
+## main.gd off the HUD's world_frame_changed (and seeded once). This CanvasLayer is identity-transformed,
+## so the rect (base px) positions the label directly.
+func set_world_frame_rect(rect: Rect2) -> void:
+	_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	var label_w := 216.0
+	_label.position = Vector2(rect.end.x - label_w - 4.0, rect.position.y + 4.0)
+	_label.size = Vector2(label_w, 36.0)
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_debug_overlay"):
 		visible = not visible

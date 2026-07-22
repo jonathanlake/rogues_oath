@@ -18,6 +18,9 @@ extends Node2D
 const PLAYER_SCENE: PackedScene = preload("uid://dvvmk452g1xhs")   # entities/player/player.tscn
 const MONSTER_SCENE: PackedScene = preload("uid://ctlrcci4jrejt")  # entities/monster/monster.tscn
 const GAME_LOG_SCENE: PackedScene = preload("uid://djd1d1pf44yi2") # ui/game_log/game_log.tscn
+# Docked HUD (v0.12.0), instanced on every peer like GameLog. Brand-new scene → res:// path until the
+# editor assigns a uid (CLAUDE.md convention); it lives in the reclaimed letterbox margins.
+const HUD_SCENE: PackedScene = preload("res://ui/hud/hud.tscn")
 
 # The one monster kind for M3, loaded per-peer from this PATH (the spawn config carries the path,
 # never a Resource over the wire — every peer loads the same authored .tres). Deliberately a
@@ -109,16 +112,20 @@ const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN
 # Death SFX (placeholder — pitch-shifted bonk). Played on every peer from the `died` event, at Main
 # level because the dying entity's own node vanishes with the event (can't play a sound on a freed node).
 @onready var _death_sfx: AudioStreamPlayer = $DeathSfx
-# LOCAL-only hurt vignette (v0.6.3 hit juice): a full-rect red ColorRect on a high CanvasLayer
-# (main.tscn), alpha 0 at rest, pulsed ONLY when OUR OWN avatar takes a hit. mouse_filter IGNORE so
-# it never eats input. Pure local presentation — never replicated, never adjudication.
+# LOCAL-only hurt vignette (v0.6.3 hit juice): a red ColorRect on a high CanvasLayer (main.tscn), alpha 0
+# at rest, pulsed ONLY when OUR OWN avatar takes a hit. mouse_filter IGNORE so it never eats input. Its
+# .tscn full-rect anchors are the pre-layout default; _on_world_frame_changed (v0.12.0) re-scopes it to
+# the WorldFrame rect so the flash tints the play area, not the HUD panels. Pure local presentation —
+# never replicated, never adjudication.
 @onready var _hurt_vignette: ColorRect = $HurtVignette/Overlay
 # LOCAL-only tactical screen border (v0.10.3, §2.8.7 pace ENTRY cue): a thin red edge frame (four
-# ColorRects under one Control) on its own CanvasLayer (main.tscn), alpha 0 at rest, faded IN when OUR
-# OWN pace flips to tactical and OUT on explore. modulate is tweened on the parent Control so all four
-# edges fade together. Distinct from the hurt vignette pulse (which stays a per-hit red flash). Pure
-# local presentation — never replicated, never adjudication. mouse_filter IGNORE so it never eats input.
-@onready var _tactical_border: Control = $TacticalBorder/Border
+# ColorRects under one Control), alpha 0 at rest, faded IN when OUR OWN pace flips to tactical and OUT
+# on explore. modulate is tweened on the parent Control so all four edges fade together. Distinct from
+# the hurt vignette pulse (which stays a per-hit red flash). Pure local presentation — never replicated,
+# never adjudication. mouse_filter IGNORE so it never eats input. v0.12.0: it now lives INSIDE the HUD's
+# WorldFrame (so it frames the play area, not the window) — a plain var assigned from _hud in _ready
+# rather than @onready, since the HUD is instanced there. Main still drives ONLY its visibility.
+var _tactical_border: Control = null
 # Per-peer follow camera (M3.5). Lives under Main (not the avatar) so it SURVIVES the local avatar's
 # despawn on death — _update_camera stops tracking and it holds its last position instead of the view
 # snapping to origin. Pure local presentation: it reads only THIS peer's own avatar node, nothing
@@ -142,6 +149,11 @@ const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN
 # Chat/combat log, added on every peer in _ready. Held so spawn/disconnect can post system
 # lines through it. Set before the host spawns its own player so that spawn's "joined." lands.
 var _game_log: Node = null
+# Docked HUD (v0.12.0), added on every peer in _ready right after the log. Held so the combat/pace/
+# spawn event handlers can fan out presentation updates to it (party-frame HP, class/weapon repaint,
+# death grey, disconnect removal) — the HUD owns the frames + client-side HP mirror; Main just relays
+# the events it already receives (component pattern: the parent wires the children).
+var _hud: Node = null
 
 # Host-only: peer_id -> spawn slot index, so a disconnect frees the slot for reuse.
 var _slots: Dictionary = {}
@@ -228,6 +240,29 @@ func _ready() -> void:
 	# to go (the host spawns its own player later in this same _ready).
 	_game_log = GAME_LOG_SCENE.instantiate()
 	add_child(_game_log)
+
+	# Docked HUD (v0.12.0), on EVERY peer, right after the log. Instanced like GameLog. Wire it per the
+	# component convention — Main hands it the containers/refs and connects the events; the HUD never
+	# climbs the tree. Order matters: add it (its _ready builds the panels + lays out the margins), then
+	# hand it $Players (it builds a frame per existing player and mirrors spawn/despawn), then reparent
+	# the log's Panel into the left column's slot, then take the tactical-border reference it now owns.
+	_hud = HUD_SCENE.instantiate()
+	add_child(_hud)
+	_hud.set_players(_players)
+	# Reparent the GameLog Panel into the HUD's LogSlot: the log now DRAWS in the HUD (layer 5), the
+	# GameLog CanvasLayer stays the script/signal holder. @onready refs inside GameLog survive this
+	# (they resolved in its _ready, above). Done once — one layout root, no per-resize offset writes.
+	# Component convention: the log reparents its OWN Panel (dock_into) into the slot the HUD exposes —
+	# neither side reaches into the other's node tree.
+	_game_log.dock_into(_hud.get_log_slot())
+	# The tactical border is now a WorldFrame child inside the HUD (frames the play area, not the window).
+	# Take the reference; Main keeps driving ONLY its visibility via the existing pace handler.
+	_tactical_border = _hud.get_tactical_border()
+	# The one remaining external consumer of the world-frame rect: the DebugOverlay F3 label. Connect the
+	# signal, THEN seed it once with the current rect so the consumer never sits on a stale/zero rect from
+	# _ready ordering (the HUD lays out deferred, but world_frame_rect() returns its seeded default meanwhile).
+	_hud.world_frame_changed.connect(_on_world_frame_changed)
+	_on_world_frame_changed(_hud.world_frame_rect())
 
 	# Wire the F7 range overlay its Monsters container on EVERY peer (component pattern — the overlay
 	# never reaches up to read a sibling itself). A null ref draws nothing; here it always resolves.
@@ -622,6 +657,10 @@ func _handle_attack_event(event: Dictionary) -> void:
 				target.play_hurt(dir, 1.5 if backstab else 1.0)
 			# HP readout still refreshes on a godded hit (harmless — the value is unchanged).
 			target.set_hp_display(int(data.get("hp_after", 0)), int(data.get("target_max", 0)))
+			# Party-frame HP mirror (v0.12.0): fan the running HP out to the HUD. A player target (positive
+			# id) updates its frame's bar; a monster target (negative id) has no frame — a no-op inside the
+			# HUD. Godded hits carry unchanged HP, so this is harmless there too. Pure presentation.
+			_hud.note_attack(target_id, int(data.get("hp_after", 0)), int(data.get("target_max", 0)))
 			# Floating combat text (v0.10.0, §2.3.4): red "-N" over the struck tile, or grey "0" when
 			# the target is godded — a no-effect hit stays visibly distinct rather than silently swallowed.
 			# One per peer off this same event; the FX layer parents it (survives the victim's despawn).
@@ -699,6 +738,10 @@ func _handle_died_event(event: Dictionary) -> void:
 	# Prune the dead entity from the overlay's live pace dict (v0.10.3) — its node frees so a stale entry is
 	# already inert (no node to ring), but drop it for hygiene so the dict tracks only living players.
 	_tactical_players.erase(dead_id)
+	# Party-frame death cue (v0.12.0): grey the dead player's frame "DEAD" on every peer. It persists
+	# greyed (the node despawns, but the frame stays so the party sees a downed teammate) until a respawn
+	# re-binds it or a disconnect removes it. Idempotent with the HUD's own child_exiting_tree greying.
+	_hud.note_died(dead_id)
 	if dead_id == multiplayer.get_unique_id():
 		# Arm the ghost-cam (v0.11.0 review fix): only a REAL death — this event — permits spectating,
 		# so reset/pre-spawn avatar absences can never pan the camera or log "Following X.".
@@ -746,6 +789,8 @@ func _handle_swap_weapon_event(event: Dictionary) -> void:
 	if weapon == null:
 		return
 	player.set_weapon(weapon)
+	# Equipment-panel refresh (v0.12.0): if it's our own player the HUD re-reads the main-hand weapon name.
+	_hud.on_weapon_swap(int(data.get("entity_id", 0)))
 
 
 ## All peers: adopt a host-adjudicated /class change (v0.10.0). Resolve the player by entity id and the
@@ -762,6 +807,9 @@ func _handle_class_changed_event(event: Dictionary) -> void:
 	if player_class == null:
 		return
 	player.set_class(player_class)
+	# Party-frame + char-panel repaint (v0.12.0): the frame portrait re-reads the new class; if it's our
+	# own player the character-info panel refreshes too. Fanned out after the node adopts the class.
+	_hud.on_class_changed(int(data.get("entity_id", 0)))
 
 
 ## All peers: adopt a host-resolved pace flip (Tactical Zones v1, §2.8.7). Mirrors EVERY player's pace
@@ -943,6 +991,21 @@ func _set_tactical_border(active: bool) -> void:
 	_border_tween.tween_property(_tactical_border, "modulate:a", 1.0 if active else 0.0, 0.3)
 
 
+## The HUD's world frame moved/resized (v0.12.0) — relay the rect to the two external consumers. First
+## the F3 debug overlay's stats label, so it sits inside the world area's top-right instead of the canvas
+## top-right (which now falls under the right HUD column). Second the hurt vignette Overlay: scope it to
+## the world-frame rect (clear its full-rect anchors, then position/size = rect) so a hit flash tints the
+## PLAY AREA, not the opaque HUD panels — matching the tactical border's play-area scoping (the border
+## follows automatically, being a WorldFrame child; the vignette lives in its own layer-10 CanvasLayer so
+## it must be sized here). The vignette keeps its CanvasLayer + layer 10 (over world content AND the
+## border). Wired in _ready + seeded once.
+func _on_world_frame_changed(rect: Rect2) -> void:
+	$DebugOverlay.set_world_frame_rect(rect)
+	_hurt_vignette.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_hurt_vignette.position = rect.position
+	_hurt_vignette.size = rect.size
+
+
 ## Host-only: a new PLAYER node just entered — mend autonomous-mover state for a possible late joiner.
 ## No late-join event replay exists (§2.7, by design), so a client that joined after the goblin moved
 ## renders it at its stale spawn-config tile. Post one micro snap glide_to per LIVING monster (from ==
@@ -1053,6 +1116,11 @@ func _on_peer_departed(peer_id: int) -> void:
 	print("[peer %d] %s left" % [multiplayer.get_unique_id(), who])
 	if is_instance_valid(_game_log):
 		_game_log.add_line("%s left." % who)
+	# Party-frame removal (v0.12.0): a genuine transport disconnect is the ONLY frame-removal path — a
+	# death keeps the greyed frame, but a departed peer's frame must clear. Runs on every peer (this hook
+	# is connected on all peers). Guarded inside the HUD (no frame for this id → a no-op).
+	if is_instance_valid(_hud):
+		_hud.remove_frame(peer_id)
 
 
 func _on_peer_connected(peer_id: int) -> void:
@@ -1703,3 +1771,7 @@ func sync_player_field(entity_id: int, kind: String, value_name: String, is_retr
 			var player_class := GameManager.config.class_by_name(value_name)
 			if player_class != null:
 				player.set_class(player_class)
+				# Party-frame + char-panel repaint (v0.12.0), the same fan-out the live class handler runs
+				# (_handle_class_changed_event) — without it a late-join class sync repaints the sprite but
+				# leaves that player's HUD portrait stale. Weapon branch needs no HUD fan-out (verified no-op).
+				_hud.on_class_changed(entity_id)

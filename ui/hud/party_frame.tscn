@@ -1,0 +1,68 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://ui/hud/party_frame.gd" id="1_pf"]
+
+[sub_resource type="StyleBoxFlat" id="sb_frame"]
+bg_color = Color(0.145, 0.145, 0.185, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.32, 0.32, 0.4, 0.55)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+content_margin_left = 2.0
+content_margin_top = 2.0
+content_margin_right = 2.0
+content_margin_bottom = 2.0
+
+[node name="PartyFrame" type="PanelContainer"]
+mouse_filter = 2
+theme_override_styles/panel = SubResource("sb_frame")
+script = ExtResource("1_pf")
+
+[node name="Row" type="HBoxContainer" parent="."]
+mouse_filter = 2
+theme_override_constants/separation = 3
+
+[node name="Portrait" type="TextureRect" parent="Row"]
+custom_minimum_size = Vector2(16, 16)
+texture_filter = 1
+mouse_filter = 2
+stretch_mode = 5
+
+[node name="Info" type="VBoxContainer" parent="Row"]
+size_flags_horizontal = 3
+mouse_filter = 2
+theme_override_constants/separation = 1
+
+[node name="NameLabel" type="Label" parent="Row/Info"]
+mouse_filter = 2
+theme_override_font_sizes/font_size = 7
+text = "Player"
+
+[node name="HpBar" type="Control" parent="Row/Info"]
+custom_minimum_size = Vector2(0, 8)
+mouse_filter = 2
+
+[node name="Track" type="ColorRect" parent="Row/Info/HpBar"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+color = Color(0.18, 0.05, 0.05, 1)
+
+[node name="Fill" type="ColorRect" parent="Row/Info/HpBar"]
+anchor_bottom = 1.0
+mouse_filter = 2
+color = Color(0.3, 0.75, 0.3, 1)
+
+[node name="HpText" type="Label" parent="Row/Info/HpBar"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+theme_override_font_sizes/font_size = 6
+horizontal_alignment = 1
+vertical_alignment = 1
+text = "20/20"

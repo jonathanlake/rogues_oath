@@ -19,6 +19,12 @@ extends Resource
 ## The ctx keys a hook may read are documented on each method below. A subclass overrides only the
 ## hooks it needs; the base implementations are inert (observe nothing, change nothing).
 
+## Player-facing name for this passive (v0.12.0 HUD), designer-editable per the resources ground rule
+## ("add a .tres, not a script"). The character-info panel lists a class's passives.display_name; empty
+## means "unlisted" (the HUD skips it), so a purely-mechanical passive with no display copy stays hidden
+## without a code edit. Never adjudication — presentation only, read client-side by the HUD.
+@export var display_name: String = ""
+
 
 ## Read-only OBSERVATION seam fired the moment an attack is committed, BEFORE any damage is computed
 ## (MoveReferee._begin_bump entry for a player bump, CombatReferee.wind_up entry for a telegraphed

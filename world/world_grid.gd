@@ -124,6 +124,14 @@ static func world_to_tile(pos: Vector2) -> Vector2i:
 	return Vector2i(int(floor(pos.x / TILE_PX)), int(floor(pos.y / TILE_PX)))
 
 
+## Grid-cell coords → the pixel Rect2 that windows that cell out of a TILE_PX-cell atlas
+## (coords × TILE_PX, TILE_PX square). The ONE place the sprite/portrait region math lives, so
+## every atlas-region site (player class, monster, weapon rig, party frame, char panel) can never
+## drift from the tile size. Presentation-only, like every helper here.
+static func atlas_region(coords: Vector2i) -> Rect2:
+	return Rect2(coords.x * TILE_PX, coords.y * TILE_PX, TILE_PX, TILE_PX)
+
+
 # ── Pathfinding ───────────────────────────────────────────────────────────────
 
 # Lazily-built A* over the room, shared by every caller (static, like everything here). Solids

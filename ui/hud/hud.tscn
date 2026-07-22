@@ -1,0 +1,112 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://ui/hud/hud.gd" id="1_hud"]
+
+[node name="HUD" type="CanvasLayer"]
+layer = 5
+script = ExtResource("1_hud")
+
+[node name="Root" type="Control" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+
+[node name="LeftColumn" type="Panel" parent="Root"]
+mouse_filter = 2
+
+[node name="LeftMargin" type="MarginContainer" parent="Root/LeftColumn"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+theme_override_constants/margin_left = 3
+theme_override_constants/margin_top = 3
+theme_override_constants/margin_right = 3
+theme_override_constants/margin_bottom = 3
+
+[node name="LeftVBox" type="VBoxContainer" parent="Root/LeftColumn/LeftMargin"]
+mouse_filter = 2
+theme_override_constants/separation = 3
+
+[node name="PartyFrames" type="VBoxContainer" parent="Root/LeftColumn/LeftMargin/LeftVBox"]
+size_flags_vertical = 3
+size_flags_stretch_ratio = 3.0
+mouse_filter = 2
+theme_override_constants/separation = 2
+
+[node name="LogSlot" type="Control" parent="Root/LeftColumn/LeftMargin/LeftVBox"]
+size_flags_vertical = 3
+size_flags_stretch_ratio = 1.0
+mouse_filter = 2
+
+[node name="RightColumn" type="Panel" parent="Root"]
+mouse_filter = 2
+
+[node name="RightMargin" type="MarginContainer" parent="Root/RightColumn"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+theme_override_constants/margin_left = 3
+theme_override_constants/margin_top = 3
+theme_override_constants/margin_right = 3
+theme_override_constants/margin_bottom = 3
+
+[node name="RightVBox" type="VBoxContainer" parent="Root/RightColumn/RightMargin"]
+mouse_filter = 2
+theme_override_constants/separation = 3
+
+[node name="MinimapSlot" type="PanelContainer" parent="Root/RightColumn/RightMargin/RightVBox"]
+size_flags_horizontal = 4
+mouse_filter = 2
+
+[node name="CharInfo" type="PanelContainer" parent="Root/RightColumn/RightMargin/RightVBox"]
+mouse_filter = 2
+
+[node name="Equipment" type="PanelContainer" parent="Root/RightColumn/RightMargin/RightVBox"]
+mouse_filter = 2
+
+[node name="Inventory" type="PanelContainer" parent="Root/RightColumn/RightMargin/RightVBox"]
+size_flags_horizontal = 4
+mouse_filter = 2
+
+[node name="TopBand" type="Panel" parent="Root"]
+mouse_filter = 2
+
+[node name="BottomBand" type="Panel" parent="Root"]
+mouse_filter = 2
+
+[node name="WorldFrame" type="Control" parent="Root"]
+mouse_filter = 2
+
+[node name="TacticalBorder" type="Control" parent="Root/WorldFrame"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+modulate = Color(1, 1, 1, 0)
+
+[node name="Top" type="ColorRect" parent="Root/WorldFrame/TacticalBorder"]
+anchor_right = 1.0
+offset_bottom = 6.0
+mouse_filter = 2
+color = Color(0.85, 0.05, 0.05, 0.18)
+
+[node name="Bottom" type="ColorRect" parent="Root/WorldFrame/TacticalBorder"]
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -6.0
+mouse_filter = 2
+color = Color(0.85, 0.05, 0.05, 0.18)
+
+[node name="Left" type="ColorRect" parent="Root/WorldFrame/TacticalBorder"]
+anchor_bottom = 1.0
+offset_right = 6.0
+mouse_filter = 2
+color = Color(0.85, 0.05, 0.05, 0.18)
+
+[node name="Right" type="ColorRect" parent="Root/WorldFrame/TacticalBorder"]
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -6.0
+mouse_filter = 2
+color = Color(0.85, 0.05, 0.05, 0.18)

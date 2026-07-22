@@ -546,6 +546,33 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.12.0 (2026-07-21)** — Docked HUD in the reclaimed letterbox (Jon+Jeff layout, from
+  the Gemini mockup direction). The window's dead black margins become UI: LEFT column =
+  party frames (portrait, name, live HP bar green→red, gold border on your own, greyed
+  DEAD persists; event-fed client mirror, no wire changes) over the docked chat/combat
+  log; RIGHT column = reserved minimap slot (M4b), character info (class + passives —
+  `PassiveAbility.display_name` added, designer-editable), equipment (live main-hand),
+  and a 5×5 inventory grid whose gold top row reserves the future 1-5 hotbar (style only;
+  mapping TBD). No headers. The world stays PIXEL-IDENTICAL: exactly 640×360 base at a
+  whole-integer scale, visible through the WorldFrame hole between four opaque bands; the
+  tactical border now frames the PLAY AREA (WorldFrame child), and the hurt vignette is
+  scoped to it too. ENGINE FINDING (empirical, 4.7.1): `scale_mode="integer"` is inert
+  under `aspect="expand"` (fractional best-fit + content_scale_factor writes silently
+  discarded) — shipped as `fractional` with the HUD's scale policy as the integer snapper
+  (`content_scale_factor = target/auto_fit`; guard on the applied factor; one-shot
+  next-frame relayout — the settle-loop crash is documented in hud.gd). Scale policy:
+  steps the factor down one when margins can't fit the columns (1080p-class windows play
+  at 2× WITH HUD — Feel/decision item for Jeff); tiny dev windows fall back to full-bleed
+  (no HUD columns, log hidden — dev-only). Full review pass (8-angle + GLM): 10 verified
+  findings fixed pre-land (portrait atlas fallback blowout, late-join portrait sync,
+  scale-factor restore on session end, component-clean log docking via
+  `GameLog.dock_into`, silent click-pathing arming default, invisible-focus chat wedge,
+  shared `WorldGrid.atlas_region` helper, ProjectSettings-sourced base size). Parked with
+  eyes open: late-join party sync (dead-teammate frames + real HP seed — needs a join-sync
+  wire field), the main.gd→HUD relay → direct NetEvents subscription cleanup, click-gate
+  on WorldFrame when click pathing re-enables. Feel= Jon+Jeff: panel styling/proportions,
+  hotbar-row treatment, in-world nameplates now redundant?, menu renders fractional
+  pre-session (cosmetic), 1080p 2×-with-HUD tradeoff.
 - **v0.11.0 (2026-07-21)** — Combat events + Backstab (Jeff's class-identity spec, overnight
   batch chunk 4). Three layers: (1) SERVER-SIDE 8-WAY FACING — MoveReferee now tracks an
   authoritative facing per entity, written ONLY on accepted verdicts (accepted glide,

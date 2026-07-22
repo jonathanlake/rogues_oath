@@ -113,9 +113,7 @@ func set_class(new_class: PlayerClass) -> void:
 		return
 	var was_flipped := _sprite.flip_h
 	_sprite.region_enabled = true
-	_sprite.region_rect = Rect2(
-		new_class.atlas_coords.x * WorldGrid.TILE_PX, new_class.atlas_coords.y * WorldGrid.TILE_PX,
-		WorldGrid.TILE_PX, WorldGrid.TILE_PX)
+	_sprite.region_rect = WorldGrid.atlas_region(new_class.atlas_coords)
 	_sprite.flip_h = was_flipped
 
 

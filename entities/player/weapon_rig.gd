@@ -73,9 +73,7 @@ func set_weapon(weapon: WeaponType) -> void:
 		return
 	_sprite.texture = ITEMS_TEX
 	_sprite.region_enabled = true
-	_sprite.region_rect = Rect2(
-		weapon.atlas_coords.x * WorldGrid.TILE_PX, weapon.atlas_coords.y * WorldGrid.TILE_PX,
-		WorldGrid.TILE_PX, WorldGrid.TILE_PX)
+	_sprite.region_rect = WorldGrid.atlas_region(weapon.atlas_coords)
 
 
 ## Play the weapon's swing toward `dir` over the stamped `duration_sec` (Player drives this off the
