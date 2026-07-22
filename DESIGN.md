@@ -542,6 +542,32 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    committed attacker carries its intended risk (and re-test the telegraphed `windup_beats > 0`
    heavy weapon in that configuration — the one where dodging finally costs something).
 
+10. **Fixed world rect — how much world a player sees must not depend on their window.**
+    Wire-session finding (Jon+Jeff, 2026-07-21): under `aspect="expand"` the visible world
+    area is a side effect of window size. Measured: 1440p maximized (3×) sees ~673×464 base
+    px of world; 1080p maximized (2×) sees 780×515; a restored 1280×720 window (stepped to
+    1×) sees 1100×720 — **2.4× the world area of the 1440p player**. That is information,
+    not cosmetics: earlier monster/item sightlines change decisions in a commitment-driven
+    game. **PROPOSED (Jon, 2026-07-22): every player sees a fixed world rect of 42×29 tiles
+    (672×464 base px — the tile count is the definition; sized to today's 1440p-maximized
+    view, so that setup stays visually identical).** Each window picks the largest integer
+    scale that fits world + the 180px HUD column (a derived 852×464 block — the column stays
+    its own constant; note widening it later would lower the fit-time scale some windows
+    get, same tiles at smaller magnification); ALL leftover space becomes frame styled like
+    the column backdrop — no black bars, no extra map. Scale is pure magnification: no
+    window, resolution, or DPI configuration ever shows more than 42×29 tiles; sub-852×464
+    windows (dev, or extreme DPI virtualization) clamp per axis to a strict SUBSET of the
+    rect. Geometry: 1440p max 3× (~4px margins), 1080p max 2× (216×102px frame), 1280×720
+    restored 1× (large frame — the standard fixed-canvas trade, Nuclear Throne model), 4K
+    max 4×. This consciously walks back v0.13.0's "world bleeds to three edges" — bleed and
+    equal-vision are mutually exclusive; fairness wins. Separable sub-decision: the camera
+    recenters the avatar in the world rect, not the window — closes the v0.13.0
+    ~90px-right-of-centre feel item, but Jeff can accept the rect and defer this. Cross-ref
+    #6/fog-of-war: the rect is presentation-sized, not vision-sized (29 tiles of height
+    exactly hosts a 14-tile vision radius; the 42-tile width is deliberately wider) — a
+    future server-side vision system trims visibility inside the rect, at which point this
+    cap becomes pure presentation and data-level fairness takes over.
+
 ---
 
 ### Changelog
