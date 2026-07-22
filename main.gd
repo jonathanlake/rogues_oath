@@ -249,12 +249,9 @@ func _ready() -> void:
 	_hud = HUD_SCENE.instantiate()
 	add_child(_hud)
 	_hud.set_players(_players)
-	# Reparent the GameLog Panel into the HUD's LogSlot: the log now DRAWS in the HUD (layer 5), the
-	# GameLog CanvasLayer stays the script/signal holder. @onready refs inside GameLog survive this
-	# (they resolved in its _ready, above). Done once — one layout root, no per-resize offset writes.
-	# Component convention: the log reparents its OWN Panel (dock_into) into the slot the HUD exposes —
-	# neither side reaches into the other's node tree.
-	_game_log.dock_into(_hud.get_log_slot())
+	# Chat floats bottom-left over the world again (v0.13.0 right-column-only HUD): the GameLog Panel keeps
+	# its own scene-authored bottom-left anchors, so it is NOT docked into the HUD this iteration. GameLog's
+	# dock_into stays on disk (dormant) for a future left column — main.gd simply no longer calls it.
 	# The tactical border is now a WorldFrame child inside the HUD (frames the play area, not the window).
 	# Take the reference; Main keeps driving ONLY its visibility via the existing pace handler.
 	_tactical_border = _hud.get_tactical_border()

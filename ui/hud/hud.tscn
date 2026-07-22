@@ -11,33 +11,6 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 2
 
-[node name="LeftColumn" type="Panel" parent="Root"]
-mouse_filter = 2
-
-[node name="LeftMargin" type="MarginContainer" parent="Root/LeftColumn"]
-anchor_right = 1.0
-anchor_bottom = 1.0
-mouse_filter = 2
-theme_override_constants/margin_left = 3
-theme_override_constants/margin_top = 3
-theme_override_constants/margin_right = 3
-theme_override_constants/margin_bottom = 3
-
-[node name="LeftVBox" type="VBoxContainer" parent="Root/LeftColumn/LeftMargin"]
-mouse_filter = 2
-theme_override_constants/separation = 3
-
-[node name="PartyFrames" type="VBoxContainer" parent="Root/LeftColumn/LeftMargin/LeftVBox"]
-size_flags_vertical = 3
-size_flags_stretch_ratio = 3.0
-mouse_filter = 2
-theme_override_constants/separation = 2
-
-[node name="LogSlot" type="Control" parent="Root/LeftColumn/LeftMargin/LeftVBox"]
-size_flags_vertical = 3
-size_flags_stretch_ratio = 1.0
-mouse_filter = 2
-
 [node name="RightColumn" type="Panel" parent="Root"]
 mouse_filter = 2
 
@@ -52,26 +25,23 @@ theme_override_constants/margin_bottom = 3
 
 [node name="RightVBox" type="VBoxContainer" parent="Root/RightColumn/RightMargin"]
 mouse_filter = 2
-theme_override_constants/separation = 3
+theme_override_constants/separation = 10
 
 [node name="MinimapSlot" type="PanelContainer" parent="Root/RightColumn/RightMargin/RightVBox"]
 size_flags_horizontal = 4
 mouse_filter = 2
 
 [node name="CharInfo" type="PanelContainer" parent="Root/RightColumn/RightMargin/RightVBox"]
+clip_contents = true
+size_flags_vertical = 3
 mouse_filter = 2
 
 [node name="Equipment" type="PanelContainer" parent="Root/RightColumn/RightMargin/RightVBox"]
+size_flags_horizontal = 4
 mouse_filter = 2
 
 [node name="Inventory" type="PanelContainer" parent="Root/RightColumn/RightMargin/RightVBox"]
 size_flags_horizontal = 4
-mouse_filter = 2
-
-[node name="TopBand" type="Panel" parent="Root"]
-mouse_filter = 2
-
-[node name="BottomBand" type="Panel" parent="Root"]
 mouse_filter = 2
 
 [node name="WorldFrame" type="Control" parent="Root"]

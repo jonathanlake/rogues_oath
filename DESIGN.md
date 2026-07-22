@@ -546,6 +546,24 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.13.0 (2026-07-22)** — HUD iteration 2 (Jon's verdict on v0.12.0): RIGHT COLUMN
+  ONLY — the world now bleeds to the window's left/top/bottom edges (full-window render,
+  camera untouched; the column overlays the right edge, player ≥7 tiles from it at every
+  scale). Party frames OFF for now (party_frame.gd/.tres dormant on disk; their HP
+  plumbing now drives the char-panel bar); chat floats bottom-left over the world again
+  (dock_into dormant); tempo floats top-center as before. Char section: class, Lvl 1
+  placeholder (no leveling system yet), OWN live HP bar (green→red, DEAD state), passives
+  — portrait removed, section takes the column's expandable room. Equipment: 9 sockets at
+  32px — accented [Primary][Offhand] hands pair separated from the labeled armor grid
+  (Head/Body/Gloves/Boots/Ring/Ring/Amulet); the primary-hand socket shows the REAL
+  equipped-weapon icon (items.png region via WeaponType.atlas_coords) and flips on Tab.
+  Inventory: 5×4 at 32px (doubled), gold hotbar row kept, pinned at the column bottom.
+  Sections separated by padding, no boxes. Scale policy v2 keeps ≥640px of world beside
+  the column (1280×720-class windows step to 1×). Verified: layout/tactical-border/F7
+  screenshots, click regression, Tab icon flip probe, two-instance own-HP bar
+  (20→0→DEAD on the victim only), step-down at 720p. Feel= Jon+Jeff: padding-as-
+  sectioning, socket label legibility, off-visible-center player (camera offset is a
+  small follow-up if it bothers), char-section spacing.
 - **v0.12.0 (2026-07-21)** — Docked HUD in the reclaimed letterbox (Jon+Jeff layout, from
   the Gemini mockup direction). The window's dead black margins become UI: LEFT column =
   party frames (portrait, name, live HP bar green→red, gold border on your own, greyed
