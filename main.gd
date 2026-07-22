@@ -201,9 +201,12 @@ var _spectate_target: Node2D = null
 # despawn-respawn window (which posts no `died`) both keep the held view, so no spurious "Following X."
 # line can fire outside a real death (review fix pass, v0.11.0).
 var _local_dead: bool = false
-# Window mode cached BEFORE entering F11 borderless fullscreen, so the toggle restores exactly what the
-# player had (maximized by default if we never cached one). Local-only presentation state — never wired.
-var _pre_fullscreen_mode: int = DisplayServer.WINDOW_MODE_MAXIMIZED
+# Was the window SCREEN-WIDE (maximized-like) when F11 entered fullscreen? Cached as a SHAPE, not the
+# mode enum: with resizable=false, Windows won't hold a true maximize, so window_get_mode() DECAYS to
+# WINDOWED one frame after a maximize while the window still fills the work area (sequence-probed,
+# v0.16.2) — caching that lying enum made the 4th F11 press drop a "maximized" player to the small
+# window. Size readback is reliable; restore-by-intent from it is not. Local-only — never wired.
+var _pre_fullscreen_was_big: bool = true
 # The LOCAL player's current pace (Tactical Zones v1, §2.8.7 cue). Presentation only — set from the
 # host-authored pace_changed event for our own id, read by _update_tempo_display to emphasize the active
 # dial. Defaults false (explore emphasized), the correct pre-fight state on every peer before any flip.
@@ -511,14 +514,24 @@ func _unhandled_input(event: InputEvent) -> void:
 	# HUD + world geometry; nothing else to do here.
 	elif event.is_action_pressed("toggle_fullscreen"):
 		if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN:
-			DisplayServer.window_set_mode(_pre_fullscreen_mode)
+			# Restore by INTENT from the cached SHAPE (see _pre_fullscreen_was_big): a screen-wide
+			# window goes back to MAXIMIZED (with resizable=false Windows renders that as a work-area-
+			# sized window whose mode enum may decay to WINDOWED — visually correct, and the next entry
+			# re-caches by SIZE so the decay can't poison anything); a small window gets WINDOWED plus
+			# the explicit override rect (the mode change alone does not reliably restore SIZE on
+			# Windows — deferred so the transition settles before the rect write).
+			DisplayServer.window_set_mode(
+				DisplayServer.WINDOW_MODE_MAXIMIZED if _pre_fullscreen_was_big
+				else DisplayServer.WINDOW_MODE_WINDOWED)
 			DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, false)
-			# Exiting to WINDOWED: the mode change alone does not reliably restore the pre-fullscreen
-			# SIZE on Windows — deferred so the mode transition settles before the rect write.
-			if _pre_fullscreen_mode == DisplayServer.WINDOW_MODE_WINDOWED:
+			if not _pre_fullscreen_was_big:
 				_restore_windowed_rect.call_deferred()
 		else:
-			_pre_fullscreen_mode = DisplayServer.window_get_mode()
+			# Cache the SHAPE, not window_get_mode() — the enum lies after maximize under
+			# resizable=false (decays to WINDOWED at work-area size); width does not.
+			var win_w := DisplayServer.window_get_size().x
+			var screen_w := DisplayServer.screen_get_size(DisplayServer.window_get_current_screen()).x
+			_pre_fullscreen_was_big = win_w >= int(screen_w * 0.98)
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 		get_viewport().set_input_as_handled()
 	# Tempo knob (DESIGN §2.8.3): +/- from ANY peer. tempo_up = faster (fewer seconds/beat), tempo_down
@@ -561,7 +574,11 @@ func _check_stuck_windowed() -> void:
 	var win := DisplayServer.window_get_size()
 	# 98% threshold, not exact: Windows CLAMPS a decorated window to the work area (taskbar shaved —
 	# empirically 2560×1427 on a 2560×1440 screen, 99.1%), so the stuck window lands just UNDER screen
-	# size. 98% still clears every legitimate dev window (a 2560×1392 harness window is 96.7%).
+	# size. 98% still clears every legitimate dev window (a 2560×1392 harness window is 96.7%) AND the
+	# pseudo-maximized state (resizable=false maximize decays to WINDOWED at work-area size — ~93.8%
+	# height with a standard taskbar). KNOWN EDGE: an auto-hidden taskbar makes pseudo-maximized equal
+	# the full screen, indistinguishable from the stuck state — such a setup gets snapped to the small
+	# window and should just use F11 fullscreen instead.
 	if win.x >= screen.x * 0.98 and win.y >= screen.y * 0.98:
 		_restore_windowed_rect()
 

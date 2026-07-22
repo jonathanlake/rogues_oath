@@ -603,6 +603,19 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.16.2 (2026-07-22)** — F11 cache fix (Jon's report: the 4th press dropped a maximized
+  player to the small window). ENGINE FINDING (sequence-probed): with resizable=false,
+  Windows will not hold a true maximize — `window_get_mode()` DECAYS to WINDOWED one frame
+  after a maximize while the window still fills the work area (2560×1351 observed). Caching
+  that lying enum meant press 3 recorded "windowed" and press 4 faithfully restored the
+  wrong thing. Fix: cache the window's SHAPE, not the mode enum — at fullscreen entry
+  record whether the window was screen-wide (width ≥98% of screen; size readback is
+  reliable where the enum is not), and restore by intent: big → MAXIMIZED (renders as the
+  work-area window), small → WINDOWED + the override rect. Verified: six-press cycle from
+  pseudo-maximized is perfectly periodic (big→fullscreen→big ×3, no decay); four-press
+  small-window cycle returns to exactly 1280×720. Also documented the auto-hidden-taskbar
+  edge on the v0.16.1 self-heal (pseudo-maximized = full screen there; such setups should
+  use F11 fullscreen).
 - **v0.16.1 (2026-07-22)** — Stuck-window fix (Jon's report, same day): a fullscreen trip
   could clobber the OS's remembered restore rect, so un-maximizing after F11 sometimes
   handed the player a screen-sized WINDOWED window that resizable=false made inescapable.
