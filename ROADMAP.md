@@ -218,6 +218,14 @@ Not scheduled — pulled in when their moment comes:
 - ~~Camera offset for the right-column HUD (v0.13.0 Feel item)~~ — RESOLVED v0.14.0: the
   fixed-world-rect change (DESIGN #10) centres the avatar in the world rect via
   `Camera2D.offset`
+- Hybrid high-res UI (tabled 2026-07-22, Jon): pixel world as-is + a modern smoothly-scaling
+  UI panel — viable per that day's analysis: relax the v0.16.0 two-zoom model's integer HUD
+  zoom to fractional (one clamp expression), text/flat chrome already rasterizes crisp at
+  final resolution under canvas_items stretch, and items keep the pixel LOOK via baked
+  upscales (32px art pre-scaled ×8 nearest, filtered linearly; 32rogues derivatives stay
+  local-only per license). Costs a real UI art pass (≥2px features for fractional scales).
+  An aesthetic-identity call for Jon+Jeff — all-pixel DCSS lineage vs Dead Cells-style
+  hybrid; would also subsume the v0.16.0 Feel= "chat at world zoom beside a 1× panel" quirk
 
 - Host round-reset key (v0.5.4) — F5 re-seeds the whole world in place; a disposable wire-session dev
   facility that stands in for M6's real run start/end flow, which replaces it when M6 lands
