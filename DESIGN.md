@@ -542,7 +542,10 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    committed attacker carries its intended risk (and re-test the telegraphed `windup_beats > 0`
    heavy weapon in that configuration — the one where dodging finally costs something).
 
-10. **Fixed world rect — how much world a player sees must not depend on their window.**
+10. **Fixed world rect — how much world a player sees must not depend on their window.
+    ANSWERED (Jeff, 2026-07-22): approved as proposed, camera recenter included.
+    Implemented v0.14.0** (see that changelog entry for the engine finding and the
+    verification record).
     Wire-session finding (Jon+Jeff, 2026-07-21): under `aspect="expand"` the visible world
     area is a side effect of window size. Measured: 1440p maximized (3×) sees ~673×464 base
     px of world; 1080p maximized (2×) sees 780×515; a restored 1280×720 window (stepped to
@@ -572,6 +575,25 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.14.0 (2026-07-22)** — Fixed world rect (open question #10, ANSWERED same day —
+  Jeff approved as proposed, camera recenter included). Every player now sees exactly
+  42×29 tiles (672×464 base px) of world at every window size and resolution: the scale
+  policy picks the largest integer scale fitting the 852×464 world+column block (1440p-max
+  3×, 1080p-class 2×, 720p-class 1×), centres it, and covers all leftover canvas with four
+  backdrop-colored margin bands (one shared `_BACKDROP` const with the column — no seam).
+  Sub-852×464 windows hide the column and clamp the world PER AXIS to a strict subset of
+  the rect — the old full-bleed fallback could leak extra vertical tiles in a narrow-tall
+  window. Camera: `Camera2D.offset` (set from `world_frame_changed`, zoom-divided for
+  future-proofing) centres the avatar in the world rect — the v0.13.0 "avatar ~90px right
+  of visible centre" feel item is closed. ENGINE FINDING: the canvas the fractional
+  stretch yields can land a float hair UNDER the integer target (2560×1392 → canvas.y
+  463.9999…), so the fit test needs a half-base-px tolerance — a strict >= hid the column
+  at exactly the flagship 1440p geometry (caught by the harness, first run). Verified:
+  probe-file geometry assertions at 700×400 / 1280×720 / 1920×1080 / 2560×1392 (all →
+  672×464 or a per-axis subset; predicted origins exact), two-instance host+client run
+  (chat + glides adjudicated, reject path intact), screenshots at 1×/3× confirming margin
+  frame, column, and avatar at frame centre (550,360 / 1008,696 as computed). Feel= Jon+
+  Jeff: the 1×-window frame proportion (852×464 in a 720p window), recentered camera.
 - **v0.13.0 (2026-07-22)** — HUD iteration 2 (Jon's verdict on v0.12.0): RIGHT COLUMN
   ONLY — the world now bleeds to the window's left/top/bottom edges (full-window render,
   camera untouched; the column overlays the right edge, player ≥7 tiles from it at every

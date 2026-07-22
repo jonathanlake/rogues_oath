@@ -215,9 +215,9 @@ Not scheduled — pulled in when their moment comes:
   the HUD; the codebase idiom is game_log.gd's direct NetEvents subscription — migrate when
   next touching HUD events (caveat: read class/weapon from event data or defer, connection
   order vs main's handler)
-- Camera offset for the right-column HUD (v0.13.0 Feel item): player sits ~3 tiles right of
-  the visible area's centre; a small `Camera2D.offset` compensation is the follow-up if
-  Jon+Jeff want re-centering
+- ~~Camera offset for the right-column HUD (v0.13.0 Feel item)~~ — RESOLVED v0.14.0: the
+  fixed-world-rect change (DESIGN #10) centres the avatar in the world rect via
+  `Camera2D.offset`
 
 - Host round-reset key (v0.5.4) — F5 re-seeds the whole world in place; a disposable wire-session dev
   facility that stands in for M6's real run start/end flow, which replaces it when M6 lands

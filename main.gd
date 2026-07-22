@@ -1001,6 +1001,19 @@ func _on_world_frame_changed(rect: Rect2) -> void:
 	_hurt_vignette.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	_hurt_vignette.position = rect.position
 	_hurt_vignette.size = rect.size
+	# Recenter the avatar in the WORLD RECT, not the window (DESIGN #10). _update_camera keeps the camera's
+	# global_position ON the avatar (unchanged); this `offset` shifts the point the camera LOOKS AT. With the
+	# drag-center anchor the view centre = global_position + offset, so a POSITIVE offset moves world content
+	# (the avatar) the OPPOSITE way on screen — LEFT for +x. We want the avatar to land at the world rect's
+	# centre instead of the window centre: offset = window_centre − frame_centre puts the look-at point that
+	# far PAST the avatar, sliding the avatar back onto the rect centre. Visible-rect size and `rect` are both
+	# base px (= world px at zoom 1) — no conversion. Worked example, 1440p maximized (canvas 853.33×464,
+	# frame origin 0, centre ≈ (336, 232)): offset = (426.67, 232) − (336, 232) = (+90, 0), avatar shifts
+	# ~90px LEFT to the rect centre — closing v0.13.0's "avatar ~90px right of visible centre" feel item.
+	# Camera position_smoothing does NOT smooth `offset`, so it snaps; acceptable, as it only changes on resize.
+	# The zoom divide is a no-op today (zoom is pinned (1,1) in main.tscn, never written) but keeps the
+	# formula correct if a zoom mechanic ever lands: a world-space offset displaces zoom× on screen.
+	_camera.offset = (get_viewport().get_visible_rect().size / 2.0 - rect.get_center()) / _camera.zoom
 
 
 ## Host-only: a new PLAYER node just entered — mend autonomous-mover state for a possible late joiner.
