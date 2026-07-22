@@ -201,6 +201,9 @@ var _spectate_target: Node2D = null
 # despawn-respawn window (which posts no `died`) both keep the held view, so no spurious "Following X."
 # line can fire outside a real death (review fix pass, v0.11.0).
 var _local_dead: bool = false
+# Window mode cached BEFORE entering F11 borderless fullscreen, so the toggle restores exactly what the
+# player had (maximized by default if we never cached one). Local-only presentation state — never wired.
+var _pre_fullscreen_mode: int = DisplayServer.WINDOW_MODE_MAXIMIZED
 # The LOCAL player's current pace (Tactical Zones v1, §2.8.7 cue). Presentation only — set from the
 # host-authored pace_changed event for our own id, read by _update_tempo_display to emphasize the active
 # dial. Defaults false (explore emphasized), the correct pre-fight state on every peer before any flip.
@@ -491,6 +494,21 @@ func _unhandled_input(event: InputEvent) -> void:
 	# the host validator resolves the sender, picks a free tile in its room, and spawns authoritatively.
 	elif event.is_action_pressed("dev_spawn_goblin"):
 		NetEvents.submit_intent("dev_spawn_goblin", {})
+		get_viewport().set_input_as_handled()
+	# Borderless-fullscreen toggle (F11, v0.16.0) — LOCAL presentation only, no wire/intent. Normalized
+	# against the CURRENT mode (however fullscreen was entered): if already fullscreen, restore the cached
+	# pre-fullscreen mode (maximized by default) AND clear the borderless flag — 4.7 forcibly SETS borderless
+	# true when entering WINDOW_MODE_FULLSCREEN (DisplayServer.window_set_mode doc note), so leaving must put
+	# the decoration back. Otherwise cache the current mode and enter WINDOW_MODE_FULLSCREEN — which IS
+	# borderless fullscreen in 4.7 (same video mode, no decorations). The resize → _relayout chain reflows all
+	# HUD + world geometry; nothing else to do here.
+	elif event.is_action_pressed("toggle_fullscreen"):
+		if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN:
+			DisplayServer.window_set_mode(_pre_fullscreen_mode)
+			DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, false)
+		else:
+			_pre_fullscreen_mode = DisplayServer.window_get_mode()
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 		get_viewport().set_input_as_handled()
 	# Tempo knob (DESIGN §2.8.3): +/- from ANY peer. tempo_up = faster (fewer seconds/beat), tempo_down
 	# = slower. Handled here (like dev_reset_round) so a focused chat LineEdit consumes its own +/- keys

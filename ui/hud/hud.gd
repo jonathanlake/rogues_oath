@@ -26,6 +26,20 @@ extends CanvasLayer
 ## chosen INTEGER target by that fractional auto (via content_scale_factor, which MULTIPLIES it) so the
 ## engine's product lands on the integer. Target = nearest-to-canonical integer scale, then the fairness bound.
 ##
+## TWO-ZOOM MODEL (v0.16.0): the WORLD scale s (above) is the fairness knob; the HUD gets its OWN integer
+## zoom h (1 ≤ h ≤ s), chosen each pass to FIT the inventory column's measured min-height in the window
+## (h = largest integer with stack·h ≤ win.y). Net on-screen HUD scale = (h/s)·s = h — a crisp integer. It is
+## applied as THIS CanvasLayer's `scale` = Vector2(h,h)/s, so HUD-local px → canvas px is × h/s and → screen
+## px is × h. A small window (1280×720, s=2) can thus render the world at 2× while the HUD drops to 1× to keep
+## the whole inventory on screen. When h = s the layer scale is identity and geometry is byte-identical to v0.15.
+##
+## UNIT BOUNDARY (critical): the WorldFrame rect is computed in VIEWPORT CANVAS px (the column's canvas width
+## is RIGHT_COL_W · h/s there) and EMITTED / cached in canvas px — the camera offset, DebugOverlay label and
+## HurtVignette consumers all live on identity layers and read canvas px, so they stay UNCHANGED. The column,
+## WorldFrame and margin-band Controls are children of THIS scaled layer, so they are PLACED in HUD-LOCAL px
+## (the canvas-px geometry × s/h) and Root is sized to the HUD-local canvas (canvas × s/h). TacticalBorder is
+## a WorldFrame child — it co-scales, no changes.
+##
 ## COMPONENT SHAPE: main.gd owns the events and fans them out (note_attack / note_died / on_class_changed /
 ## on_weapon_swap / remove_frame); the HUD is HANDED the $Players container (set_players) and mirrors OUR
 ## OWN player's spawn/despawn off it (for the char-info HP bar seed) — it never climbs the tree. Party
@@ -43,9 +57,10 @@ static var BASE_H: float = float(ProjectSettings.get_setting("display/window/siz
 ## clusters around one canonical amount of world — the bounded-variance anchor (DESIGN #10).
 const CANON_CANVAS_W := 960.0
 
-## Right-column width (base px): 5 × 32px slots (160) + 4 × 2px gaps (8) = 168, + 2 × 3px RightMargin (6)
-## + border headroom. The world takes the canvas width MINUS this; a too-narrow window hides the column
-## (COLUMN_HIDE_FLOOR) rather than starve the world. Single source of the column geometry — no other file references it.
+## Right-column width in HUD-DESIGN px (HUD-LOCAL units, NOT canvas px — since v0.16.0 the HUD has its own
+## integer zoom h, so this maps to canvas px as RIGHT_COL_W · h/s). 5 × 32px slots (160) + 4 × 2px gaps (8)
+## = 168, + 2 × 3px RightMargin (6) + border headroom. The world takes the canvas width MINUS the column's
+## canvas-px width; a too-narrow window hides the column (COLUMN_HIDE_FLOOR) rather than starve the world.
 const RIGHT_COL_W := 180.0
 
 ## Fairness backstop (base px): the world is capped per axis at 52×36 tiles (52·16 = 832, 36·16 = 576). NO
@@ -89,6 +104,8 @@ signal world_frame_changed(rect: Rect2)
 @onready var _right_column: Panel = $Root/RightColumn
 @onready var _world_frame: Control = $Root/WorldFrame
 @onready var _tactical_border: Control = $Root/WorldFrame/TacticalBorder
+@onready var _right_margin: MarginContainer = $Root/RightColumn/RightMargin
+@onready var _right_vbox: VBoxContainer = $Root/RightColumn/RightMargin/RightVBox
 @onready var _minimap_slot: PanelContainer = $Root/RightColumn/RightMargin/RightVBox/MinimapSlot
 @onready var _char_info: PanelContainer = $Root/RightColumn/RightMargin/RightVBox/CharInfo
 @onready var _equipment: PanelContainer = $Root/RightColumn/RightMargin/RightVBox/Equipment
@@ -107,6 +124,9 @@ var _world_frame_rect: Rect2 = Rect2(Vector2.ZERO, Vector2(BASE_W, BASE_H))
 # WorldFrame; sized each _relayout pass to opaquely cover all canvas outside the content block (DESIGN #10:
 # leftover space is frame, never black bars or extra map). A zero-size band (absent margin) is fine.
 var _margin_bands: Array[ColorRect] = []
+# The world integer scale s picked by _apply_scale_policy each pass — cached so _relayout can derive the HUD
+# zoom h (1 ≤ h ≤ s) and the HUD-local ↔ canvas-px conversion (s/h). The policy always sets it before the guard.
+var _world_scale: int = 1
 
 # Own-player character-panel widgets (built in _ready, refreshed by refresh_self on class/weapon change).
 var _own_class_label: Label = null
@@ -126,9 +146,12 @@ func _ready() -> void:
 	_build_char_info()
 	_build_equipment()
 	_build_inventory()
-	# Layout on every canvas resize; the root Control is anchored full-rect so its `resized` tracks the
-	# viewport (including the content_scale_factor change the scale policy applies). Deferred once so the
-	# first pass runs after the viewport size has settled.
+	# Two triggers for the one layout pass: (1) the VIEWPORT's size_changed for real window resizes — Root is
+	# now top-left anchored with an EXPLICIT size (HUD-local px, see _relayout), so it no longer auto-tracks the
+	# viewport and its own `resized` can't catch a window resize; (2) Root's own `resized`, which fires when
+	# _relayout writes a new Root size and lets the pass re-settle (compare-before-set keeps it bounded). The
+	# content_scale_factor settle still rides the one-shot process_frame inside _relayout (no signal fires for it).
+	get_viewport().size_changed.connect(_relayout)
 	_root.resized.connect(_relayout)
 	_relayout.call_deferred()
 
@@ -215,6 +238,9 @@ func refresh_self() -> void:
 		_own_class_label.text = me.player_class.display_name
 		_refresh_passives(me.player_class)
 	_set_weapon_icon(me.equipped_weapon)
+	# Passives are the one live content that changes the column's min-height between resizes; re-measure now so
+	# the HUD zoom h re-fits immediately (the class swap can add/remove passive lines — see _column_stack_min_h).
+	_relayout()
 
 
 # ── Private: own-player spawn hooks (HP-bar seed) ─────────────────────────────
@@ -273,10 +299,23 @@ func _mark_own_dead() -> void:
 
 # ── Private: layout ───────────────────────────────────────────────────────────
 
-## The one layout pass. First settles the scale policy (which, if it changes content_scale_factor, re-fires
-## `resized` and we bail — the re-fired pass finds the settled factor and proceeds). Then bleeds the world to
-## the canvas MINUS the column (full canvas height), capped per axis by BLEED_CAP as a fairness backstop, and
-## covers any capped-off leftover with the margin bands (all four zero-size in the normal full-bleed case).
+## The column's stacked minimum height in HUD-DESIGN px: the sum of the four always-visible RightVBox
+## sections' combined-min heights + the VBox separations between them + the RightMargin top/bottom margins —
+## all read at runtime from the live theme constants (no literals, so a designer retune reflows h for free).
+## This is the height the HUD zoom h must fit into the window; measured each pass because passives are live.
+func _column_stack_min_h() -> float:
+	var sections := [_minimap_slot, _char_info, _equipment, _inventory]
+	var stack := 0.0
+	for section in sections:
+		stack += (section as Control).get_combined_minimum_size().y
+	stack += float(sections.size() - 1) * _right_vbox.get_theme_constant("separation")
+	stack += _right_margin.get_theme_constant("margin_top") + _right_margin.get_theme_constant("margin_bottom")
+	return stack
+
+
+## The one layout pass. First settles the world scale policy (which, if it changes content_scale_factor,
+## re-fires and we bail — the re-fired pass finds the settled factor and proceeds). Then picks the HUD zoom h,
+## computes the world frame in CANVAS px (emitted), and places the HUD Controls in HUD-LOCAL px (canvas × s/h).
 func _relayout() -> void:
 	# Settle the scale policy, then ALWAYS lay out with the canvas as it is right now. If the policy just
 	# changed the factor, this pass uses the pre-change canvas (stale ≤1 frame) and we schedule EXACTLY ONE
@@ -287,31 +326,57 @@ func _relayout() -> void:
 	# guard make the re-run bounded: it finds the factor applied, lays out with the settled canvas, done.
 	if _apply_scale_policy() and not get_tree().process_frame.is_connected(_relayout):
 		get_tree().process_frame.connect(_relayout, CONNECT_ONE_SHOT)
-	var canvas := get_viewport().get_visible_rect().size
-	# Column hides when the canvas can't leave a playable world width beside it (tiny dev windows only); then
-	# the world takes the full canvas width. col_w is the width the world yields to the column (0 when hidden).
-	var column_visible := canvas.x - RIGHT_COL_W >= COLUMN_HIDE_FLOOR
-	var col_w := RIGHT_COL_W if column_visible else 0.0
-	# Full-bleed world: canvas minus the column on x, full canvas height on y — each axis then clamped by
+	var canvas := get_viewport().get_visible_rect().size   # VIEWPORT canvas px
+	var win := Vector2(get_window().size)                  # window px (= canvas × s once the factor settles)
+	var s := _world_scale                                  # world integer scale (fairness)
+	# HUD zoom h: the largest integer 1..s whose stacked column min-height (HUD-design px) fits the window
+	# height at net scale h — stack·h ≤ win.y. floor(win.y / stack), clamped to [1, s]. Below ~400px window
+	# height even h = 1 overflows the stack (accepted — a real session window is far taller than that).
+	var stack := _column_stack_min_h()
+	var h := clampi(floori(win.y / stack), 1, s)
+	# Apply the HUD layer zoom: net on-screen HUD scale = (h/s)·s = h. Compare-before-set so a redundant write
+	# doesn't churn the layer transform.
+	var layer_scale := Vector2(h, h) / float(s)
+	if not is_equal_approx(scale.x, layer_scale.x):
+		scale = layer_scale
+	# Root hosts the HUD in HUD-LOCAL px. It was full-rect anchored (tracking the viewport = canvas px); at
+	# h < s that reference is wrong (the layer scale shrinks it), so pin Root top-left and size it explicitly to
+	# the HUD-local canvas = canvas × s/h. Compare-before-set so an unchanged size doesn't re-fire `resized`.
+	if _root.anchor_right != 0.0 or _root.anchor_bottom != 0.0:
+		_root.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	var to_local := float(s) / float(h)                    # canvas px → HUD-local px
+	var local_canvas := canvas * to_local
+	if not _root.size.is_equal_approx(local_canvas):
+		_root.position = Vector2.ZERO
+		_root.size = local_canvas
+	# ── Geometry in CANVAS px (the emitted rect + the camera/overlay consumers all read canvas px) ──
+	# The column's canvas-px width is its HUD-design width scaled by h/s. Column hides when the canvas can't
+	# leave a playable world width beside it; then the world takes the full canvas width. Compared in canvas px.
+	var col_canvas_full := RIGHT_COL_W * float(h) / float(s)
+	var column_visible := canvas.x - col_canvas_full >= COLUMN_HIDE_FLOOR
+	var col_canvas_w := col_canvas_full if column_visible else 0.0
+	# Full-bleed world (canvas px): canvas minus the column on x, full canvas height on y — each axis clamped by
 	# BLEED_CAP (the pathological-shape backstop; no normal 16:9 window reaches it).
-	var world := Vector2(minf(canvas.x - col_w, BLEED_CAP.x), minf(canvas.y, BLEED_CAP.y))
-	# Origin: 0 on an axis in the normal full-bleed case; when a cap BIT an axis, centre so nothing is clipped
-	# and the leftover splits into symmetric bands. On x the column rides at the world's right edge, so centre
-	# world+column together (else centring the world alone would push the column off-screen — the x-cap is
-	# reachable at ~2048-wide canvases like 2048×1152). On y the column is full-height and unaffected, so
-	# centre the world alone. Floored to whole base px (pixel-grid alignment).
+	var world := Vector2(minf(canvas.x - col_canvas_w, BLEED_CAP.x), minf(canvas.y, BLEED_CAP.y))
+	# Origin (canvas px): 0 normally; when a cap BIT an axis, centre so nothing is clipped. On x the column
+	# rides at the world's right edge, so centre world+column together (v0.15 behaviour, reachable at ~2048-wide
+	# canvases); on y the column is full-height and unaffected, so centre the world alone. Floored.
 	var origin := Vector2.ZERO
-	if world.x < canvas.x - col_w:
-		origin.x = floorf((canvas.x - world.x - col_w) / 2.0)
+	if world.x < canvas.x - col_canvas_w:
+		origin.x = floorf((canvas.x - world.x - col_canvas_w) / 2.0)
 	if world.y < canvas.y:
 		origin.y = floorf((canvas.y - world.y) / 2.0)
-	var frame := Rect2(origin, world)
+	var frame := Rect2(origin, world)                      # EMITTED in canvas px — consumers unchanged
+	# ── Placement in HUD-LOCAL px (canvas-px geometry × s/h; Controls are children of this scaled layer) ──
+	var origin_local := origin * to_local
+	var world_local := world * to_local
 	_right_column.visible = column_visible
 	if column_visible:
-		# Column flush against the world's right edge, full canvas height (v0.13 shape).
-		_place(_right_column, Vector2(origin.x + world.x, 0.0), Vector2(RIGHT_COL_W, canvas.y))
-	_place(_world_frame, frame.position, frame.size)
-	_layout_margin_frame(canvas, origin, world, col_w)
+		# Column flush against the world's right edge, full HUD-local canvas height. RIGHT_COL_W is already
+		# HUD-design px (= col_canvas_w × s/h), so no further conversion on its width.
+		_place(_right_column, Vector2(origin_local.x + world_local.x, 0.0), Vector2(RIGHT_COL_W, local_canvas.y))
+	_place(_world_frame, origin_local, world_local)
+	_layout_margin_frame(local_canvas, origin_local, world_local, RIGHT_COL_W if column_visible else 0.0)
 	_world_frame_rect = frame
 	world_frame_changed.emit(frame)
 
@@ -365,6 +430,9 @@ func _apply_scale_policy() -> bool:
 	# BLEED_CAP still hard-caps the visible world per axis, so playability wins and fairness stays bounded.
 	while target > 1 and win.y / float(target) < 240.0:
 		target -= 1
+	# Cache the chosen world scale for _relayout (it derives the HUD zoom h and the HUD-local ↔ canvas-px
+	# conversion from it). Set unconditionally — even when the factor write below no-ops, s must stay current.
+	_world_scale = target
 	# Guard on the FACTOR PROPERTY we write, never on the canvas: a content_scale_factor assignment does NOT
 	# update get_visible_rect() synchronously, so a canvas-derived "current" stays stale through a whole
 	# deferred flush — the settle-loop that crashed the first harness run. Comparing desired vs applied

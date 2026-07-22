@@ -561,6 +561,19 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
     fractionally stretched — exact equality, but non-integer scaling shimmers 16px art);
     revisit only if fog-of-war (#6) doesn't land as the real equalizer. The margin-frame +
     exact-equality clauses above are superseded; camera recenter and fog cross-ref stand.
+    **UI ZOOM DECOUPLED (Jeff, 2026-07-22 Discord; implemented v0.16.0): the HUD gets its
+    OWN integer zoom h, separate from the world's fairness zoom s.** Jeff's framing: "games
+    get smaller when the window gets smaller" — the panel should shrink with the window,
+    not overflow it (the v0.15.0 windowed inventory clip). Each layout pass h = the largest
+    integer 1..s whose MEASURED column stack fits the window height, applied as the HUD
+    CanvasLayer's scale = h/s (net on-screen = h — still a crisp integer; both zooms are
+    whole steps, no fractional shimmer). h = s on every maximized 16:9 (nothing changes);
+    a 1280×720 window runs world 2× / HUD 1× (the v0.13-windowed panel size, full inventory
+    visible); 1366×768-class laptops (which clipped even maximized) get the same fix. The
+    world_frame rect stays emitted in CANVAS px — the camera/F3/vignette consumers are
+    unchanged; only the HUD layer itself is scaled. Also added on Jeff's request: **F11
+    borderless fullscreen** (WINDOW_MODE_FULLSCREEN, mode cached and restored on exit,
+    borderless flag reset per the 4.7 force-set) — evaluation toggle, local-only.
     Wire-session finding (Jon+Jeff, 2026-07-21): under `aspect="expand"` the visible world
     area is a side effect of window size. Measured: 1440p maximized (3×) sees ~673×464 base
     px of world; 1080p maximized (2×) sees 780×515; a restored 1280×720 window (stepped to
@@ -590,6 +603,27 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.16.0 (2026-07-22)** — Two-zoom model: independent HUD zoom (#10 UI ZOOM DECOUPLED,
+  Jeff's idea from the Discord session) + F11 borderless fullscreen. The world keeps its
+  v0.15.0 fairness scale s untouched; the HUD now picks its OWN integer zoom h each layout
+  pass — the largest whole step whose column stack (MEASURED live: section minimums +
+  theme separations + margins, no literals; re-measured on refresh_self so passives count)
+  fits the window height — applied as the HUD CanvasLayer's scale = h/s (net = h, crisp).
+  Maximized 16:9 → h = s, byte-identical to v0.15.0 (probe-verified). 1280×720 windowed →
+  world 2× / HUD 1×: the whole inventory fits again (the v0.15.0 windowed clip, root cause
+  measured at stack 409 vs 360 available, is closed) at v0.13's panel size. 1366×768-class
+  laptops (which clipped even maximized) inherit the same fix. UNIT BOUNDARY: the world
+  frame is computed and emitted in canvas px (column footprint = 180·h/s there), Controls
+  placed in HUD-local px — camera offset, F3 label, and hurt vignette consumers unchanged
+  (screenshot-verified at 720p: F3 label at frame edge x=1100, avatar at frame centre).
+  Root is now explicitly sized (canvas·s/h) with a viewport size_changed hook (its own
+  `resized` no longer fires once off full-rect anchors). F11 toggles borderless fullscreen
+  (mode cached/restored, borderless flag reset on exit per the 4.7 force-set; harness
+  token tap=f11) — Jeff's evaluation ask; verified live 2560×1392 windowed → 2560×1440
+  fullscreen mid-run with correct 3× re-layout. Two-instance wire gate passed (chat +
+  adjudicated glides + reject). Feel= Jon+Jeff: chat/tempo banner keep the WORLD zoom
+  beside a 1× panel in small windows (720p-only mismatch — co-scale them with the HUD if
+  it grates); borderless fullscreen verdict; windowed world-2×/panel-1× overall feel.
 - **v0.15.0 (2026-07-22)** — Full-bleed restored, bounded-variance scale (#10 REVISED —
   supersedes v0.14.0's margin frame ONE DAY later; Jeff, see the release notes). Jon
   rejected the always-on frame: the world again bleeds to the left/top/bottom edges with

@@ -138,7 +138,7 @@ const _MOVE_DIRS := {
 const _TAP_KEYS := {
 	"kp1": KEY_KP_1, "kp2": KEY_KP_2, "kp3": KEY_KP_3, "kp4": KEY_KP_4,
 	"kp6": KEY_KP_6, "kp7": KEY_KP_7, "kp8": KEY_KP_8, "kp9": KEY_KP_9,
-	"enter": KEY_ENTER, "f5": KEY_F5, "f6": KEY_F6,
+	"enter": KEY_ENTER, "f5": KEY_F5, "f6": KEY_F6, "f11": KEY_F11,
 	"lbracket": KEY_BRACKETLEFT, "rbracket": KEY_BRACKETRIGHT,
 }
 const _TAP_BUTTONS := {
