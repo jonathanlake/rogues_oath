@@ -218,6 +218,12 @@ Not scheduled — pulled in when their moment comes:
 - ~~Camera offset for the right-column HUD (v0.13.0 Feel item)~~ — RESOLVED v0.14.0: the
   fixed-world-rect change (DESIGN #10) centres the avatar in the world rect via
   `Camera2D.offset`
+- F11 borderless↔maximize restore (deprioritized 2026-07-22, Jon+Jeff: "minor, don't fuss"):
+  returning from borderless fullscreen to a truly maximized window is still unreliable on
+  real interactive use (v0.16.1/.2 fixed the worse stuck-screen-sized-window and 4th-press
+  cases; the residual is engine-level — resizable=false maximize decays to a work-area
+  WINDOWED state, sequence-probed in the v0.16.2 changelog). Revisit if it starts to
+  grate; meanwhile fullscreen or a manual re-maximize is the workaround
 - Hybrid high-res UI (tabled 2026-07-22, Jon): pixel world as-is + a modern smoothly-scaling
   UI panel — viable per that day's analysis: relax the v0.16.0 two-zoom model's integer HUD
   zoom to fractional (one clamp expression), text/flat chrome already rasterizes crisp at
