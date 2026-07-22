@@ -235,6 +235,13 @@ func _ready() -> void:
 	# set_tempo event (§2.8.3). A late joiner's host-supplied beats (sync_tempo below) refresh it.
 	_update_tempo_display()
 
+	# Stuck-window self-heal (v0.16.1): watch for the "WINDOWED but screen-sized" state — reachable when
+	# a fullscreen transition clobbers the OS's remembered restore rect (maximize → F11 → back →
+	# un-maximize hands the player a screen-sized window that resizable=false makes inescapable). The
+	# check runs deferred so a mid-transition size event never reads a half-applied mode. See
+	# _on_window_size_changed for why this state is never legitimate here.
+	get_window().size_changed.connect(func(): _check_stuck_windowed.call_deferred())
+
 	# Paint the room first, on EVERY peer, so players spawn onto a visible floor. Deterministic
 	# presentation of the logical grid — same input (WorldGrid) everywhere, so it can't diverge.
 	_build_room()
@@ -506,6 +513,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN:
 			DisplayServer.window_set_mode(_pre_fullscreen_mode)
 			DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, false)
+			# Exiting to WINDOWED: the mode change alone does not reliably restore the pre-fullscreen
+			# SIZE on Windows — deferred so the mode transition settles before the rect write.
+			if _pre_fullscreen_mode == DisplayServer.WINDOW_MODE_WINDOWED:
+				_restore_windowed_rect.call_deferred()
 		else:
 			_pre_fullscreen_mode = DisplayServer.window_get_mode()
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
@@ -536,6 +547,36 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("weapon_swap"):
 		NetEvents.submit_intent("swap_weapon", {})
 		get_viewport().set_input_as_handled()
+
+
+## Detect and repair the ONE illegitimate window state: WINDOWED at (or beyond) the full screen size.
+## With resizable=false a window's size can only come from the project's windowed override or our own
+## code, so a screen-sized WINDOWED window is always transition fallout (the OS restore rect clobbered
+## by a fullscreen trip) — and the player cannot escape it (no resize handles, no restore state left).
+## Deferred from size_changed so the mode read is post-transition. Repair = snap to the override rect.
+func _check_stuck_windowed() -> void:
+	if DisplayServer.window_get_mode() != DisplayServer.WINDOW_MODE_WINDOWED:
+		return
+	var screen := DisplayServer.screen_get_size(DisplayServer.window_get_current_screen())
+	var win := DisplayServer.window_get_size()
+	# 98% threshold, not exact: Windows CLAMPS a decorated window to the work area (taskbar shaved —
+	# empirically 2560×1427 on a 2560×1440 screen, 99.1%), so the stuck window lands just UNDER screen
+	# size. 98% still clears every legitimate dev window (a 2560×1392 harness window is 96.7%).
+	if win.x >= screen.x * 0.98 and win.y >= screen.y * 0.98:
+		_restore_windowed_rect()
+
+
+## Snap the window to the project's windowed-override size, centred on its current screen. Used by the
+## F11 exit path (Windows does not reliably restore the pre-fullscreen SIZE with the mode) and by the
+## stuck-window self-heal above. Reads the override live from ProjectSettings — single source of truth.
+func _restore_windowed_rect() -> void:
+	var size := Vector2i(
+		int(ProjectSettings.get_setting("display/window/size/window_width_override")),
+		int(ProjectSettings.get_setting("display/window/size/window_height_override")))
+	var screen := DisplayServer.window_get_current_screen()
+	DisplayServer.window_set_size(size)
+	DisplayServer.window_set_position(
+		DisplayServer.screen_get_position(screen) + (DisplayServer.screen_get_size(screen) - size) / 2)
 
 
 ## Per-peer local camera follow (M3.5), every frame on every peer. Pure presentation — reads only our

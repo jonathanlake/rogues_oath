@@ -603,6 +603,18 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.16.1 (2026-07-22)** — Stuck-window fix (Jon's report, same day): a fullscreen trip
+  could clobber the OS's remembered restore rect, so un-maximizing after F11 sometimes
+  handed the player a screen-sized WINDOWED window that resizable=false made inescapable.
+  Two-part fix in main.gd: the F11 exit-to-windowed path now explicitly restores the
+  project's windowed-override rect (Windows does not reliably restore SIZE with mode), and
+  a self-heal guard watches size_changed for the one illegitimate state — WINDOWED at
+  ≥98% of screen size (98% not 100%: Windows clamps decorated windows to the work area,
+  measured 2560×1427 on a 2560×1440 screen) — and snaps it to the override rect, centred.
+  Path-independent: fixes the maximize→F11→restore route and any other transition fallout.
+  Verified: simulated stuck window (screen-sized windowed launch) self-heals to 1280×720;
+  the 2560×1392 harness window (96.7%) untouched — no false positive; F11 round-trip from
+  windowed still restores exactly; compile clean.
 - **v0.16.0 (2026-07-22)** — Two-zoom model: independent HUD zoom (#10 UI ZOOM DECOUPLED,
   Jeff's idea from the Discord session) + F11 borderless fullscreen. The world keeps its
   v0.15.0 fairness scale s untouched; the HUD now picks its OWN integer zoom h each layout
