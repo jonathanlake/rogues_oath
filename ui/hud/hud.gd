@@ -1,25 +1,30 @@
 extends CanvasLayer
 
-## Fixed world rect HUD (DESIGN #10). Every player sees the SAME 42×29-tile world rect (672×464 base px) —
-## how much world you see no longer depends on your window (v0.13.0's "world bleeds to three edges" is
-## walked back: bleed and equal-vision are mutually exclusive, and fairness wins). The world + the 180px HUD
-## column form an 852×464 CONTENT BLOCK; each window picks the LARGEST INTEGER scale that fits that block,
-## centres it on the pixel grid, and paints ALL leftover space as a MARGIN FRAME in the column's backdrop
-## colour — no black bars, no extra map. The WorldFrame — the rect the vignette, tactical border and F3
-## label scope to — is that fixed 672×464 rect at the block's left; the column sits on its right edge. The
-## camera recenters the avatar in the world rect (not the window) via main.gd's camera-offset write.
+## Full-bleed HUD with bounded-variance scale (DESIGN #10 REVISED 2026-07-22). The world renders FULL-BLEED
+## to the window's LEFT, TOP and BOTTOM edges (v0.13.0's look, restored — the v0.14.0 fixed-rect + always-on
+## margin frame was rejected: it drew a visible frame on 1080p-class windows). A single opaque RIGHT COLUMN
+## overlays the right edge; the WorldFrame — the rect the vignette, tactical border and F3 label scope to —
+## is the canvas MINUS that column. The camera recenters the avatar in that rect (not the window) via
+## main.gd's camera-offset write, keyed off the emitted rect's centre (unchanged here).
 ##
-## SUB-FLOOR CASE (dev windows / extreme DPI only — a real session is maximized): when the block cannot fit
-## even at 1× on either axis, the column HIDES and the world CLAMPS PER AXIS to a strict SUBSET of the rect
-## (never MORE than 42×29 tiles on either axis — DESIGN #10's fairness invariant), still centred, margin
-## frame still covering the leftover. This replaces v0.13.0's full-bleed fallback, which could leak extra
-## vertical tiles in a narrow-tall window.
+## BOUNDED VARIANCE (the fairness knob, DESIGN #10): how much world a window shows still varies with its
+## size, but within a TIGHT band instead of the old 2.4× spread. The scale policy picks the integer
+## magnification whose canvas width lands NEAREST a canonical amount of world (CANON_CANVAS_W); a hard bound
+## then bumps the scale UP if the window would still show meaningfully MORE world width than canonical — so a
+## windowed player never sees more than a maximized one. Across maximized 16:9 the residual spread is
+## ~16%/13% (853/960 wide, 464/515 tall), vs v0.12's 2.4×.
 ##
-## SCALE POLICY (unchanged machinery, v3 geometry): under aspect=expand the engine auto-picks a FRACTIONAL
+## BLEED_CAP backstop: the world is additionally clamped per axis to BLEED_CAP (52×36 tiles). NO normal 16:9
+## window reaches it — a short/wide shape shrinks the canvas before it could, and the scale bound keeps the
+## width near canonical. It exists so a PATHOLOGICAL shape (portrait monitor, extreme DPI virtualization)
+## cannot reveal unbounded tiles. When a cap bites an axis the world centres on it (floored) and the margin
+## bands cover the leftover; in the normal full-bleed case all four bands compute to zero size. A too-narrow
+## window (world width < COLUMN_HIDE_FLOOR) hides the column and gives the world the full canvas width, still capped.
+##
+## SCALE POLICY (unchanged machinery, revised target): under aspect=expand the engine auto-picks a FRACTIONAL
 ## best-fit stretch (scale_mode="integer" is INERT under expand — EMPIRICAL 4.7.1); this policy divides the
 ## chosen INTEGER target by that fractional auto (via content_scale_factor, which MULTIPLIES it) so the
-## engine's product lands on the integer. Target = the largest s ≥ 1 with 852·s ≤ win.x and 464·s ≤ win.y.
-## It never steps below 1×; sub-1×-fit windows take the per-axis clamp above.
+## engine's product lands on the integer. Target = nearest-to-canonical integer scale, then the fairness bound.
 ##
 ## COMPONENT SHAPE: main.gd owns the events and fans them out (note_attack / note_died / on_class_changed /
 ## on_weapon_swap / remove_frame); the HUD is HANDED the $Players container (set_players) and mirrors OUR
@@ -27,28 +32,32 @@ extends CanvasLayer
 ## frames are OFF this iteration (party_frame.gd/.tscn stay on disk, dormant); note_attack/note_died now
 ## feed the own-player HP bar in the char-info section. Presentation only; nothing here is adjudication truth.
 
-## The base virtual viewport width/height (base px, the project's display size — 640×360 today). These now
-## feed ONLY the engine's fractional auto-fit denominator in _apply_scale_policy (auto_f, the stretch
-## aspect=expand actually applies); the world area the player sees is the fixed WORLD_RECT below, no longer
-## derived from these.
+## The base virtual viewport width/height (base px, the project's display size — 640×360 today). These feed
+## ONLY the engine's fractional auto-fit denominator in _apply_scale_policy (auto_f, the stretch aspect=expand
+## actually applies); the world the player sees is the full-bleed canvas minus the column, scale-bounded below.
 static var BASE_W: float = float(ProjectSettings.get_setting("display/window/size/viewport_width"))
 static var BASE_H: float = float(ProjectSettings.get_setting("display/window/size/viewport_height"))
 
-## The FIXED world rect every player sees (DESIGN #10): 42×29 tiles. The TILE COUNT is the definition; the
-## 672×464 base px is that count × 16 base px/tile (42·16 = 672, 29·16 = 464), sized to today's
-## 1440p-maximized view so that setup stays visually identical. No window/resolution/DPI ever shows more.
-const WORLD_TILES := Vector2i(42, 29)
-const WORLD_RECT := Vector2(672.0, 464.0)
+## The canonical canvas width (base px): the 1080p/4K maximized natural (1920/2 and 3840/4 both land here).
+## The scale policy picks the integer scale whose canvas width lands NEAREST this, so every resolution's view
+## clusters around one canonical amount of world — the bounded-variance anchor (DESIGN #10).
+const CANON_CANVAS_W := 960.0
 
 ## Right-column width (base px): 5 × 32px slots (160) + 4 × 2px gaps (8) = 168, + 2 × 3px RightMargin (6)
-## + border headroom. INDEPENDENT of the world rect — its own constant, unchanged. Widening it later lowers
-## the fit-time scale some windows get (same tiles, smaller magnification), never the tile count.
+## + border headroom. The world takes the canvas width MINUS this; a too-narrow window hides the column
+## (COLUMN_HIDE_FLOOR) rather than starve the world. Single source of the column geometry — no other file references it.
 const RIGHT_COL_W := 180.0
 
-## The DERIVED content block (base px): world rect + column side by side = 852×464. The scale policy fits
-## the LARGEST integer multiple of THIS block, and the margin frame covers everything outside it. Derived,
-## never a literal — retuning WORLD_RECT or RIGHT_COL_W reshapes it automatically.
-const CONTENT_BLOCK := WORLD_RECT + Vector2(RIGHT_COL_W, 0.0)
+## Fairness backstop (base px): the world is capped per axis at 52×36 tiles (52·16 = 832, 36·16 = 576). NO
+## normal 16:9 window reaches this — a short/wide shape shrinks the canvas before it could, and the scale
+## bound keeps the width near canonical. It exists SOLELY so a pathological shape (portrait monitor, extreme
+## DPI virtualization) cannot reveal unbounded tiles; when it bites an axis the world centres on that axis.
+const BLEED_CAP := Vector2(832.0, 576.0)
+
+## Column-hide floor (base px): 20 tiles of world width. If the canvas leaves less than this beside the
+## column, the column HIDES and the world takes the full canvas width (still BLEED_CAP-capped) — a playable
+## world width is protected over the HUD column in tiny dev windows.
+const COLUMN_HIDE_FLOOR := 320.0
 
 ## Equipment/inventory slot edge (base px) and inventory grid shape (5 wide × 4 tall; the top row is the
 ## future hotbar). Doubled from v0.12.0's 16px for the airier column.
@@ -91,8 +100,9 @@ var _players: Node2D = null
 # filter for OUR player — cached rather than queried per-call because `multiplayer` reads null during tree
 # teardown (a child_exiting_tree fired at quit would otherwise crash on multiplayer.get_unique_id()).
 var _own_id: int = 0
-# The last WorldFrame rect, so a late-wired consumer can read it without waiting for the next resize.
-var _world_frame_rect: Rect2 = Rect2(Vector2.ZERO, WORLD_RECT)
+# The last WorldFrame rect, so a late-wired consumer can read it without waiting for the next resize. Seeded
+# with the base viewport as a neutral pre-layout placeholder — overwritten on the first _relayout pass.
+var _world_frame_rect: Rect2 = Rect2(Vector2.ZERO, Vector2(BASE_W, BASE_H))
 # The margin-frame bands (left / right / top / bottom ColorRects). Built in _ready BEHIND the column +
 # WorldFrame; sized each _relayout pass to opaquely cover all canvas outside the content block (DESIGN #10:
 # leftover space is frame, never black bars or extra map). A zero-size band (absent margin) is fine.
@@ -264,9 +274,9 @@ func _mark_own_dead() -> void:
 # ── Private: layout ───────────────────────────────────────────────────────────
 
 ## The one layout pass. First settles the scale policy (which, if it changes content_scale_factor, re-fires
-## `resized` and we bail — the re-fired pass finds the settled factor and proceeds). Then centres the fixed
-## 852×464 content block on the pixel grid, places the fixed 672×464 WorldFrame at its left and the column
-## on its right edge, and covers all leftover canvas with the margin frame.
+## `resized` and we bail — the re-fired pass finds the settled factor and proceeds). Then bleeds the world to
+## the canvas MINUS the column (full canvas height), capped per axis by BLEED_CAP as a fairness backstop, and
+## covers any capped-off leftover with the margin bands (all four zero-size in the normal full-bleed case).
 func _relayout() -> void:
 	# Settle the scale policy, then ALWAYS lay out with the canvas as it is right now. If the policy just
 	# changed the factor, this pass uses the pre-change canvas (stale ≤1 frame) and we schedule EXACTLY ONE
@@ -278,55 +288,47 @@ func _relayout() -> void:
 	if _apply_scale_policy() and not get_tree().process_frame.is_connected(_relayout):
 		get_tree().process_frame.connect(_relayout, CONNECT_ONE_SHOT)
 	var canvas := get_viewport().get_visible_rect().size
-	# `content_origin` / `block` = the top-left and size of the region the margin frame frames (block = the
-	# full 852×464 block in the normal case, the clamped world in the sub-floor case). `frame` = the emitted
-	# WorldFrame rect (the world portion only).
-	var content_origin: Vector2
-	var block: Vector2
-	var frame: Rect2
-	# Half-base-px tolerance on the fit test: the canvas is win / (auto_f × content_scale_factor), and that
-	# float product can land a hair UNDER the exact integer (empirical, first v0.14.0 harness run: a
-	# 2560×1392 window — the flagship 1440p-maximized geometry — yielded canvas.y = 463.9999…, which a
-	# strict >= 464 read as sub-floor and HID the column). Half a base px can never admit a window that is
-	# genuinely a pixel short.
-	if canvas.x >= CONTENT_BLOCK.x - 0.5 and canvas.y >= CONTENT_BLOCK.y - 0.5:
-		# Normal case: the whole 852×464 block fits. Centre it, floored to whole base px (pixel-grid
-		# alignment), put the fixed world rect at its left and the column on the world's right edge. The
-		# zero-clamp pairs with the tolerance above: in the epsilon case (canvas - block) is a tiny negative,
-		# which floor() would turn into a whole -1 — clamp so the block sits at 0 and overflows by the
-		# invisible sub-pixel instead of shifting a full pixel off-canvas.
-		block = CONTENT_BLOCK
-		content_origin = ((canvas - block) / 2.0).floor()
-		content_origin = Vector2(maxf(content_origin.x, 0.0), maxf(content_origin.y, 0.0))
-		frame = Rect2(content_origin, WORLD_RECT)
-		_right_column.visible = true
-		_place(_right_column, content_origin + Vector2(WORLD_RECT.x, 0.0), Vector2(RIGHT_COL_W, WORLD_RECT.y))
-	else:
-		# Sub-floor case (dev windows / extreme DPI only): the block can't fit at 1× on one or both axes.
-		# Hide the column and CLAMP the world PER AXIS to a strict subset of the rect — never more than the
-		# rect on either axis (DESIGN #10's fairness invariant, vs the old full-bleed that leaked tiles in a
-		# narrow-tall window) — then centre it, floored.
-		_right_column.visible = false
-		block = Vector2(minf(canvas.x, WORLD_RECT.x), minf(canvas.y, WORLD_RECT.y))
-		content_origin = ((canvas - block) / 2.0).floor()
-		frame = Rect2(content_origin, block)
+	# Column hides when the canvas can't leave a playable world width beside it (tiny dev windows only); then
+	# the world takes the full canvas width. col_w is the width the world yields to the column (0 when hidden).
+	var column_visible := canvas.x - RIGHT_COL_W >= COLUMN_HIDE_FLOOR
+	var col_w := RIGHT_COL_W if column_visible else 0.0
+	# Full-bleed world: canvas minus the column on x, full canvas height on y — each axis then clamped by
+	# BLEED_CAP (the pathological-shape backstop; no normal 16:9 window reaches it).
+	var world := Vector2(minf(canvas.x - col_w, BLEED_CAP.x), minf(canvas.y, BLEED_CAP.y))
+	# Origin: 0 on an axis in the normal full-bleed case; when a cap BIT an axis, centre so nothing is clipped
+	# and the leftover splits into symmetric bands. On x the column rides at the world's right edge, so centre
+	# world+column together (else centring the world alone would push the column off-screen — the x-cap is
+	# reachable at ~2048-wide canvases like 2048×1152). On y the column is full-height and unaffected, so
+	# centre the world alone. Floored to whole base px (pixel-grid alignment).
+	var origin := Vector2.ZERO
+	if world.x < canvas.x - col_w:
+		origin.x = floorf((canvas.x - world.x - col_w) / 2.0)
+	if world.y < canvas.y:
+		origin.y = floorf((canvas.y - world.y) / 2.0)
+	var frame := Rect2(origin, world)
+	_right_column.visible = column_visible
+	if column_visible:
+		# Column flush against the world's right edge, full canvas height (v0.13 shape).
+		_place(_right_column, Vector2(origin.x + world.x, 0.0), Vector2(RIGHT_COL_W, canvas.y))
 	_place(_world_frame, frame.position, frame.size)
-	_layout_margin_frame(canvas, content_origin, block)
+	_layout_margin_frame(canvas, origin, world, col_w)
 	_world_frame_rect = frame
 	world_frame_changed.emit(frame)
 
 
-## Size the four margin bands to cover every part of `canvas` OUTSIDE the content block (top-left
-## `content_origin`, size `block`) with the backdrop colour. Left/right run the full canvas height; top/
-## bottom span only the block's width between them (so they never double-cover the corners). Negative widths
-## are clamped to zero (an absent margin is a zero-size band, harmless). Also covers the sub-floor margins.
-func _layout_margin_frame(canvas: Vector2, content_origin: Vector2, block: Vector2) -> void:
-	var right_x := content_origin.x + block.x
-	var bottom_y := content_origin.y + block.y
-	_place(_margin_bands[0], Vector2.ZERO, Vector2(maxf(0.0, content_origin.x), canvas.y))                       # left
-	_place(_margin_bands[1], Vector2(right_x, 0.0), Vector2(maxf(0.0, canvas.x - right_x), canvas.y))            # right
-	_place(_margin_bands[2], Vector2(content_origin.x, 0.0), Vector2(block.x, maxf(0.0, content_origin.y)))      # top
-	_place(_margin_bands[3], Vector2(content_origin.x, bottom_y), Vector2(block.x, maxf(0.0, canvas.y - bottom_y)))  # bottom
+## Size the four margin bands to cover every part of `canvas` OUTSIDE the world + column with the backdrop
+## colour. `origin`/`world` are the WorldFrame rect; `col_w` is the column's width beside the world (0 when
+## hidden). Left/right run the full canvas height and start/end past the column (which is itself full-height,
+## same backdrop colour, so nothing pokes above/below it). Top/bottom frame the WORLD vertically, spanning
+## only the world's x-range. In the normal full-bleed case every band degenerates to zero size (world +
+## column span the whole canvas, origin 0). Negative extents clamp to zero — an absent margin is harmless.
+func _layout_margin_frame(canvas: Vector2, origin: Vector2, world: Vector2, col_w: float) -> void:
+	var occupied_right := origin.x + world.x + col_w   # right edge of world + column together
+	var world_bottom := origin.y + world.y
+	_place(_margin_bands[0], Vector2.ZERO, Vector2(maxf(0.0, origin.x), canvas.y))                                  # left
+	_place(_margin_bands[1], Vector2(occupied_right, 0.0), Vector2(maxf(0.0, canvas.x - occupied_right), canvas.y))  # right
+	_place(_margin_bands[2], Vector2(origin.x, 0.0), Vector2(world.x, maxf(0.0, origin.y)))                         # top
+	_place(_margin_bands[3], Vector2(origin.x, world_bottom), Vector2(world.x, maxf(0.0, canvas.y - world_bottom)))  # bottom
 
 
 ## Apply the runtime scale policy. Returns true if it CHANGED content_scale_factor (a `resized` will re-fire
@@ -338,10 +340,31 @@ func _apply_scale_policy() -> bool:
 	# EMPIRICAL 4.7.1 finding: scale_mode="integer" is INERT under expand. So THIS policy is the integer
 	# snapper: dividing target by the fractional auto makes the engine's product land on the integer.
 	var auto_f := maxf(1.0, minf(win.x / BASE_W, win.y / BASE_H))
-	# Target = the LARGEST integer s ≥ 1 with 852·s ≤ win.x AND 464·s ≤ win.y — the largest integer scale
-	# at which the whole content block fits the window (per axis; min of the two). Never below 1× (a smaller
-	# window takes _relayout's per-axis sub-floor clamp). Computed from the derived block, not literals.
-	var target := maxi(1, mini(floori(win.x / CONTENT_BLOCK.x), floori(win.y / CONTENT_BLOCK.y)))
+	# Target = NEAREST-TO-CANONICAL integer scale. Among candidate scales 1..ceil(win.x / (CANON/2)), pick the
+	# one whose resulting canvas width (win.x / s) lands nearest CANON_CANVAS_W in LOG space (ratio-symmetric,
+	# so 2× too much and 2× too little weigh equally). `<=` with ascending s breaks ties toward the LARGER s —
+	# more zoomed = LESS world, and a windowed player must never see more than a maximized one.
+	var max_s := maxi(1, ceili(win.x / (CANON_CANVAS_W / 2.0)))
+	var target := 1
+	var best := INF
+	for s in range(1, max_s + 1):
+		var metric := absf(log(win.x / float(s) / CANON_CANVAS_W))
+		if metric <= best:
+			best = metric
+			target = s
+	# Fairness bound: nearest-canonical picks the CLOSEST view, but a small window (e.g. 1280×720) can still
+	# land a scale that shows meaningfully MORE world than canonical. Canonical world width = CANON_CANVAS_W −
+	# RIGHT_COL_W (780). While the world width at the chosen scale exceeds that by >10%, bump the scale UP
+	# (more zoom, less world) — the windowed-outlier killer (1280×720: s=1 world 1100 > 858 → s=2, world 460).
+	while (win.x / float(target) - RIGHT_COL_W) > (CANON_CANVAS_W - RIGHT_COL_W) * 1.10:
+		target += 1
+	# Height playability floor: the width-driven selection above can leave a DEGENERATE short-wide window
+	# (not reachable via resizable=false, but DPI virtualization can synthesize one) with a uselessly short
+	# canvas — e.g. 3840×600 at 4× is 150 base px (9 tiles) tall. Step back down until the canvas is at least
+	# 15 tiles (240 px) tall or 1×. This may re-widen the world past the fairness bound above — acceptable:
+	# BLEED_CAP still hard-caps the visible world per axis, so playability wins and fairness stays bounded.
+	while target > 1 and win.y / float(target) < 240.0:
+		target -= 1
 	# Guard on the FACTOR PROPERTY we write, never on the canvas: a content_scale_factor assignment does NOT
 	# update get_visible_rect() synchronously, so a canvas-derived "current" stays stale through a whole
 	# deferred flush — the settle-loop that crashed the first harness run. Comparing desired vs applied

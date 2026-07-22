@@ -546,6 +546,21 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
     ANSWERED (Jeff, 2026-07-22): approved as proposed, camera recenter included.
     Implemented v0.14.0** (see that changelog entry for the engine finding and the
     verification record).
+    **REVISED (Jon, 2026-07-22, implemented v0.15.0): full bleed restored, exact equality
+    relaxed to BOUNDED VARIANCE.** Jon rejected v0.14.0's always-on margin frame on sight
+    (visible bands on 1080p-class windows): the world must fill the window except the
+    column, as in v0.13.0. Revised rule: integer scale NEAREST a canonical canvas width
+    (960 base px, the 1080p/4K natural), a hard bound bumping the scale up if a window
+    would show >10% more world width than canonical (kills the windowed outlier: 1280×720
+    now 2× / 460×360, less than any maximized view, never more), a height playability
+    floor (≥15 tiles) for degenerate shapes, and a per-axis BLEED_CAP backstop (52×36
+    tiles) so no shape — portrait, extreme DPI — reveals unbounded tiles; only capped axes
+    show margin bands. Residual spread across maximized 16:9: ~16% width / ~13% height
+    (1080p 780×515, 1440p 673×464, 4K 780×527) — accepted as "somewhat close" (Jon).
+    Considered and declined: the Rogue Fable model (one fixed canvas incl. UI,
+    fractionally stretched — exact equality, but non-integer scaling shimmers 16px art);
+    revisit only if fog-of-war (#6) doesn't land as the real equalizer. The margin-frame +
+    exact-equality clauses above are superseded; camera recenter and fog cross-ref stand.
     Wire-session finding (Jon+Jeff, 2026-07-21): under `aspect="expand"` the visible world
     area is a side effect of window size. Measured: 1440p maximized (3×) sees ~673×464 base
     px of world; 1080p maximized (2×) sees 780×515; a restored 1280×720 window (stepped to
@@ -575,6 +590,22 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.15.0 (2026-07-22)** — Full-bleed restored, bounded-variance scale (#10 REVISED —
+  supersedes v0.14.0's margin frame ONE DAY later; Jeff, see the release notes). Jon
+  rejected the always-on frame: the world again bleeds to the left/top/bottom edges with
+  the full-height column on the right (the v0.13.0 look). Fairness relaxed from exact to
+  bounded: scale = integer nearest the canonical 960-px canvas (1080p 2× → 780×515, 1440p
+  3× → 673×464 pixel-identical to v0.13/v0.14 flagship, 4K 4× → 780×527, spread ~16%/13%);
+  a hard bound bumps small windows UP a scale so windowed (1280×720 → 2×, 460×360) never
+  sees more than maximized; height floor ≥15 tiles for degenerate shapes; BLEED_CAP 52×36
+  tiles per axis as the no-shape-reveals-unbounded-tiles backstop (bands appear ONLY on a
+  capped axis — portrait monitors). Camera recenter and world_frame_changed contract
+  unchanged from v0.14.0. Verified: probe geometry at eight window shapes incl. ultrawide-
+  short (2560×720 → 673×240 full bleed, no bands) and portrait (800×1200 → 620×576
+  centered, top/bottom bands), two-instance host+client wire run (chat + glides + reject),
+  full-bleed screenshots at 1080p-class (world touches three edges, avatar at frame centre
+  780,515→781,517 observed). Feel= Jon+Jeff: the 460×360 2× view in a restored 720p window
+  (zoomier than before), recentered camera (carried from v0.14.0, still pending verdict).
 - **v0.14.0 (2026-07-22)** — Fixed world rect (open question #10, ANSWERED same day —
   Jeff approved as proposed, camera recenter included). Every player now sees exactly
   42×29 tiles (672×464 base px) of world at every window size and resolution: the scale
