@@ -251,3 +251,125 @@ deterministic broadcast pipeline over the wire before committing to BSP.
 
 **One open decision for the design pass:** seed-broadcast+hash (recommended) vs full-map broadcast as
 the *primary* transport for M4a. The recommendation is seed+hash with full-map as auto-fallback.
+
+*Round 2 (below) revisits that transport call, adds the floor-timing/persistence decision, and folds in
+the Zorbus deep-dive — see §G. It's framed as a decision brief because Jon's call (2026-07-23) is that
+these identity-level choices get made **with Jeff**, not pre-decided.*
+
+---
+
+## G. Round 2 — deeper research + decision brief (for the Jeff session)
+
+Procgen is the game's primary randomness source (DESIGN §2.7), so Round 2 went deep on the three
+questions Jon raised — multiplayer-over-the-wire, *when* floors are generated, and the Zorbus dev's
+public design writing — and it **revised two of Round 1's leans**. Options + tradeoffs below, framed for
+a designer discussion, not pre-decided.
+
+### G.1 Algorithm — now a THREE-way choice (area-accretion joined the race)
+
+Round 1 recommended BSP. The Zorbus deep-dive surfaced a strong third by-construction option:
+
+- **Area-accretion ("grow through existing walls").** Zorbus AND Brogue both use it (Mike Anderson /
+  *Tyrant* "Dungeon-Building Algorithm"). Start with one room; repeatedly attach a new feature (room,
+  corridor, cave, circle, prefab vault) through an open connection point ("mark") on the existing
+  dungeon. **Connectivity guaranteed by construction** (no repair pass). A separate FINALIZE pass prunes
+  dead-ends and adds loops. Dev's stated reasons: *"very simple, ensures every area is reachable, easy to
+  control the mix of area types (esp. corridor density)."*
+- Why attractive for us: (1) same by-construction guarantee as BSP/chained, no nondeterministic retry;
+  (2) **prefab SHAPE decoupled from CONTENT** — author a room *template* (`.tres`/scene), roll its
+  *contents* (monsters/loot/theme) at gen time (Zorbus: 1151 prefabs, contents rolled per-run) = our
+  "add a `.tres`, not code" rule realized; (3) one spawn-weight per area type = clean designer knobs;
+  (4) it's the Brogue lineage Round 1 already called the gold standard.
+- The three real candidates, all by-construction: **chained tunneling** (tiniest — the pipeline spike);
+  **BSP** (even/gap-free, tree hooks biomes); **area-accretion** (most varied, prefab-content decoupling,
+  best ceiling — a bit more to build). *Updated lean for the eventual target: area-accretion, with
+  chained-tunneling still the spike to prove the wire pipeline first.*
+
+### G.2 Multiplayer transport — REVISED: full-map-primary is now a serious option
+
+Round 1 leaned seed+hash+fallback. Round 2 (real co-op war stories) reframes it: **we are NOT lockstep**
+— generation is one-shot at level start, same build, same OS — so the determinism horror stories
+(Factorio/Nuclear Throne) mostly don't apply. What shipped co-op roguelikes actually do:
+- **Host-authoritative seed-broadcast + a collective "level ready" ack-gate** is the norm (Barony, Streets
+  of Rogue, Diablo's seed-derived maps, the Enter-the-Gungeon co-op mods all seed-sync).
+- BUT for a *tile grid* (a few KB compressed, sent once) the "full map" payload is itself tiny. Since we'd
+  build the full-map serializer anyway as the fallback, one honest option is to **make full-map the PRIMARY
+  transport and drop the seed** — deleting the whole determinism-discipline burden + the version caveat +
+  the hash, for a few KB. (Vorixo's "streaming the world is a terrible idea" is about full ACTOR worlds,
+  not a tile grid.)
+- **Two defensible endpoints for Jeff to choose between:**
+  - **(A) Seed-primary** (+ hash tripwire, + optional full-map fallback): smallest wire footprint; costs
+    lifelong gen discipline (dedicated seeded RNG instance, integer-only, ordered iteration — no
+    `Array.shuffle`/global `randi()`).
+  - **(B) Full-map-primary** (host generates, broadcasts the compressed grid, clients paint): zero
+    determinism risk, no discipline, no hash; costs a few KB per floor. *Newly the lean* — a tile grid is
+    so cheap that this buys out an entire bug class.
+- **Non-negotiable either way (Round 1 under-specified this):** a **collective readiness gate** — nobody,
+  including a slow builder, starts until the server has every peer's "floor ready" ack — plus a
+  **join-in-progress** story (resend seed/map to a late joiner). These bite shipped co-op games more than
+  seed-vs-map does.
+- **Godot specifics:** reliable RPCs are ordered PER CHANNEL → put the level/handshake on its own channel
+  so it can't head-of-line-block behind gameplay commits; `RandomNumberGenerator` is deterministic
+  same-build (fine for us) but never rely on global `randi()`/`randomize()`.
+
+### G.3 When to generate + persistence — up-front is OUT; live call is one-way vs persistent
+
+Round 2 answered "designed at run start?" decisively:
+- **Kill "generate the whole dungeon up front."** DOMINATED — nobody in the tradition does it; it buys
+  nothing that deterministic **lazy per-floor** seed-derivation (`floor_seed = hash(run_seed, floor_index)`)
+  doesn't already give, and it wastes work on floors a ~1hr permadeath run often never reaches (many runs
+  wipe partway down). Generate each floor when the party first reaches it.
+- Persistence is the majority default (NetHack/DCSS/Brogue/ADOM/Qud persist visited floors); Angband's
+  regenerate-on-return is the deliberate minority ("level as inexhaustible resource," anti-hoarding, one
+  floor alive at a time).
+- **Co-op crux:** every comparator biases toward keeping the party TOGETHER on one floor. Barony *allows*
+  split floors but warns it causes "mismatched saves"; Never Split the Party enforces togetherness by
+  design. Free split-party play multiplies simulation + camera + sync surface — exactly what our event
+  model minimizes.
+- **Three options (C deferred):**
+
+  | Option | Persistence | Party model | Cost | Best when |
+  |---|---|---|---|---|
+  | **A. One-way descent** | none (floor discarded behind you) | all-on-stairs → descend together; one active floor | lowest state/sync; no backtrack/stash | max simplicity; decisions are spatially FINAL (reinforces permadeath/commitment identity) |
+  | **B. Persistent** | keep visited floors | same descend-together gate; party can climb back up together | modest (a few KB/floor); enables retreat/stash/revisit | you want tactical retreat + stashing without split-floor complexity |
+  | **C. Free split party** | keep all floors live | players roam different floors | highest (per-floor sim, separated cameras, most sync) | ONLY if emergent split-up is a wanted feature — **defer to its own milestone** |
+
+- **The descend gate fits the Commitment Rule** (DESIGN §2.1): "all on the stairs → commit → the party
+  glides down together" is a *group* committed action, adjudicated server-side. On-theme.
+- *Lean:* start with **A** (one-way; spatial finality reinforces identity), **B** as an easy upgrade if
+  playtests show players want to fall back to a cleared floor. Kill up-front; defer C.
+
+### G.4 Bonus — a dev-tooling roadmap from Zorbus (separate thread)
+
+Zorbus's "Behind the Scenes" is a model for small-team roguelike tooling; several map onto things we
+already gravitate toward. Candidates (→ ROADMAP parking-lot bullets, NOT part of M4a):
+- **AUTOPLAY** — AI plays runs over and over, logging errors. Our overnight harness taken further; catches
+  commit-rule/networking edge cases at volume.
+- **Seed-echo + full log** — log the run/floor seed so any bad/desynced map is reproducible (essential if
+  we go seed-primary).
+- **Debug minimap showing invisible state** — area IDs, entity positions, a targeted entity's pathfind
+  path. Doubles as a **network-sync visualizer** (server-truth vs client-view) and de-risks M4a itself.
+- **COMPLETE-LEVEL / COMPLETE-UNTIL** + **FORCE-CONTENT** — skip-ahead + inject-a-set-piece for balancing/
+  testing; natural extensions of the `/w /m /god /class /item` dev-command set.
+- **Step-mode generation** — build the dungeon one area at a time, visualized; a generator-debugging aid.
+
+### G.5 The decision list to put in front of Jeff
+
+1. **Algorithm:** chained-tunneling (spike) → then which target — BSP or area-accretion (Zorbus/Brogue)?
+   *(lean: accretion for the ceiling; spike first regardless.)*
+2. **Transport:** seed-primary (+hash) vs full-map-primary? *(lean: full-map-primary — a tile grid is cheap
+   and it deletes the determinism-discipline burden.)*
+3. **Floors:** confirm lazy per-floor (kill up-front). One-way descent (A) vs persistent (B)? *(lean: A now,
+   B as an easy upgrade.)* Party-descends-together gate as a committed group action — agreed?
+4. **Split party (C):** defer to its own milestone unless it's a wanted feature — agreed?
+5. **Dev tooling:** which Zorbus-style facilities (autoplay, seed-echo, debug minimap, complete/force) do we
+   want as parking-lot items?
+
+*Round-2 sources: Zorbus [generator docs](https://dungeon.zorbus.net/Dungeon_Generator.txt) +
+[Behind the Scenes](https://www.zorbus.net/bts/); [Anderson dungeon-building algorithm](https://www.roguebasin.com/index.php?title=Dungeon-Building_Algorithm);
+MP — [Vorixo seed+ack handshake](https://vorixo.github.io/devtricks/procgen/), [Barony co-op](https://www.baronywiki.online/multiplayer/barony-online-multiplayer),
+[Factorio desync](https://wiki.factorio.com/Desynchronization), [Godot RNG cross-version](https://github.com/godotengine/godot/issues/27856);
+persistence — [NetHack persistent level](https://nethackwiki.com/wiki/Persistent_level),
+[Ascii Dreams on persistence](http://roguelikedeveloper.blogspot.com/2007/11/unangband-dungeon-generation-part-four.html),
+[Never Split the Party](https://store.steampowered.com/app/711810/Never_Split_the_Party/),
+[Dead Cells level design](https://deepnight.net/tutorial/the-level-design-of-dead-cells-a-hybrid-approach/).*
