@@ -10,6 +10,29 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.18.2 (2026-07-23) — GOBLIN WINDUP POSE v2 + the telegraph-never-showed bug (Jon).** Jon's
+  feel verdict on v0.18.1: the club didn't show during the wind-up. VERIFICATION CAUGHT THE REAL
+  BUG (probe, not the eye): the melee windup POSE resolves its weapon via
+  `GameConfig.weapon_by_name(event.weapon)`, but the **claw was never in `weapon_catalog`**
+  (`[dagger, longsword, bow]`), so it resolved null and `_handle_windup_event`'s `if weapon != null`
+  gate **skipped the pose entirely** — the "raised claw" seen in the v0.18.1 shot was the goblin's
+  BASE sprite, not the rig. (The swing still showed because it reads the rig's cached weapon, not
+  the catalog.) FIX: add `claw.tres` to `weapon_catalog` (the authoritative event name→weapon
+  resolver; `weapon_roster`/player-swap unchanged, so the claw is NOT player-equippable). POSE v2
+  (once it actually runs): the club now winds BACK behind the goblin and PUSHES OUT past the body
+  silhouette (new `windup_reach_px = 12` — orbit 12px alone buried the 32px sprite inside the body),
+  LINGERS, then a quick SHAKE (new `windup_shake_degrees = 12`) builds tension; `play_swing` is gated
+  (`_windup_posed`) to LAUNCH from the wound-back angle instead of hard-snapping to the near edge (which
+  jumped the club forward). claw ships `windup_raise_degrees = 90` (parks ~behind). Wind-back/linger are
+  fractions of the windup window (tempo-adaptive); the launch endpoint stays the same terminus as the
+  instant swing (no reach overstatement; damage is deterministic adjacency, not a swept hitbox). The
+  instant path (`windup_beats = 0`) is byte-identical — the gate is off there. VERIFIED two-instance:
+  probe confirms the pose executes (`back = 30°`, `ext = 24`, `vis = true`); mid-windup screenshots both
+  facings show the claw wound back behind, clear of the body; `/w claw windup_beats 0` reverts to
+  byte-identical instant strikes (0 windup events after, `kind = strike`, unchanged duration).
+  **Feel (Jeff/Jon):** the wound-back read, the claw art (32rogues `items.png` 0,8 reads blobby at the
+  extended radius), and the per-facing high/low asymmetry (the rig raise isn't mirrored by facing) are
+  the tuning surface — `windup_reach_px`/`windup_shake_degrees`/`windup_raise_degrees` are the knobs.
 - **v0.18.1 (2026-07-23) — GOBLIN TELEGRAPH: the windup re-test ships with real art (bug fix +
   raised-claw pose — Jon).** Jon's claw experiment (`windup_beats` 0 → 1.0) exposed a latent bug:
   the telegraphed path stamped the landed `attack` event with `duration_sec = 0.0`, so the rig's

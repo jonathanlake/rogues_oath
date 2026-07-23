@@ -47,6 +47,14 @@ const _STAB_START_RADIUS_PX := 6.0
 # same snap-and-hold grammar as the body coil (a snap reads as a plant — v0.6.1 verdict, monster.gd:155-157).
 const _POSE_SNAP_SEC := 0.05
 
+# Windup-pose choreography (v0.18.2): the club winds BACK, LINGERS, then SHAKES before the swing
+# launches. Wind-back and linger are FRACTIONS of the pose window (hold_sec) so they scale with tempo;
+# the shake fills the remainder. Shake steps are a fixed cadence matching the body coil / Entity._shake
+# (~0.03s each — a snap reads as a plant, v0.6.1).
+const _POSE_WINDBACK_FRAC := 0.20
+const _POSE_LINGER_FRAC := 0.25
+const _POSE_SHAKE_STEP_SEC := 0.03
+
 # Bow-draw feel (v0.17.0, the "draw" style). All PIXELS/feel, tune by eye. The arrow nocks a touch AHEAD
 # of the bow at draw start, PULLS back over the draw, then SPRINGS forward on release before it hides (the
 # flying arrow is the separate Projectile node — the rig arrow only nocks/looses).
@@ -62,6 +70,9 @@ const _LOOSE_SNAP_SEC := 0.06
 var _weapon: WeaponType = null
 # The swing tween, held so a fresh swing kills a lingering one and so it never outlives the node.
 var _swing_tween: Tween = null
+# Set by play_windup_pose's SLASH branch, cleared by play_swing (and hide_draw). Tells play_swing to
+# LAUNCH from the wound-back pose angle instead of hard-snapping to the near edge (v0.18.2).
+var _windup_posed: bool = false
 # The bow's nocked-ARROW sprite (v0.17.0), built in code on first draw — a SECOND Sprite2D that windows the
 # weapon's projectile_atlas_coords out of the SAME items.png. Only ever visible during a bow draw/loose.
 var _arrow_sprite: Sprite2D = null
@@ -98,6 +109,11 @@ func set_weapon(weapon: WeaponType) -> void:
 func play_swing(dir: Vector2i, duration_sec: float) -> void:
 	if _weapon == null or duration_sec <= 0.0:
 		return
+	# Capture & CLEAR the pose flag unconditionally (before any early style dispatch): a posed launch
+	# whips FROM the wound-back angle instead of hard-snapping to the near edge. Clearing here means a
+	# stab, a zero-window no-op above, or the next swing all start clean (v0.18.2).
+	var posed := _windup_posed
+	_windup_posed = false
 	var unit := Vector2(dir.x, dir.y).normalized() if dir != Vector2i.ZERO else Vector2(1.0, 0.0)
 	var aim := unit.angle()
 	# Normalize the phase fractions (defensive: a .tres could author any values). A degenerate
@@ -125,9 +141,17 @@ func play_swing(dir: Vector2i, duration_sec: float) -> void:
 	if _swing_tween != null and _swing_tween.is_valid():
 		_swing_tween.kill()
 	_sprite.visible = true
-	_sprite.position = Vector2(orbit, 0.0)
 	_sprite.rotation = _weapon_baseline_rad()
-	rotation = aim if is_stab else aim - arc * 0.5
+	if posed and not is_stab:
+		# Posed launch (v0.18.2): the club is already wound back and pushed OUT to its extended radius from
+		# play_windup_pose. Do NOT reset the sprite to orbit (that would jump the club in) and do NOT snap the
+		# rig to the near edge (that would jump it forward) — snap the rig to the wound-back angle `back` and
+		# let the slash arm whip forward FROM here. This is the SINGLE authoritative snap to `back`.
+		rotation = aim - arc * 0.5 - deg_to_rad(_weapon.windup_raise_degrees)
+	else:
+		# Instant path (and every stab): byte-identical to the pre-v0.18.2 entry snap.
+		_sprite.position = Vector2(orbit, 0.0)
+		rotation = aim if is_stab else aim - arc * 0.5
 
 	_swing_tween = create_tween()
 	if is_stab:
@@ -137,6 +161,13 @@ func play_swing(dir: Vector2i, duration_sec: float) -> void:
 		_swing_tween.tween_property(_sprite, "position:x", _STAB_START_RADIUS_PX, t_start)
 		_swing_tween.tween_property(_sprite, "position:x", orbit + reach, t_active)
 		_swing_tween.tween_property(_sprite, "position:x", orbit, t_recover)
+	elif posed:
+		# Launch from the wound-back pose (v0.18.2): one continuous whip from `back` (already snapped in the
+		# entry above) through the target to the far edge, radius held OUT through the sweep then retracted on
+		# recover. No hard snap (that would jump the club forward from behind). Endpoint aim+arc/2 = same
+		# terminus as the instant swing. The first tweener starts from the current rotation, which IS `back`.
+		_swing_tween.tween_property(self, "rotation", aim + arc * 0.5, t_start + t_active)
+		_swing_tween.chain().tween_property(_sprite, "position:x", orbit, t_recover)
 	else:
 		# Slash: a genuine sweeping arc across the target. Wind back a touch past the near edge during
 		# startup, then sweep the rig from -arc/2 through +arc/2 during active while the sprite pushes
@@ -187,12 +218,37 @@ func play_windup_pose(dir: Vector2i, hold_sec: float, weapon: WeaponType = null)
 		rotation = aim
 		_swing_tween.tween_property(_sprite, "position:x", _STAB_START_RADIUS_PX, _POSE_SNAP_SEC)
 	else:
-		# Slash: park the rig RAISED behind the swing's start edge — aim − arc/2 (the swing's near edge)
-		# minus windup_raise_degrees more. Snap from a touch further raised down INTO that parked angle so
-		# the plant reads, then hold there until play_swing sweeps through.
-		var raised := aim - deg_to_rad(_weapon.arc_degrees) * 0.5 - deg_to_rad(_weapon.windup_raise_degrees)
-		rotation = raised + deg_to_rad(_weapon.windup_raise_degrees)
-		_swing_tween.tween_property(self, "rotation", raised, _POSE_SNAP_SEC)
+		# Slash (the claw): a real anticipation wind-up. The club cocks BACK behind the goblin (past the
+		# swing's near edge by windup_raise_degrees) AND pushes OUT to windup_reach_px past orbit so it
+		# clears the body silhouette (orbit 12px alone buried it inside the 32px sprite). It LINGERS wound
+		# back, then a quick SHAKE builds tension; play_swing (off the attack event) launches it forward.
+		# _windup_posed tells play_swing to launch FROM this wound-back angle instead of hard-snapping to
+		# the near edge (which would jump the club forward). Set at the START so a launch during ANY phase
+		# (fast tempo) still takes the posed branch. No expiry: the sequence ends parked and HOLDS.
+		_windup_posed = true
+		var back := aim - deg_to_rad(_weapon.arc_degrees) * 0.5 - deg_to_rad(_weapon.windup_raise_degrees)
+		var ext := orbit + _weapon.windup_reach_px
+		rotation = aim - deg_to_rad(_weapon.arc_degrees) * 0.5   # start at the near edge, rest radius
+		_sprite.position = Vector2(orbit, 0.0)
+		# Phase A — WIND BACK + OUT (parallel), a fraction of the window.
+		var windback_sec := hold_sec * _POSE_WINDBACK_FRAC
+		_swing_tween.set_parallel(true)
+		_swing_tween.tween_property(self, "rotation", back, windback_sec)
+		_swing_tween.tween_property(_sprite, "position:x", ext, windback_sec)
+		_swing_tween.set_parallel(false)
+		# Phase B — LINGER wound back.
+		_swing_tween.tween_interval(hold_sec * _POSE_LINGER_FRAC)
+		# Phase C — SHAKE: rapid ± jitter around `back`, but ONLY if the remaining budget fits >= 3 pairs
+		# (else it reads as a 1-2-frame glitch — degrade to a clean hold). Remainder folds into the settle.
+		var shake_budget := hold_sec - windback_sec - hold_sec * _POSE_LINGER_FRAC
+		var shake := deg_to_rad(_weapon.windup_shake_degrees)
+		if shake > 0.0 and shake_budget >= 6.0 * _POSE_SHAKE_STEP_SEC:
+			var pairs := int(shake_budget / (2.0 * _POSE_SHAKE_STEP_SEC))
+			for i in pairs:
+				_swing_tween.tween_property(self, "rotation", back + shake, _POSE_SHAKE_STEP_SEC)
+				_swing_tween.tween_property(self, "rotation", back - shake, _POSE_SHAKE_STEP_SEC)
+			_swing_tween.tween_property(self, "rotation", back, _POSE_SHAKE_STEP_SEC)
+		# (shake skipped -> nothing more; the club HOLDS wound back until play_swing takes over. No expiry.)
 
 
 ## Play the bow-DRAW telegraph toward `dir` over `windup_sec` (v0.17.0, the "draw" style). Driven by Main off
@@ -276,6 +332,7 @@ func play_loose(dir: Vector2i, weapon: WeaponType = null) -> void:
 func hide_draw() -> void:
 	if _swing_tween != null and _swing_tween.is_valid():
 		_swing_tween.kill()
+	_windup_posed = false                     # a death mid-windup must not leave a stale posed flag (v0.18.2)
 	_sprite.visible = false
 	_sprite.position = Vector2.ZERO
 	if _arrow_sprite != null:

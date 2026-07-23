@@ -117,6 +117,16 @@ extends Resource
 ## windup_beats > 0 telegraph (presentation-only; ignored at windup 0 and for stab/draw styles).
 @export var windup_raise_degrees: float = 60.0
 
+## How far PAST orbit_radius_px (PIXELS) the weapon sits while wound back during a windup_beats > 0
+## telegraph, so the club clears the body silhouette and reads. Presentation-only; ignored at windup 0
+## and for stab/draw styles. Screenshot-tuned by eye.
+@export var windup_reach_px: float = 12.0
+
+## Pre-launch SHAKE amplitude (DEGREES) — the club jitters ± this around the wound-back angle to build
+## tension before the swing launches. 0 = no shake. Presentation-only; a rotation about avatar centre,
+## so even ~12° is a small tip move — tune up by eye until it reads. Ignored at windup 0 / stab / draw.
+@export var windup_shake_degrees: float = 12.0
+
 ## Stab reach in PIXELS — how far the weapon thrusts toward the target during the active phase of a
 ## "stab" (and the forward travel of a slash, at half this). Read by the rig.
 @export var reach_px: float = 12.0

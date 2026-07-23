@@ -10,4 +10,5 @@ windup_beats = 1.0
 atlas_coords = Vector2i(0, 8)
 orbit_radius_px = 12.0
 arc_degrees = 120.0
+windup_raise_degrees = 90.0
 reach_px = 8.0
