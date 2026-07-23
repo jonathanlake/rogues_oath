@@ -134,7 +134,7 @@ Placeholder-to-possibly-final: use it for all prototyping.
 - Two-instance verification: recipes, knob gotchas, and assertion patterns live in the
   `harness-verify` project skill (`.claude/skills/harness-verify/`) — use it for every
   "prove it works" gate.
-- In-game dev slash commands (`/w` `/m` `/god` `/class` `/help`) + the `cmd=` harness knob are
+- In-game dev slash commands (`/w` `/m` `/god` `/class` `/item` `/help`) + the `cmd=` harness knob are
   documented in **`docs/dev-commands.md`** — read it when touching live-tuning or the command framework.
 - Unattended build-verify sessions follow **`docs/overnight-runbook.md`** — read it before
   running a `/goal` night or anything cron-shaped.

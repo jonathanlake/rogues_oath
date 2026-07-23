@@ -9,7 +9,7 @@ top-down. By Jon & Jeff.
 
 Each version's patch notes live on the
 [Releases page](https://github.com/jonathanlake/rogues_oath/releases); playable Windows
-builds are attached to release entries (e.g. `rogues_oath_v0.11.0.exe`). The design doc
+builds are attached to release entries (e.g. `rogues_oath_v0.18.0.exe`). The design doc
 (`DESIGN.md`) carries the full changelog.
 
 ## Running from source

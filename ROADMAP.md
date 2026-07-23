@@ -256,10 +256,13 @@ Not scheduled — pulled in when their moment comes:
   but a held key now bumps one beat later and a tap mid-rest bonks. If Jon+Jeff feel-test
   this as lag/unresponsiveness, the parked queued-attack-slot design is the venue.
 - AFK / rest zones (Q5)
-- Ranged combat & LoS design pass (Q6) — alongside the build system pass; include whether
-  AoO adjacency should respect walls/corners (M2 wires pure 8-adjacency per §2.2.6 — a
-  hostile diagonally around a wall corner currently still threatens; GLM review flag,
-  2026-07-17)
+- LoS-proper + ranged remainder (Q6) — ranged combat v1 SHIPPED (the bow, v0.17.0–v0.17.3;
+  DESIGN Q6 ANSWERED, traveling-projectile model). STILL OPEN under Q6: true line-of-sight
+  (arrows use per-tile wall clipping today, diagonal corner-cutting accepted for v1), gamepad
+  aiming, monster ranged attackers, ranged backstab/facing, and — the older flag here — whether
+  AoO adjacency should respect walls/corners (M2 wires pure 8-adjacency per §2.2.6 — a hostile
+  diagonally around a wall corner currently still threatens; GLM review flag, 2026-07-17).
+  Revisit alongside the build-system pass.
 - Build system design pass (Rogue Fable-legibility bar, DESIGN §2.7)
 - Dungeon generation depth (beyond M4's basic rooms-and-corridors)
 - Shared-beat coordination mechanic (DESIGN §2.4.2) — only if a concrete need appears

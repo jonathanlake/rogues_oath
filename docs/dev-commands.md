@@ -18,6 +18,7 @@ restart restores every authored value (no command saves to disk).
 | `/m <monster> <field> <value\|reset>` | Tune a monster type. Field ∈ `max_hp` (1–99999), `aggro_range_tiles` (0–30), `tactical_radius_tiles` (0–30), `recovery_beats` (0–30). Out-of-range values are rejected. `reset` restores all four. |
 | `/god` | Toggle **your own** invulnerability. A hit on a godded target resolves as a visible no-op (grey `0` popup + "no effect (god)" log line), never a silent block. Cleared on disconnect / despawn / F5 respawn. |
 | `/class <name>` | Set **your own** class (sprite today, stats later). `name` ∈ `rogue`, `knight`, `wizard`, `barbarian`, `priest`, `ranger`. Broadcasts to every peer; late joiners sync via `sync_player_field`. Reverts to the slot default on F5 respawn. |
+| `/item <name> [x,y]` | Spawn a ground item (v0.18.0). Tile = explicit `x,y`, else the sender's facing-neighbour tile (never the own tile → reject if the sender hasn't faced yet). Distinct rejects: unknown item / broken resource path (catalog drift) / not-walkable / tile already has an item. Multi-word names work (`/item health potion`). |
 | `/help` | Print the command list (local only — never crosses the wire). |
 
 ## Resolution notes
@@ -26,6 +27,8 @@ restart restores every authored value (no command saves to disk).
   `res://resources/weapons/<name>.tres` (guarded by `ResourceLoader.exists`) — so the claw (not in the
   roster) is reachable as `/w claw ...`.
 - **Monsters** resolve only by filename: `res://resources/monsters/<name>.tres` (e.g. `/m goblin ...`).
+- **Items** resolve by `display_name` through `GameConfig.item_catalog` (`item_by_name`) — so a
+  spawnable item must be in the catalog (a mis-authored/duplicate name warns at session start).
 - **`reset`** re-reads the `.tres` from disk with `CACHE_MODE_IGNORE` and copies the allowlisted fields
   back onto the shared live instance.
 - **`/m ... max_hp`** affects **new spawns only** (HP is seeded at spawn); the other three monster
