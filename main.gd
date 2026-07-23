@@ -37,6 +37,24 @@ const DUMMY_TYPE_PATH := "res://resources/monsters/training_dummy.tres"
 # player spawn slots, so a player can hit it the moment the round starts.
 const DUMMY_SPAWN_TILE := Vector2i(12, 4)
 
+# The one item kind for chunk A (v0.18.0), loaded per-peer from this PATH like the monsters (the item spawn
+# config carries the path, never a Resource over the wire — every peer loads the same authored .tres and
+# reads its display_name/atlas_coords). Deliberately a res:// STRING, not a uid preload: it crosses the wire
+# as spawn-config data, and both ends run the same build (version gate), so the readable path is the stable,
+# comparable form (same reasoning as GOBLIN_TYPE_PATH).
+const HEALTH_POTION_TYPE_PATH := "res://resources/items/health_potion.tres"
+
+# Session-start item placements (v0.18.0, host-only): two health potions in the starting room (room A), on
+# clear floor away from the player spawn slots + the dummy. Verified '.' floor in WorldGrid.ROOM_LAYOUT, but
+# _place_starting_items re-checks each defensively via the guarded _spawn_item_at (a map edit that walled a
+# tile warns + skips rather than dropping an item into a wall). Re-placed on every F5 round reset, mirroring
+# how _spawn_goblins re-runs — so every fresh round has its potions. v1 behavior: session-start set only,
+# no re-spawn mid-round.
+const STARTING_ITEM_TILES: Array[Vector2i] = [
+	Vector2i(5, 5),
+	Vector2i(8, 4),
+]
+
 # Goblin spawn tiles, populating the far rooms so the multi-room map (M3.5) exercises cross-room
 # aggro/chase: room C (centre) gets a TRIO for the chaos test (v0.9.2), B (top-right) and E
 # (bottom-right) keep one each — five total. Each C tile is verified '.' floor in WorldGrid.ROOM_LAYOUT
@@ -96,6 +114,12 @@ const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN
 # all peers (glide events for monsters animate their node everywhere), the spawner drives from host.
 @onready var _monster_spawner: MultiplayerSpawner = $MonsterSpawner
 @onready var _monsters: Node2D = $Monsters
+# Ground-item replication (v0.18.0), mirroring the monster spawner/container. Present on every peer; the
+# host authors item spawns (session-start potions, the /item dev command, the potion= knob), clients just
+# play back the replicated GroundItem nodes. The container is resolved on all peers (so the spawn_function
+# and the item-collision scan see it everywhere); the spawner drives from the host.
+@onready var _item_spawner: MultiplayerSpawner = $ItemSpawner
+@onready var _items: Node2D = $Items
 # Host-only movement brain. Present on every peer (it's in main.tscn) but activated ONLY inside
 # the is_server() branch below, so a client's referee stays inert. Held so the spawn path can ask
 # it whether a slot's tile is free before assigning it.
@@ -109,9 +133,23 @@ const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN
 # stamp time, whether a committed window stamps from the explore or tactical beat; injected into the two
 # stamping referees + each monster brain so every stamp routes through it.
 @onready var _pace := $PaceReferee
+# Host-only inventory authority (v0.18.0 chunk B — bags + walk-over pickup), beside the other referees. Same
+# inert-on-clients contract — activate() runs only in the is_server() branch. Held so main can activate it and
+# inject it into the move referee's pickup seam, and so the item_picked_up handler can fan out to the HUD.
+@onready var _inventory := $InventoryReferee
 # Death SFX (placeholder — pitch-shifted bonk). Played on every peer from the `died` event, at Main
 # level because the dying entity's own node vanishes with the event (can't play a sound on a freed node).
 @onready var _death_sfx: AudioStreamPlayer = $DeathSfx
+# Pickup SFX (v0.18.0 chunk B) — a Feel= PLACEHOLDER: a pitched-up variant of the existing impact stream (NOT
+# a new asset), played on every peer from the item_picked_up event at Main level (the same _death_sfx pattern —
+# a per-node sound can't ride an event whose subject may be mid-glide). Distinct pitch from the death impact
+# (0.8) so a pickup never reads as a hit. A bespoke pickup asset can replace the stream later with no code change.
+@onready var _pickup_sfx: AudioStreamPlayer = $PickupSfx
+# Heal SFX (v0.18.0 chunk C) — a Feel= PLACEHOLDER: the SAME impact stream pitched UP higher than the pickup
+# (2.0 vs 1.6), played on every peer from the `heal` event at Main level (the _death_sfx / _pickup_sfx pattern —
+# a per-node sound can't ride an event whose subject may be gliding). Distinct pitch so a heal never reads as a
+# pickup or a hit. A bespoke heal chime can replace the stream later with no code change.
+@onready var _heal_sfx: AudioStreamPlayer = $HealSfx
 # LOCAL-only hurt vignette (v0.6.3 hit juice): a red ColorRect on a high CanvasLayer (main.tscn), alpha 0
 # at rest, pulsed ONLY when OUR OWN avatar takes a hit. mouse_filter IGNORE so it never eats input. Its
 # .tscn full-rect anchors are the pre-layout default; _on_world_frame_changed (v0.12.0) re-scopes it to
@@ -176,6 +214,12 @@ var _refused: Dictionary = {}
 # Host-only monotonic monster id source (plan decision 5): each monster gets the next NEGATIVE int,
 # so monster ids never collide with peer ids (always positive) in the referee's one occupancy space.
 var _next_monster_id: int = -1
+# Host-only monotonic ground-item id source (v0.18.0). POSITIVE and separate from the entity id space
+# (peer ids positive, monster ids negative): a ground item is NOT a body in the referees' one occupancy
+# space, so its id never has to avoid colliding with an entity's — the two id spaces are independent by
+# construction. Counts UP from 1; not reset on an F5 round reset (a fresh positive id per placement means
+# a later chunk's pickup targeting can never confuse a re-placed potion with a pre-reset one).
+var _next_item_id: int = 1
 # Client/teardown guard. Set true when THIS peer's session is ending (returning to menu, app quit,
 # host-left, refusal): while set, the client stops resending peer_ready and _end_session is
 # first-writer-wins. INVARIANT: any deliberate session-teardown path added later (host quit-to-menu,
@@ -365,6 +409,28 @@ func _ready() -> void:
 			multiplayer.get_unique_id(), monster.name, monster.entity_id, tile])
 		return monster
 
+	# Ground-item spawn_function (v0.18.0), on EVERY peer with the same replicated config, so the pickup
+	# matches everywhere. The config carries the type PATH (not a Resource) + host-assigned item id + tile;
+	# every peer load()s the same .tres and reads its display_name + atlas_coords, so no Resource crosses the
+	# wire (mirror of the monster path). GroundItem is code-built (a class_name, no scene) — set its public
+	# fields BEFORE returning so its _ready reads them to build the sprite + derive its tile-center position.
+	_item_spawner.spawn_function = func(data):
+		var item := GroundItem.new()
+		item.name = str(data.item_id)
+		item.item_id = int(data.item_id)
+		item.tile = data.tile
+		# Resolve the item's name + icon from the loaded .tres — a null type (broken path) leaves the safe
+		# fallbacks (empty name / (0,0) cell) and warns, rather than crashing the whole spawn on every peer.
+		var item_type := load(data.type_path) as ItemType
+		if item_type != null:
+			item.item_name = item_type.display_name
+			item.atlas_coords = item_type.atlas_coords
+		else:
+			push_warning("[Main] ground-item spawn: type_path '%s' did not load an ItemType" % data.type_path)
+		print("[peer %d] spawned item '%s' (id %d) at tile %s" % [
+			multiplayer.get_unique_id(), item.item_name, item.item_id, item.tile])
+		return item
+
 	# Movement, on EVERY peer: play back accepted glide events, and bonk our own player when the
 	# host refuses ours. Chat events flow to the game log via its own connection; these two hooks
 	# handle only "glide_to" (accept) and glide rejects (sender-only).
@@ -399,6 +465,17 @@ func _ready() -> void:
 		# window stamps at the attacker's resolved pace. Then hand the movement referee the combat reference.
 		_combat.activate(_players, _monsters, _referee, _pace)
 		_referee.set_combat(_combat)
+		# Host-only: activate the inventory referee (v0.18.0 chunk B) with the Players + Items containers (it
+		# wires the players' child_exiting_tree to drop a leaving player's bag — inventory dies with the player,
+		# permadeath), then inject it into the move referee so a completed glide's arrival tile routes a walk-over
+		# pickup through it. BEFORE any spawn, like the other referees, so its child-exit hook is armed for every
+		# player. Inert on clients (activate never runs there — this whole node is host-only).
+		# v0.18.0 chunk C: the inventory referee also takes the move + combat + pace referees so its use_item
+		# validator can gate on busy/liveness, root the drinker (commit_in_place), stamp at pace, and apply the
+		# heal (combat.apply_heal) — the same cross-referee injection CombatReferee.activate receives. Wired AFTER
+		# those three are activated above so every ref it holds is live before the first use is adjudicated.
+		_inventory.activate(_players, _items, _referee, _combat, _pace)
+		_referee.set_inventory(_inventory)
 		# Host-only: snap autonomous movers to truth for a late joiner (no event replay exists,
 		# §2.7). Fires as each new PLAYER node enters; wired here before the host's own player spawns.
 		_players.child_entered_tree.connect(_on_player_spawned_host)
@@ -439,7 +516,10 @@ func _ready() -> void:
 		# combat refs it needs (/god toggles combat's godded dict, /w & /m read the sender's name off
 		# Players), then register its validate as the handler. Inert on clients (activate never runs there).
 		# The move referee rides along for the /class equip busy guard (v0.17.0 — no equip mid-commit).
-		_dev_commands.activate(_players, _combat, _referee)
+		# The item-spawn Callable (v0.18.0) hands DevCommands the /item spawn access WITHOUT reaching up
+		# into Main: it wraps _spawn_item_at (host-only author API), so the component stays decoupled (it
+		# calls a value, not a parent) and every item still spawns through the ONE guarded, id-assigning path.
+		_dev_commands.activate(_players, _combat, _referee, _spawn_item_at)
 		NetEvents.register_handler("dev_command", _dev_commands.validate)
 		print("[HOST] server started (peer %d) — spawning host player" % multiplayer.get_unique_id())
 		# Spawn the host's own player immediately — no RPC needed. (_spawn_config records the reset
@@ -469,6 +549,18 @@ func _ready() -> void:
 		# is_server()); session-start only (an F5 reset does not re-apply it, mirroring debug_starting_weapon).
 		if GameManager.debug_goblin_at != GameManager.DEBUG_GOBLIN_AT_UNSET:
 			_spawn_monster_at(GameManager.debug_goblin_at, GOBLIN_TYPE_PATH)
+		# Ground items (v0.18.0): pre-place the session-start potions AFTER players + monsters so the item-
+		# collision scan sees a fully-populated world (though items only collide with items, not entities —
+		# _spawn_item_at deliberately checks walkability + item-collision only, never entity occupancy).
+		# Extracted into a helper because the F5 round reset re-runs the exact same placement (mirroring how
+		# _spawn_goblins re-runs), so every fresh round gets its potions.
+		_place_starting_items()
+		# Debug potion=x,y (v0.18.0): ADD one health potion at an EXACT tile, independent of the session-start
+		# set, for pickup/inventory tests needing a potion at precise geometry (mirrors goblinat= exactly).
+		# Unset = the impossible sentinel; set = spawn through the SAME guarded _spawn_item_at. Host-only (this
+		# branch is is_server()); session-start only (an F5 reset does not re-apply it, like debug_goblin_at).
+		if GameManager.debug_potion_at != GameManager.DEBUG_POTION_AT_UNSET:
+			_spawn_item_at(GameManager.debug_potion_at, HEALTH_POTION_TYPE_PATH)
 		NetworkManager.peer_connected.connect(_on_peer_connected)
 		NetworkManager.peer_disconnected.connect(_on_peer_disconnected)
 	else:
@@ -571,6 +663,19 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("weapon_swap"):
 		NetEvents.submit_intent("swap_weapon", {})
 		get_viewport().set_input_as_handled()
+	# Item use (v0.18.0 chunk C): number keys 1-5 use the hotbar slot of that index for OUR OWN player.
+	# Sampled here (like weapon_swap) so a focused chat LineEdit consumes the number keys first — the same
+	# not-chat-focused gate every _unhandled_input action rides. The HOST authority adjudicates every use
+	# (dead / busy / empty-slot / not-usable rejects, §2.2.8); we only submit the 0-based bag index (slot N-1).
+	# A use while busy is refused (bonk), never a free cancel of the committed action. The five bindings are
+	# looped rather than five branches so the hotbar width stays ONE literal (COUPLING: 5 == hud.gd INV_COLS ==
+	# InventoryReferee.INVENTORY_SLOTS). A key press is consumed the moment it matches so it never falls through.
+	else:
+		for slot_num in range(1, 6):
+			if event.is_action_pressed("use_slot_%d" % slot_num):
+				NetEvents.submit_intent("use_item", { "slot": slot_num - 1 })
+				get_viewport().set_input_as_handled()
+				break
 
 
 ## Detect and repair the ONE illegitimate window state: WINDOWED at (or beyond) the full screen size.
@@ -654,6 +759,23 @@ func _on_net_event(event: Dictionary) -> void:
 		"projectile_ended":
 			# An arrow ended (hit / blocked / spent). CHUNK-1 STUB — see the handler.
 			_handle_projectile_ended_event(event)
+		"item_picked_up":
+			# A completed walk-over pickup (v0.18.0 chunk B, host-authored). Every peer mirrors the bag +
+			# plays the cue; the picker's HUD repaints its hotbar (the log line comes from game_log).
+			_handle_item_picked_up_event(event)
+		"item_pickup_full":
+			# A pickup BLOCKED by a full bag (v0.18.0 chunk B). PRESENTATION ONLY — no node/state change here
+			# (the item stayed on the ground, host-side); game_log renders the sender-filtered "bag is full"
+			# line off this same broadcast event (the "You died." self-filter precedent). Nothing else to do.
+			pass
+		"item_used":
+			# A committed item use (v0.18.0 chunk C, host-authored). Every peer plays the drink cue + re-packs the
+			# user's inventory mirror; the user's HUD repaints its hotbar (the log line comes from game_log).
+			_handle_item_used_event(event)
+		"heal":
+			# A resolved heal (v0.18.0 chunk C, host-authored — the effect end of a drink). Every peer floats the
+			# green "+N" popup + refreshes HP; the healed player's HUD/party-frame mirrors it (log line from game_log).
+			_handle_heal_event(event)
 
 
 ## Play back an accepted glide. Resolve the mover by entity id: positive is a player, negative a
@@ -874,6 +996,87 @@ func _handle_died_event(event: Dictionary) -> void:
 		# mid-fight). Local presentation only — a fresh spawn (F5) re-seeds via on_player_spawned.
 		_set_tactical_border(false)
 		_update_tempo_display()
+
+
+## All peers: play back a completed walk-over pickup (v0.18.0 chunk B, §2.3.4). Three presentation jobs off the
+## one host-authored event: (1) MIRROR the item into the picker's client-side Player.inventory (the presentation
+## copy of the host's authoritative bag) so its HUD/future UI can render without a query; (2) play the pickup
+## cue on every peer (the _death_sfx pattern — a per-node sound can't ride an event whose subject may be gliding);
+## (3) if it's OUR OWN player, repaint the HUD hotbar. The game_log line rides game_log's own connection.
+func _handle_item_picked_up_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var entity_id := int(data.get("entity_id", 0))
+	var item_name := str(data.get("item", ""))
+	var player := _players.get_node_or_null(str(entity_id)) as Player
+	# COUPLING: cap the mirror at the hotbar width (INVENTORY_SLOTS on the inventory referee / INV_COLS in
+	# hud.gd — both 5). The host only ever posts item_picked_up when its authoritative bag had room, so this
+	# guard never actually bites in normal play; it is the defensive backstop keeping the mirror ≤ the hotbar.
+	# If it EVER fires the mirror has desynced from the host's bag — warn loudly (GLM v0.18.0 review #2:
+	# a silent drop here would be a permanent, invisible hotbar desync on this peer).
+	if player != null:
+		if player.inventory.size() < 5:
+			player.inventory.append(item_name)
+		else:
+			push_warning("[Main] item_picked_up for %d but the local mirror is FULL — mirror desynced from the host bag (dropped '%s')" % [entity_id, item_name])
+	# Pickup cue on every peer (Feel= placeholder — see _pickup_sfx). Mirrors how _death_sfx plays party-wide.
+	_pickup_sfx.play()
+	# Own player: repaint the HUD hotbar from the just-updated mirror (filtered to our id inside on_inventory_changed).
+	if entity_id == multiplayer.get_unique_id():
+		_hud.on_inventory_changed(entity_id)
+
+
+## All peers: play back a committed item USE (v0.18.0 chunk C, §2.3.4). Three presentation jobs off the one
+## host-authored event: (1) play the DRINK cue on the user's node for the committed window (the party sees a
+## teammate drink); (2) RE-PACK the user's client-side inventory mirror to match the host's authoritative bag
+## (which did the same remove_at — slots shift left); (3) if it's OUR OWN player, repaint the HUD hotbar. The
+## game_log "drinks..." line rides game_log's own connection; the HEAL (if any) lands later on the `heal` event.
+func _handle_item_used_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var entity_id := int(data.get("entity_id", 0))
+	var slot := int(data.get("slot", -1))
+	var duration_sec := float(data.get("duration_sec", 0.0))
+	var player := _players.get_node_or_null(str(entity_id)) as Player
+	if player != null:
+		# Drink cue held for the committed window on every peer (mirror of how the recovery/windup tells ride
+		# their event's duration). A vanished node (killed the same frame the use committed) renders no cue.
+		player.play_drink(duration_sec)
+		# RE-PACK the mirror to match the host's bag: the referee did remove_at(slot), compacting higher slots
+		# left, so the mirror does the same. Guarded so a malformed slot can't crash — the host only ever posts a
+		# slot it consumed, so in normal play this stays in lockstep with the referee's bag.
+		if slot >= 0 and slot < player.inventory.size():
+			player.inventory.remove_at(slot)
+	# Own player: repaint the HUD hotbar from the just-repacked mirror (self-filters to our id). Mirror of the
+	# item_picked_up handler's own-player HUD repaint.
+	if entity_id == multiplayer.get_unique_id():
+		_hud.on_inventory_changed(entity_id)
+
+
+## All peers: play back a resolved HEAL (v0.18.0 chunk C, §2.3.4 — a distinct recovery cue). Off the one
+## host-authored event: the heal sound party-wide, a green "+N" popup over the healed tile, the under-feet HP
+## readout, and the HUD/char-info HP mirror. The healed player's bar climbs; a non-own target is a HUD no-op.
+## The game_log "recovers N HP" line rides game_log's own connection.
+func _handle_heal_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var entity_id := int(data.get("entity_id", 0))
+	var amount := int(data.get("amount", 0))
+	var hp_after := int(data.get("hp_after", 0))
+	var target_max := int(data.get("target_max", 0))
+	# Heal sound on every peer (Feel= placeholder — see _heal_sfx). Mirrors _pickup_sfx / _death_sfx playing
+	# party-wide off a host event (a per-node sound can't ride an event whose subject may be gliding).
+	_heal_sfx.play()
+	var target := _node_for_peer(entity_id)
+	if target != null:
+		# HP readout under the feet refreshes from the authoritative hp_after — the SAME set_hp_display an attack
+		# drives (one formatting site), so a heal moves the nameplate exactly like a hit does.
+		target.set_hp_display(hp_after, target_max)
+		# Green "+N" popup over the healed tile (the DamagePopup pattern, HEAL_COLOR — distinct from the red/white
+		# hit popups, §2.3.4). Parented by the FX layer so it survives the node (symmetry with the damage popup).
+		_fx.damage_popup("+%d" % amount, DamagePopup.HEAL_COLOR, target.tile)
+	# Party-frame / char-info HP mirror (v0.12.0): fan the running HP to the HUD. note_attack is a PURE HP mirror
+	# (it just calls _set_own_hp for our own id — no attack-specific logic), so it is REUSED here for the heal
+	# twin rather than adding a note_heal: a healed own-player's bar climbs with no new HUD surface. A non-own id
+	# is a no-op inside the HUD.
+	_hud.note_attack(entity_id, hp_after, target_max)
 
 
 ## All peers: adopt a host-stamped tempo change (§2.8.3). Apply it to the LOCAL GameManager beat so the
@@ -1294,10 +1497,11 @@ func _node_for_peer(entity_id: int) -> Entity:
 ## the game log adds the line via its own connection). Rejects reach only the sender, so the
 ## local player is always the right target.
 func _on_intent_rejected(action: String, reason: String) -> void:
-	# glide_to, swap_weapon (M3.7), and shoot (v0.17.0) all bonk the sender's own player: a refused move / swap
-	# / shot gets the same distinct sound+flash, so "the host refused" is never a silent no-op (§2.3.4). A
-	# shoot reject (out of range, busy, nothing to draw) thus fires the bonk exactly like a refused move.
-	if action != "glide_to" and action != "swap_weapon" and action != "shoot":
+	# glide_to, swap_weapon (M3.7), shoot (v0.17.0), and use_item (v0.18.0 chunk C) all bonk the sender's own
+	# player: a refused move / swap / shot / use gets the same distinct sound+flash, so "the host refused" is
+	# never a silent no-op (§2.3.4). A use reject (dead, busy, empty slot, not usable, unknown item) thus fires
+	# the bonk exactly like a refused move — the game_log line adds the reason for the non-suppressed cases.
+	if action != "glide_to" and action != "swap_weapon" and action != "shoot" and action != "use_item":
 		return
 	var me := _players.get_node_or_null(str(multiplayer.get_unique_id())) as Player
 	if me == null:
@@ -1459,12 +1663,21 @@ func _reset_round() -> void:
 		node.free()
 	for node in _monsters.get_children():
 		node.free()
+	# Ground items despawn on a round reset too (v0.18.0), the same synchronous free() as players/monsters
+	# (they have no exit hook to race — an item claims no referee state — so this is purely tidying the world
+	# before the re-seed). The fresh round RE-PLACES the session-start potions below via _place_starting_items,
+	# so a reset restores the starting loadout rather than leaving the room barren.
+	for node in _items.get_children():
+		node.free()
 
 	# Ghost-arrow cleanup (v0.17.1 review #4): bump the combat referee's round generation and drop in-flight
 	# arrow state BEFORE the respawn, so a draw pending its loose (or an arrow mid-flight) from the old round
 	# can't fire into the fresh one — a same-peer respawn reuses the id and defeats the is_alive guard, so the
 	# generation stamp is what invalidates the stale timer. Host-only, alongside the mass frees above.
 	_combat.reset_round()
+	# Fresh round, fresh bags (v0.18.0 chunk B): clear every inventory. The mass free() of players above already
+	# fires the inventory referee's child-exit erase per player; this wholesale clear is the order-independent belt.
+	_inventory.reset_round()
 
 	# Clear the local tactical border (v0.10.3): a reset frees every avatar without posting a `died` event,
 	# so nothing else would drop it on the resetting peer. On EVERY OTHER peer the respawn's seed
@@ -1491,6 +1704,10 @@ func _reset_round() -> void:
 		_spawner.spawn(_spawn_config(id, _peer_names[id]))
 	if GameManager.spawn_monsters:
 		_spawn_goblins()
+	# Re-place the session-start ground items (v0.18.0) so every fresh round has its potions — the same
+	# helper the host's _ready calls (mirror of _spawn_goblins re-running above). The potion= debug knob is
+	# NOT re-applied here (session-start only, like debug_goblin_at / debug_starting_weapon).
+	_place_starting_items()
 
 	# The reset marker is NOT posted here anymore (v0.9.4): the accepted dev_reset_round intent is the
 	# ONE source of the "— Round reset (X) —" log line (named after the presser), so a second anonymous
@@ -1545,6 +1762,61 @@ func _spawn_monster_at(tile: Vector2i, type_path: String) -> bool:
 		"tile": tile,
 	})
 	return true
+
+
+## Host-only ground-item author API (v0.18.0), shared by the session-start placement, the F5 re-place, the
+## /item dev command, and the potion= knob — the ONE guarded, id-assigning spawn path (mirror of
+## _spawn_monster_at). Guards the tile two ways and SKIPS (warn + false) on either:
+##  - WALKABILITY: an item can't lie in a wall / off-grid.
+##  - ITEM-COLLISION: at most one ground item per tile (scan the Items container) — v1 keeps a tile to a
+##    single pickup, so a drop can't silently stack invisibly under another.
+## It deliberately does NOT check ENTITY occupancy: a player glides OVER an item (an item claims no
+## occupancy), so an item may legitimately sit under / next to a body — only walkability + item-collision
+## matter here. On success it takes the next monotonic POSITIVE item id (a space separate from entity ids)
+## and replicates the spawn config (the type PATH, never a Resource over the wire) so every peer loads the
+## same authored .tres. Returns whether an item was actually placed (the caller decides how to report a skip).
+func _spawn_item_at(tile: Vector2i, type_path: String) -> bool:
+	# TYPE-PATH guard FIRST (GLM chunk-A review #1): a broken path must NEVER reach the spawner — a
+	# MultiplayerSpawner replicates the node to every peer the instant we call spawn(), so a bad path would
+	# push a nameless (item_name "") GroundItem out to the whole party while /item still reported success. Refuse
+	# here (warn + false) so the caller reports the failure and nothing replicates. ResourceLoader.exists is the
+	# cheap pre-load existence check (it does not load the .tres); the per-peer spawn_function still load()s it.
+	if not ResourceLoader.exists(type_path):
+		push_warning("[Main] item spawn type_path '%s' does not exist — skipping (no replication)" % type_path)
+		return false
+	if not WorldGrid.is_walkable(tile):
+		push_warning("[Main] item spawn tile %s not walkable — skipping (map-coupled)" % tile)
+		return false
+	if _item_on_tile(tile) != null:
+		push_warning("[Main] item spawn tile %s already holds an item — skipping" % tile)
+		return false
+	var item_id := _next_item_id
+	_next_item_id += 1
+	_item_spawner.spawn({
+		"item_id": item_id,
+		"type_path": type_path,
+		"tile": tile,
+	})
+	return true
+
+
+## Host-only: the GroundItem currently on `tile`, or null if none. The item-collision predicate for
+## _spawn_item_at (and the /item dev command's distinct "tile blocked" reject) — items are not tracked in
+## the referees' occupancy (they claim none), so their one-per-tile rule is answered by scanning the Items
+## container directly. Delegates to GroundItem.on_tile (v0.18.0 chunk B) — the ONE shared scan the inventory
+## referee's pickup also uses, so the container walk lives in a single place.
+func _item_on_tile(tile: Vector2i) -> GroundItem:
+	return GroundItem.on_tile(_items, tile)
+
+
+## Host-only: place the session-start ground items (v0.18.0). Called from the host's _ready AND from the F5
+## round reset, so every fresh round re-places the same potions (mirror of _spawn_goblins re-running). Each
+## goes through the guarded _spawn_item_at, so a map edit that walled a listed tile warns + skips that potion
+## defensively rather than dropping it into a wall. v1 behavior: this is the ONLY re-placement — items are
+## not otherwise re-spawned mid-round.
+func _place_starting_items() -> void:
+	for tile in STARTING_ITEM_TILES:
+		_spawn_item_at(tile, HEALTH_POTION_TYPE_PATH)
 
 
 ## Host-only. Builds the replicated spawn config. spawn_index is the server-assigned slot;

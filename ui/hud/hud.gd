@@ -137,6 +137,11 @@ var _own_hp_text: Label = null
 # Primary-hand weapon icon: an AtlasTexture over ITEMS_TEX, region re-pointed by refresh_self / on_weapon_swap.
 var _own_weapon_icon: TextureRect = null
 var _own_weapon_atlas := AtlasTexture.new()
+# Hotbar item icons (v0.18.0 chunk B): one TextureRect + its own AtlasTexture per top-row inventory slot
+# [0..INV_COLS-1], captured when _build_inventory builds that row so _refresh_hotbar can paint/hide them from
+# the local player's inventory mirror. Parallel arrays kept in slot order; the keycap labels stay on the sockets.
+var _hotbar_icons: Array[TextureRect] = []
+var _hotbar_atlases: Array[AtlasTexture] = []
 
 
 func _ready() -> void:
@@ -217,6 +222,15 @@ func on_weapon_swap(entity_id: int) -> void:
 		refresh_self()
 
 
+## A player's inventory changed (fanned out by main.gd off the item_picked_up event): if it is our own
+## player, repaint the hotbar from its inventory mirror. Mirror of on_weapon_swap — filter to our id, then
+## refresh. A lighter path than refresh_self (no passive re-measure / relayout): item icons never change the
+## column's min-height, so the hotbar repaint alone suffices.
+func on_inventory_changed(entity_id: int) -> void:
+	if entity_id == _own_id:
+		_refresh_hotbar()
+
+
 ## Dormant this iteration (v0.13.0): party frames are OFF, so there is no frame to remove — the own-player
 ## HP mirror is not a frame. Kept as a stable no-op so main.gd's peer-departed fan-out has a target; re-
 ## enabling party frames (party_frame.gd/.tscn are still on disk) restores per-peer frame removal here.
@@ -238,6 +252,10 @@ func refresh_self() -> void:
 		_own_class_label.text = me.player_class.display_name
 		_refresh_passives(me.player_class)
 	_set_weapon_icon(me.equipped_weapon)
+	# Hotbar (v0.18.0 chunk B): repaint the top inventory row from the player's inventory mirror. Called here so
+	# the (re)spawn seed (_seed_self → refresh_self) shows an EMPTY bar on a fresh spawn — a freed+re-made player
+	# carries nothing — and any own class/weapon refresh re-paints it too (harmless, the mirror is unchanged then).
+	_refresh_hotbar()
 	# Passives are the one live content that changes the column's min-height between resizes; re-measure now so
 	# the HUD zoom h re-fits immediately (the class swap can add/remove passive lines — see _column_stack_min_h).
 	_relayout()
@@ -610,6 +628,25 @@ func _build_inventory() -> void:
 		var slot := _make_socket(hotbar, "")
 		grid.add_child(slot)
 		if hotbar:
+			# Item icon (v0.18.0 chunk B): a full-rect AtlasTexture over ITEMS_TEX, the exact _set_weapon_icon
+			# pattern, hidden until _refresh_hotbar points its region at a carried item. Added BEFORE the keycap
+			# so the faint numeral draws ON TOP of the icon (later children paint over earlier ones in Godot).
+			var icon := TextureRect.new()
+			icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+			icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			var atlas := AtlasTexture.new()
+			atlas.atlas = ITEMS_TEX
+			# Seed a valid single-tile region (a zero-size region draws the WHOLE sheet — the same guard the
+			# weapon socket uses); the icon stays hidden until _refresh_hotbar applies a real item region.
+			atlas.region = WorldGrid.atlas_region(Vector2i.ZERO)
+			icon.texture = atlas
+			icon.visible = false
+			slot.add_child(icon)
+			_hotbar_icons.append(icon)
+			_hotbar_atlases.append(atlas)
 			# Faint keycap numeral, top-left of the hotbar slot — a style tell, not a key binding. Font
 			# stepped up (5 → 8) for the bigger 32px boxes.
 			var key := Label.new()
@@ -643,6 +680,25 @@ func _set_weapon_icon(weapon: WeaponType) -> void:
 		return
 	_own_weapon_atlas.region = WorldGrid.atlas_region(weapon.atlas_coords)
 	_own_weapon_icon.visible = true
+
+
+## Paint the hotbar row (v0.18.0 chunk B) from the LOCAL player's inventory mirror (Array[String] of item
+## display_names, in slot order). For each slot: a filled slot windows the item's items.png region out of
+## ITEMS_TEX (the _set_weapon_icon pattern, resolved via GameManager.config.item_by_name — same name-resolution
+## every peer uses); an empty slot (or one whose name can't resolve) hides the icon back to a bare socket. Reads
+## the local player through $Players like refresh_self; a no-op-to-empty when our player doesn't exist yet.
+func _refresh_hotbar() -> void:
+	var me := _players.get_node_or_null(str(_own_id)) as Player if _players != null else null
+	var bag: Array = me.inventory if me != null else []
+	for i in _hotbar_icons.size():
+		var item_type: ItemType = GameManager.config.item_by_name(str(bag[i])) if i < bag.size() else null
+		if item_type != null:
+			_hotbar_atlases[i].region = WorldGrid.atlas_region(item_type.atlas_coords)
+			_hotbar_icons[i].visible = true
+		else:
+			# Empty slot OR an unresolvable name (a name absent from item_catalog) — clear back to a bare socket
+			# rather than leave a stale icon; the config-validation guard warns on a genuinely missing catalog entry.
+			_hotbar_icons[i].visible = false
 
 
 ## A 32px reserved socket Panel. `accent` = the brighter hotbar/hands border; a non-empty `label_text`

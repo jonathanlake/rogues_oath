@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="ItemType" format=3]
+
+[ext_resource type="Script" path="res://resources/item_type.gd" id="1_item"]
+
+[resource]
+script = ExtResource("1_item")
+display_name = "health potion"
+atlas_coords = Vector2i(1, 19)
+usable = true
+heal_amount = 10
+use_beats = 2.0

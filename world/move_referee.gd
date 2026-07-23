@@ -52,6 +52,12 @@ var _combat = null
 # BEFORE stamping the bump's own window (no fast first swing). Held untyped (its instance calls resolve
 # dynamically); the null-resolver → explore fallback lives in PaceReferee.beat_or_explore. Null on clients.
 var _pace = null
+# The InventoryReferee, handed in by Main via set_inventory() on the HOST only (v0.18.0 chunk B). At a glide's
+# finalized arrival (_finish_glide) this referee asks it to pick up any ground item on the arrival tile — a
+# walk-over pickup. Untyped (its script has no class_name, like the other referees) so its call resolves
+# dynamically. Null on clients (a client's referee is inert and never completes an authoritative glide) and
+# null until set_inventory runs; every call site guards on non-null so the pickup seam is simply absent then.
+var _inventory = null
 
 # Authoritative occupancy: tile (Vector2i) -> ENTITY ID. THE adjudication truth; a node's `tile`
 # is only presentation. An entity id is a peer id (> 0) for a player or a host-assigned negative
@@ -138,6 +144,13 @@ func set_combat(combat: Node) -> void:
 ## (their referee is inert and never stamps).
 func set_pace(pace: Node) -> void:
 	_pace = pace
+
+
+## Host-only, called by Main right after the InventoryReferee is activated and BEFORE any spawn (v0.18.0
+## chunk B) — so the pickup seam in _finish_glide has the reference the first time a glide completes onto an
+## item. Null on clients (their referee is inert and never completes an authoritative glide).
+func set_inventory(inventory: Node) -> void:
+	_inventory = inventory
 
 
 ## The one id -> node resolver (plan decision 5). Positive ids are players, negatives are monsters;
@@ -609,6 +622,22 @@ func _finish_glide(peer_id: int, token: int) -> void:
 	var rec = _gliding.get(peer_id)
 	if rec == null or int(rec.get("token", -1)) != token:
 		return
+	# Walk-over pickup seam (v0.18.0 chunk B). THIS is the settle point: reaching here past the stale-guard
+	# means peer_id's committed action window (glide + rest) has run to completion and its arrival at rec["to"]
+	# is final — the honest moment a body has "landed on" a tile (occupancy is already authoritative: swapped at
+	# accept under conga, or in the hold-origin branch just below). Route the arrival tile to the inventory
+	# referee, which picks up any ground item there. Guarded two ways:
+	#  - _inventory != null: only the HOST wired it (this whole referee is host-only; a client never reaches here).
+	#  - rec["from"] != rec["to"]: EXCLUDE a commit_in_place BUSY record (a bump swing / wind-up), whose from==to
+	#    is NOT a walk-over — only a real STEP onto a tile loots. This keeps pickup a movement event.
+	# The inventory referee itself ignores a monster mover (negative id) and a vanished mover node. Placed at the
+	# TOP so it fires for BOTH the terminal glide AND a pipelined promotion below — each conga tile the mover
+	# lands on is a genuine walk-over. Commitment Rule intact: this READS the just-completed step's arrival, it
+	# never cancels, interrupts, or redirects it.
+	var arrival_from: Vector2i = rec["from"]
+	var arrival_to: Vector2i = rec["to"]
+	if _inventory != null and arrival_from != arrival_to:
+		_inventory.try_pickup(peer_id, arrival_to)
 	# The pending guard covers a mid-session true->false toggle flip: a pipelined accept already
 	# swapped this mover's occupancy one step deeper, so running the hold-origin swap here would
 	# write a SECOND _occupied entry at the finished glide's dest. With a pending slot, occupancy

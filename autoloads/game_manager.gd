@@ -148,6 +148,18 @@ const DEBUG_GOBLIN_AT_UNSET := Vector2i(-1000, -1000)
 ## client and without the arg. Never touched by gameplay code.
 var debug_goblin_at: Vector2i = DEBUG_GOBLIN_AT_UNSET
 
+## The "unset" sentinel for debug_potion_at (v0.18.0) — an impossible tile no real map is anywhere near, so
+## ANY real tile is a valid placement. Mirrors DEBUG_GOBLIN_AT_UNSET exactly.
+const DEBUG_POTION_AT_UNSET := Vector2i(-1000, -1000)
+
+## DEBUG ONLY. When set (not the impossible sentinel above), the host spawns ONE extra health potion at
+## EXACTLY this tile at session start — set host-side via debug.gd's `potion=x,y` arg. Exists so pickup /
+## inventory tests can place an item at precise geometry. Works INDEPENDENTLY of the session-start item set:
+## it only ADDS a potion through the shared guarded _spawn_item_at. Read ONCE at the host's session-start
+## placement (an F5 reset does NOT re-apply it, mirroring debug_goblin_at); inert on a client and without the
+## arg. Never touched by gameplay code.
+var debug_potion_at: Vector2i = DEBUG_POTION_AT_UNSET
+
 ## DEBUG ONLY. When non-empty, overrides the version string this CLIENT sends in peer_ready — set
 ## client-side via debug.gd's `fakever=` arg so the version-mismatch refusal path is scriptable
 ## two-instance without building a second binary. A send-path override ONLY: never a comparison

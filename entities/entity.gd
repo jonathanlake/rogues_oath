@@ -38,6 +38,12 @@ const _RECOVERY_TINT := Color(0.55, 0.55, 0.62)
 # recovery dim (this brightens) and the red hurt flash. Only ever the defensive fallback path, never the bow.
 const _WINDUP_FALLBACK_TINT := Color(1.6, 1.6, 1.6)
 
+# The held tint for an item USE / drink telegraph (v0.18.0 chunk C, §2.3.4 — a distinct outcome gets a
+# distinct cue): a GREEN cast held for the committed use window then eased back to white. modulate MULTIPLIES,
+# so the boosted green channel + dimmed red/blue reads unmistakably green — deliberately distinct from the red
+# hurt flash, the cool recovery dim, and the bright windup flash, so "drinking" never reads as any of them.
+const _DRINK_TINT := Color(0.45, 1.4, 0.55)
+
 # ── Signals ──────────────────────────────────────────────────────────────────
 
 ## Emitted the instant a glide begins (before the tween runs). Player wires it to block its own
@@ -241,6 +247,24 @@ func play_windup_fallback(windup_sec: float) -> void:
 	_flash_tween = create_tween()
 	var ease_sec := minf(0.12, windup_sec)
 	_flash_tween.tween_interval(windup_sec - ease_sec)
+	_flash_tween.tween_property(self, "modulate", Color.WHITE, ease_sec)
+
+
+## Item-use / DRINK telegraph (v0.18.0 chunk C, §2.3.4). Main plays this off an `item_used` event on the
+## user's node on EVERY peer, so the whole party sees a teammate drink for the committed window. Structurally
+## identical to play_windup_fallback / play_recovery — hold the green _DRINK_TINT for the bulk of the window,
+## then a short ease back to white so the finish reads as "done" — and it shares the _flash_tween modulate-cue
+## slot, so a hurt flash landing mid-drink cleanly replaces it (the documented flash-cue precedence). A
+## non-positive duration is a no-op (matches the other held-tint cues).
+func play_drink(duration_sec: float) -> void:
+	if duration_sec <= 0.0:
+		return
+	if _flash_tween != null and _flash_tween.is_valid():
+		_flash_tween.kill()
+	modulate = _DRINK_TINT
+	_flash_tween = create_tween()
+	var ease_sec := minf(0.12, duration_sec)
+	_flash_tween.tween_interval(duration_sec - ease_sec)
 	_flash_tween.tween_property(self, "modulate", Color.WHITE, ease_sec)
 
 

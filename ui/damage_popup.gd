@@ -22,6 +22,9 @@ const PLAYER_HIT_COLOR := Color.WHITE
 ## Grey for the non-damage outcomes ("miss" on a whiff, "0" on a godded no-op) — deliberately NOT the
 ## damage red, so "no damage happened" never reads as "you took a hit".
 const MISS_COLOR := Color(0.72, 0.72, 0.72)
+## Green for a HEAL (v0.18.0 chunk C) — a "+N" over a healed target. Distinct from the damage red / player-hit
+## white / miss grey, so recovery reads as its own outcome (§2.3.4) and never as a hit taken or dealt.
+const HEAL_COLOR := Color(0.35, 0.9, 0.4)
 
 ## How far the popup drifts UP over its lifetime (pixels).
 const _RISE_PX := 12.0

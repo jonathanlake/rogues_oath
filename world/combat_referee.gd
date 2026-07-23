@@ -99,6 +99,9 @@ func activate(players: Node2D, monsters: Node2D, move_referee: Node, pace: Node)
 	# desyncs a swap/equip SILENTLY at runtime. Runs here (not _ready) because activate is host-only and fires
 	# after GameManager.config is loaded, so the catalog/rosters are guaranteed present and authoritative.
 	GameManager.config.validate_catalog_covers_rosters()
+	# Sibling guard (v0.18.0): warn on duplicate display_names within weapon_catalog / item_catalog — a
+	# first-hit-resolution dupe silently shadows the later entry. Same host-only, once-at-startup contract.
+	GameManager.config.validate_catalogs()
 
 
 # ── Public methods ────────────────────────────────────────────────────────────
@@ -219,6 +222,40 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 	if target is Monster and is_alive(target_id):
 		target.notify_attacked()
 	return false
+
+
+## Apply a deterministic heal to a target and broadcast the outcome (v0.18.0 chunk C; DESIGN §2.4). Host-only.
+## Heals are their OWN pipe, DELIBERATELY separate from apply_damage (which stays damage-only per its own
+## contract — a heal is NOT "negative damage"): the two never share a code path, so a floor / passive / god
+## rule on one can never leak onto the other. god mode does NOT block a heal — /god makes a target invulnerable
+## to DAMAGE, not immune to recovery, so a godded player can still be healed. `source_name` is the flavor for
+## the log line / popup (the item or spell name); the event carries the ACTUAL applied delta after the max clamp.
+func apply_heal(target_id: int, amount: int, source_name: String) -> void:
+	# Guard liveness — never heal a dead/untracked target: it would post a spurious event and could re-seed HP
+	# for an id the death teardown just erased (the caller — _resolve_use — already re-checked, this is the belt).
+	if not is_alive(target_id):
+		return
+	# Floor at 0 (defense-in-depth, mirroring apply_damage's entry floor): a negative "heal" must never become
+	# stealth damage on this pipe. A 0 amount is a harmless no-op heal (the clamp below handles it cleanly).
+	amount = maxi(0, amount)
+	var target := _node_of_id(target_id)
+	var max_hp := _max_hp_of(target)
+	# Clamp to the authored maximum — a heal never overfills. The event carries the ACTUAL applied delta
+	# (new_hp - old_hp), so an over-heal renders "+3" when only 3 HP was missing, not the raw "+10".
+	var old_hp: int = int(_hp[target_id])
+	var new_hp: int = mini(max_hp, old_hp + amount)
+	_hp[target_id] = new_hp
+	# Broadcast on the shared pipe (as_peer = the TARGET — a heal's subject is who got healed, mirror of an
+	# attack's as_peer = attacker). hp_after + target_max let every peer render the bar with no query; the delta
+	# drives the green "+N" popup; source names the cause in the log. Its own action name — never an `attack` event.
+	NetEvents.post_event("heal", {
+		"entity_id": target_id,
+		"name": _name_of(target),
+		"amount": new_hp - old_hp,
+		"hp_after": new_hp,
+		"target_max": max_hp,
+		"source": source_name,
+	}, target_id)
 
 
 ## A MonsterBrain requests an attack against a target TILE (decision 3; DESIGN §2.8). Host-only.

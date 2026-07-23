@@ -130,6 +130,17 @@ var _tactical_wait_sec: float = -1.0
 var _swap_requested: bool = false
 var _swap_wait_sec: float = -1.0
 
+# Item-use harness (use=/usewait=, v0.18.0 chunk C): fire ONE use_item intent through the REAL pipe from
+# EITHER role, testing the USE flow end-to-end — the host validates (dead / busy / empty-slot / not-usable /
+# unknown-item reject) and, on accept, consumes the slot, roots the drinker, and resolves the heal. Exact
+# mirror of swap=/swapwait=; bypasses the number-key sampling like swap= bypasses Tab, so it exercises the
+# SERVER path. use=<slot> is 1-BASED (matching the on-screen keys); the submitted intent carries the 0-based
+# bag index (slot-1). Fires mid-sequence by default (move anchor + 2s) so a concurrent hold=/move= can prove a
+# use-while-busy reject or a heal landing after a pickup; usewait= pins it. -1/0 slot = knob absent.
+var _use_slot: int = 0
+var _has_use: bool = false
+var _use_wait_sec: float = -1.0
+
 # Tap harness (tap=/tapsec=): synthesizes press/release EVENTS via Input.parse_input_event(),
 # which routes through the REAL InputMap bindings — one layer deeper than hold=, which presses
 # actions directly and therefore cannot test the bindings themselves (numpad dual-bound
@@ -160,6 +171,9 @@ const _TAP_KEYS := {
 	"kp6": KEY_KP_6, "kp7": KEY_KP_7, "kp8": KEY_KP_8, "kp9": KEY_KP_9,
 	"enter": KEY_ENTER, "f5": KEY_F5, "f6": KEY_F6, "f11": KEY_F11,
 	"lbracket": KEY_BRACKETLEFT, "rbracket": KEY_BRACKETRIGHT,
+	# Number-row 1-5 (v0.18.0 chunk C): the use_slot_1..use_slot_5 hotbar bindings, so a scripted tap= run
+	# tests the new InputMap entries themselves (one layer deeper than use=, which submits the intent directly).
+	"1": KEY_1, "2": KEY_2, "3": KEY_3, "4": KEY_4, "5": KEY_5,
 }
 const _TAP_BUTTONS := {
 	"dpup": JOY_BUTTON_DPAD_UP, "dpdown": JOY_BUTTON_DPAD_DOWN,
@@ -237,6 +251,11 @@ func _ready() -> void:
 	# in the host branch. has_ tracks presence so an unparsed/absent arg leaves the sentinel untouched.
 	var goblin_at_tile := Vector2i.ZERO
 	var has_goblin_at := false
+	# potion=x,y (v0.18.0): host-only exact-tile health-potion placement for pickup/inventory tests. Parsed
+	# to a SINGLE tile (shared _parse_tile_list, first entry) and applied to GameManager.debug_potion_at in
+	# the host branch. Exact mirror of goblinat=; has_ tracks presence so a typo leaves the sentinel untouched.
+	var potion_at_tile := Vector2i.ZERO
+	var has_potion_at := false
 	for arg in args:
 		if arg.begins_with("screenshot="):
 			_schedule_screenshot(arg.trim_prefix("screenshot="))
@@ -319,6 +338,13 @@ func _ready() -> void:
 			if not goblin_at_tiles.is_empty():
 				goblin_at_tile = goblin_at_tiles[0]
 				has_goblin_at = true
+		elif arg.begins_with("potion="):
+			# Single-tile read (mirror of goblinat=): reuse the shared list parser, take the first entry. A
+			# malformed value leaves has_potion_at false (the parser warns), so a typo keeps the knob inert.
+			var potion_at_tiles := _parse_tile_list(arg.trim_prefix("potion="), "potion=")
+			if not potion_at_tiles.is_empty():
+				potion_at_tile = potion_at_tiles[0]
+				has_potion_at = true
 		elif arg.begins_with("goblin="):
 			goblin_count = arg.trim_prefix("goblin=").to_int()
 		elif arg.begins_with("weapon="):
@@ -327,6 +353,11 @@ func _ready() -> void:
 			_swap_wait_sec = arg.trim_prefix("swapwait=").to_float()
 		elif arg.begins_with("swap="):
 			_swap_requested = arg.trim_prefix("swap=").to_int() != 0
+		elif arg.begins_with("usewait="):
+			_use_wait_sec = arg.trim_prefix("usewait=").to_float()
+		elif arg.begins_with("use="):
+			_use_slot = arg.trim_prefix("use=").to_int()
+			_has_use = _use_slot > 0
 
 	if not (is_host or is_client):
 		return
@@ -375,6 +406,11 @@ func _ready() -> void:
 		# host_game(); inert on the client and without the arg (the sentinel stays put).
 		if has_goblin_at:
 			GameManager.debug_goblin_at = goblin_at_tile
+		# potion= is host-only: stash the exact potion tile so main.gd places ONE potion there at session start
+		# (through the shared guarded _spawn_item_at), independent of the session-start set. Set before
+		# host_game(); inert on the client and without the arg (the sentinel stays put). Mirror of goblinat=.
+		if has_potion_at:
+			GameManager.debug_potion_at = potion_at_tile
 		# goblin= is host-only: the autostart run is monster-free unless opted in, so movement
 		# harness runs (move=/hold=/tap=/click=) keep their clean occupancy. goblin=N caps the count
 		# (0 = none, N>0 = up to N); knob absent (-1) stays monster-free. Set before host_game() so Main
@@ -486,6 +522,10 @@ func _schedule_input_knobs(default_anchor_sec: float) -> void:
 	# subsequent attacks carrying the new weapon; swapwait= pins it (e.g. mid-busy for the reject test).
 	if _swap_requested:
 		_schedule_swap(_swap_wait_sec if _swap_wait_sec >= 0.0 else move_anchor + 2.0)
+	# use= fires mid-sequence by default (move anchor + 2s), like swap= — so a concurrent hold=/move= can show a
+	# use-while-busy reject or a heal landing after a scripted pickup; usewait= pins it (e.g. mid-busy to test the reject).
+	if _has_use:
+		_schedule_use(_use_wait_sec if _use_wait_sec >= 0.0 else move_anchor + 2.0)
 
 
 ## Fire one chat intent through the real pipe after a settle delay. Works identically on host
@@ -531,6 +571,16 @@ func _schedule_swap(delay_sec: float) -> void:
 	await get_tree().create_timer(delay_sec).timeout
 	print("[Debug] swap: submitting swap_weapon")
 	NetEvents.submit_intent("swap_weapon", {})
+
+
+## Fire one use_item intent through the real pipe after a delay (v0.18.0 chunk C). Works identically on host
+## and client — submit_intent is the single public entry point, no role branch. use= is 1-BASED (the on-screen
+## key); the wire payload carries the 0-based bag index (slot-1). The host validates (dead/busy/empty/not-usable/
+## unknown) and, on accept, consumes the slot + roots the drinker + resolves the heal. Mirror of _schedule_swap.
+func _schedule_use(delay_sec: float) -> void:
+	await get_tree().create_timer(delay_sec).timeout
+	print("[Debug] use: submitting use_item slot=%d (0-based %d)" % [_use_slot, _use_slot - 1])
+	NetEvents.submit_intent("use_item", { "slot": _use_slot - 1 })
 
 
 ## Fire one set_tempo intent through the real pipe after a delay. Works identically on host and

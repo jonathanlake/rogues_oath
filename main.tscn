@@ -10,6 +10,7 @@
 [ext_resource type="Script" path="res://world/range_overlay.gd" id="8_range"]
 [ext_resource type="Script" uid="uid://7tokri5wtueo" path="res://ui/fx_layer.gd" id="9_fx"]
 [ext_resource type="Script" uid="uid://djbhj87fidunw" path="res://debug/dev_commands.gd" id="10_devcmd"]
+[ext_resource type="Script" path="res://world/inventory_referee.gd" id="11_inv"]
 
 [node name="Main" type="Node2D" unique_id=931510869]
 script = ExtResource("1_main")
@@ -35,6 +36,8 @@ script = ExtResource("8_range")
 
 [node name="Monsters" type="Node2D" parent="." unique_id=312358483]
 
+[node name="Items" type="Node2D" parent="."]
+
 [node name="FxLayer" type="Node2D" parent="." unique_id=312358484]
 script = ExtResource("9_fx")
 
@@ -50,15 +53,29 @@ script = ExtResource("7_pace")
 [node name="DevCommands" type="Node" parent="." unique_id=424015747]
 script = ExtResource("10_devcmd")
 
+[node name="InventoryReferee" type="Node" parent="."]
+script = ExtResource("11_inv")
+
 [node name="DeathSfx" type="AudioStreamPlayer" parent="." unique_id=2085852180]
 stream = ExtResource("6_impact")
 pitch_scale = 0.8
+
+[node name="PickupSfx" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("6_impact")
+pitch_scale = 1.6
+
+[node name="HealSfx" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("6_impact")
+pitch_scale = 2.0
 
 [node name="MultiplayerSpawner" type="MultiplayerSpawner" parent="." unique_id=1663269909]
 spawn_path = NodePath("../Players")
 
 [node name="MonsterSpawner" type="MultiplayerSpawner" parent="." unique_id=483179110]
 spawn_path = NodePath("../Monsters")
+
+[node name="ItemSpawner" type="MultiplayerSpawner" parent="."]
+spawn_path = NodePath("../Items")
 
 [node name="DebugOverlay" parent="." unique_id=1569819114 instance=ExtResource("3_overlay")]
 

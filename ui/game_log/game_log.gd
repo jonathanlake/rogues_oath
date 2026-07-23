@@ -273,6 +273,29 @@ func _on_event_received(event: Dictionary) -> void:
 						add_line("The arrow sails past %s." % str(data.get("target_name", "")))
 					else:
 						add_line("The arrow flies wide.")
+		"item_picked_up":
+			# A completed walk-over pickup (v0.18.0 chunk B, §2.3.4 — a distinct line per outcome). Party-wide:
+			# everyone sees who grabbed what. Name + item flow through add_line's sink escape like every line.
+			add_line("%s picks up the %s." % [str(data.get("name", "Someone")), str(data.get("item", "item"))])
+		"item_pickup_full":
+			# A pickup BLOCKED by a full bag (v0.18.0 chunk B, §2.3.4 — never a silent swallow). SENDER-ONLY:
+			# only the mover's OWN instance renders it (the "You died." self-filter precedent) — a teammate's
+			# full bag isn't our line, and v1 has no unicast pipe, so the broadcast event self-filters here.
+			if int(data.get("entity_id", 0)) == multiplayer.get_unique_id():
+				add_line("(your bag is full)")
+		"item_used":
+			# A committed item use (v0.18.0 chunk C, §2.3.4 — the telegraph line). Party-wide: everyone sees
+			# who drank what, at COMMIT (the heal, if any, lands on its own `heal` event when the window ends —
+			# a distinct outcome, distinct line). The "..." mirrors the windup "draws the..." telegraph shape.
+			# Name + item flow through add_line's sink escape like every line.
+			add_line("%s drinks the %s..." % [str(data.get("name", "Someone")), str(data.get("item", "item"))])
+		"heal":
+			# A resolved heal (v0.18.0 chunk C, §2.3.4 — a distinct recovery line with the running HP readout,
+			# the twin of an `attack` line's "for N (hp/max)"). Party-wide so recovery is legible in the log.
+			# Name goes through add_line's sink escape.
+			add_line("%s recovers %d HP (%d/%d)." % [
+				str(data.get("name", "Someone")), int(data.get("amount", 0)),
+				int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
 
 
 ## Compose the combat-log line for one `attack` event, one distinct phrasing per outcome (§2.3.4):
@@ -336,6 +359,8 @@ func _on_intent_rejected(action: String, reason: String) -> void:
 		add_line("(command failed: %s)" % reason)
 	elif action == "shoot":
 		_log_shoot_reject(reason)
+	elif action == "use_item":
+		_log_use_reject(reason)
 
 
 # A refused move must never be silent when the cause is the world (§2.3.4): a wall/corner/occupied
@@ -372,6 +397,18 @@ func _log_glide_reject(reason: String) -> void:
 ## "Nothing to draw with.", "Can't shoot your own tile."), so surface them verbatim — except "busy" / "dead",
 ## suppressed like a move's (you're committed / gone; the bonk sound already says it, no log spam).
 func _log_shoot_reject(reason: String) -> void:
+	match reason:
+		"busy", "dead":
+			pass
+		_:
+			add_line(reason)
+
+
+## A refused item use (v0.18.0 chunk C) — the exact mirror of _log_shoot_reject. The host's world-facing
+## reasons ("nothing in that slot", "can't use that", "unknown item") are already player-legible sentences, so
+## surface them verbatim — except "busy" / "dead", suppressed like a move's/shot's (you're committed / gone; the
+## bonk sound already says it, and the `died` line already covers death, so a reject line there would be noise).
+func _log_use_reject(reason: String) -> void:
 	match reason:
 		"busy", "dead":
 			pass

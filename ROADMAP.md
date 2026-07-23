@@ -177,8 +177,17 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   LoS/fog; minimap that also shows teammates.
   **Done =** a start-to-goal run exists with real visibility rules.
 
-- [ ] **M5 — Loot & Builds** **[size M]**
-  Items + placeholder stats as resources; drop tables; the designer pipeline proven.
+- [x] **M5-lite — Inventory v1** **[size M]** *(pulled ahead of M4a/M4b — Jon's call,
+  2026-07-23 overnight; shipped v0.18.0)*
+  The item CORE, ahead of schedule: ItemType resources + item_catalog, replicated ground
+  items (walk-over pickup), host-authoritative 5-slot inventory, `use_item` as an N-beat
+  committed action (heal-at-drink-END — killed mid-drink wastes the potion), the new
+  `apply_heal` pipe + full §2.3.4 feedback, hotbar HUD binding + 1-5 keys.
+  **Done =** two-instance: pick up a potion (both peers see it), see it in the hotbar,
+  drink it after damage and the heal lands clamped — DEMONSTRATED (v0.18.0 event traces).
+
+- [ ] **M5 — Loot & Builds (remainder)** **[size M]**
+  Drop tables; placeholder stats; the designer pipeline proven.
   **Done =** a new monster/item ships via a `.tres` file alone, no code — ideally authored
   by Jeff; if he's unavailable that session, Jon (or a scripted `.tres` round-trip check)
   closes the gate and Jeff's authoring test moves to the next touchpoint.

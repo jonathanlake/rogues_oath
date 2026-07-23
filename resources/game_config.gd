@@ -127,6 +127,13 @@ extends Resource
 ## every roster (global + per-class). Designer-editable; add a weapon here to make its name resolvable.
 @export var weapon_catalog: Array[WeaponType] = []
 
+## The MASTER item catalog (v0.18.0) — EVERY item a name may resolve to (the mirror of weapon_catalog for
+## pickups). item_by_name resolves from THIS, so a ground-item / (future) pickup / use event's item_name
+## maps back to its ItemType on every peer. Items have NO roster (there is no equip cycle to belong to — an
+## item is picked up, not swapped-to), so this is the SOLE resolution source. Designer-editable; add an item
+## here to make its name resolvable across the wire.
+@export var item_catalog: Array[ItemType] = []
+
 ## Arrows-hit-allies toggle (v0.17.0, DESIGN ranged). true (default) = an arrow STOPS at the first
 ## living occupant on its path, ally or enemy (friendly fire on). false = arrows PASS THROUGH allies
 ## everywhere, stopping only at the first hostile. Read HOST-side by CombatReferee's projectile travel;
@@ -160,6 +167,18 @@ func weapon_by_name(name: String) -> WeaponType:
 			return w
 	return null
 
+## Resolve an item by its display_name through the CATALOG (v0.18.0), or null if absent. The single lookup
+## every item name-resolution shares (the /item dev command today; pickup + use in later chunks). UNLIKE
+## weapon_by_name there is NO roster fallback: items have no equip roster to resolve through — the catalog
+## is the one and only place an item id maps to a resource, so a name absent from item_catalog is genuinely
+## unknown. First-hit resolution (a duplicate display_name silently shadows) — validate_catalogs() warns.
+func item_by_name(name: String) -> ItemType:
+	for it in item_catalog:
+		if it != null and it.display_name == name:
+			return it
+	return null
+
+
 ## The active swap ROSTER for a player of `player_class` (v0.17.0): the class's own weapon_roster when it is
 ## non-empty, else the GLOBAL weapon_roster fallback. The ONE resolution the swap validator + class-equip
 ## share, so "which weapons does THIS player cycle" is answered in exactly one place, host-side.
@@ -185,6 +204,32 @@ func validate_catalog_covers_rosters() -> void:
 		for w in roster:
 			if w != null and weapon_by_name(w.display_name) == null:
 				push_warning("[GameConfig] weapon '%s' is in a roster but NOT in weapon_catalog — it will resolve to null on peers and desync a swap/equip. Add it to weapon_catalog." % w.display_name)
+
+
+## Duplicate-name guard (v0.18.0), the sibling of validate_catalog_covers_rosters called beside it host-side
+## at session start. Both catalogs resolve by FIRST-HIT display_name (weapon_by_name / item_by_name walk the
+## array and return the first match), so a SECOND entry sharing a display_name silently SHADOWS the first —
+## a name would resolve to the wrong resource with no error. This walks each catalog and push_warnings any
+## display_name that appears more than once, so a mis-authored duplicate is caught ONCE at startup rather
+## than surfacing as a baffling "wrong weapon/item" at runtime. Pure diagnostic — mutates nothing.
+func validate_catalogs() -> void:
+	_warn_duplicate_names(weapon_catalog, "weapon_catalog")
+	_warn_duplicate_names(item_catalog, "item_catalog")
+
+
+## Shared duplicate-display_name scan for one catalog (v0.18.0). `entries` is an Array of Resources each with
+## a `display_name`; `catalog_name` names the catalog in the warning. Tracks the names already seen and
+## push_warnings EVERY entry that repeats an earlier name (three copies of one name → two warnings — one
+## per shadowed extra, so the warning count matches how many entries are unreachable via first-hit lookup).
+func _warn_duplicate_names(entries: Array, catalog_name: String) -> void:
+	var seen: Dictionary = {}
+	for e in entries:
+		if e == null:
+			continue
+		var name: String = e.display_name
+		if seen.has(name):
+			push_warning("[GameConfig] duplicate display_name '%s' in %s — first-hit resolution means the later entry is SHADOWED (never resolvable). Rename or remove the duplicate." % [name, catalog_name])
+		seen[name] = true
 
 
 ## The next weapon in `roster` after `current` — the swap TOGGLE (cycles; a 2-weapon roster just alternates).

@@ -49,6 +49,14 @@ var spawn_index: int = 0
 ## loop to tell the joiner our current class. Presentation on the node; never adjudication truth.
 var player_class: PlayerClass = null
 
+## Client-side inventory MIRROR (v0.18.0 chunk B): the item display_names this player carries, adopted from
+## the host's item_picked_up events (main.gd appends here, in slot order). PRESENTATION TRUTH ONLY — the
+## authoritative bag lives in the host's InventoryReferee._inventories; this exists so every peer's HUD hotbar
+## (own player) and any future teammate-inventory UI can render without a query. Empty at spawn (a fresh player
+## carries nothing) and never carried across a death/reset — the node is freed and re-made empty. Capped at the
+## hotbar width in main.gd's handler (see the coupling note there).
+var inventory: Array[String] = []
+
 
 func _ready() -> void:
 	super()

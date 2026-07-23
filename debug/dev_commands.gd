@@ -25,14 +25,21 @@ extends Node
 var _players: Node2D = null
 var _combat = null
 var _move_referee = null
+# The host-only ground-item author API (v0.18.0), injected as a Callable by Main so /item can spawn WITHOUT
+# reaching up into Main (the component never climbs the tree). Wraps Main._spawn_item_at(tile, type_path) ->
+# bool, so every /item spawn still routes through the ONE guarded, id-assigning path. Empty (unbound) on
+# clients — /item is host-adjudicated, so it is only ever called inside the host's validate.
+var _spawn_item: Callable = Callable()
 
 
 ## Host-only entry point, called by Main inside its is_server() branch after the referees are wired.
-## Never called on clients (their node stays inert).
-func activate(players: Node2D, combat: Node, move_referee: Node) -> void:
+## Never called on clients (their node stays inert). `spawn_item` is the /item ground-item spawn Callable
+## (v0.18.0) — Main binds it to _spawn_item_at so this component gains item-spawn access without a Main ref.
+func activate(players: Node2D, combat: Node, move_referee: Node, spawn_item: Callable = Callable()) -> void:
 	_players = players
 	_combat = combat
 	_move_referee = move_referee
+	_spawn_item = spawn_item
 
 
 # ── Public methods ──────────────────────────────────────────────────────────────
@@ -61,6 +68,8 @@ func validate(sender_peer_id: int, data: Dictionary) -> Dictionary:
 			return _dev_cmd_god(sender_peer_id, by)
 		"class":
 			return _dev_cmd_class(sender_peer_id, args, by)
+		"item":
+			return _dev_cmd_item(sender_peer_id, args, by)
 		_:
 			# Bare-weapon alias: "/longsword 5" arrives as cmd "longsword", args ["5"]. Reachable ONLY when
 			# cmd resolves to a real weapon (table precedence is handled by the match above). Re-dispatch as
@@ -210,6 +219,64 @@ func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dic
 	# Deferred: the class_changed broadcast IS the outcome — suppress the generic dev_command broadcast
 	# (ok:true so it isn't a reject; deferred:true so NetEvents skips the broadcast + seq).
 	return { "ok": true, "deferred": true }
+
+
+## /item <name> [x,y] — spawn a ground item (v0.18.0), host-adjudicated. Resolve the item by display_name
+## through GameManager.config.item_by_name (reject unknown); a MULTI-WORD name ("health potion") is supported
+## because the trailing [x,y] is a single comma-joined token — if the LAST arg parses as "x,y" it is the tile
+## and the name is the tokens before it, else every token forms the name and the tile is the SENDER's
+## FACING-neighbor (its tile + MoveReferee.facing_of — NEVER its own tile). Three distinct §2.2.8 rejects:
+## unknown item / bad tile (no facing yet, or not walkable) / tile blocked (an item already sits there). On
+## success it spawns through Main's guarded item API (the injected _spawn_item Callable) and returns the
+## host-composed line every peer logs. Server-authoritative: the tile + walkability + collision are all
+## resolved host-side from shared config/grid, never a client value.
+func _dev_cmd_item(sender_peer_id: int, args: Array[String], by: String) -> Dictionary:
+	if args.is_empty():
+		return { "ok": false, "reason": "usage: /item <name> [x,y]" }
+	# Split off an optional trailing "x,y" tile token (a single comma-joined token, so it never collides with
+	# a multi-word name). If the last arg is a valid tile, the name is everything before it; else the whole
+	# arg list is the name and the tile comes from the sender's facing.
+	var name_tokens := args
+	var explicit_tile := Vector2i.ZERO
+	var has_explicit_tile := false
+	var last: String = args[args.size() - 1]  # indexing a typed Array yields Variant at parse — annotate
+	var comma_parts := last.split(",", false)
+	if comma_parts.size() == 2 and comma_parts[0].strip_edges().is_valid_int() and comma_parts[1].strip_edges().is_valid_int():
+		explicit_tile = Vector2i(comma_parts[0].strip_edges().to_int(), comma_parts[1].strip_edges().to_int())
+		has_explicit_tile = true
+		name_tokens = args.slice(0, args.size() - 1)
+	if name_tokens.is_empty():
+		return { "ok": false, "reason": "usage: /item <name> [x,y]" }
+	var item_name := " ".join(name_tokens)
+	var item := GameManager.config.item_by_name(item_name)
+	if item == null:
+		return { "ok": false, "reason": "unknown item '%s'" % item_name }
+	# Resolve the target tile. Explicit x,y wins; otherwise the sender's facing-neighbor (their tile + the
+	# authoritative 8-way facing the move referee tracks). A never-moved sender has ZERO facing (no
+	# facing-neighbor exists) — reject as a bad tile rather than dropping the item on the sender's own tile.
+	var tile := explicit_tile
+	if not has_explicit_tile:
+		var player_node := _players.get_node_or_null(str(sender_peer_id)) as Player
+		if player_node == null:
+			return { "ok": false, "reason": "not in session" }
+		var facing: Vector2i = _move_referee.facing_of(sender_peer_id)
+		if facing == Vector2i.ZERO:
+			return { "ok": false, "reason": "no facing yet — move first, or give x,y" }
+		tile = player_node.tile + facing
+	# Bad tile: not walkable (a wall / off-grid). Checked HERE so the "tile blocked" reject below is
+	# unambiguous. A broken resource_path is ALSO pre-checked (GLM v0.18.0 review #1): _spawn_item_at's
+	# first guard is ResourceLoader.exists, so without this check a stale catalog path would be
+	# misreported as "already has an item" — with both pre-checks, a false from the spawn call can only
+	# mean an item-collision.
+	if not ResourceLoader.exists(item.resource_path):
+		return { "ok": false, "reason": "'%s' has a broken resource path (catalog drift)" % item.display_name }
+	if not WorldGrid.is_walkable(tile):
+		return { "ok": false, "reason": "(%d, %d) is not a walkable tile" % [tile.x, tile.y] }
+	# Spawn through Main's guarded API (path + walkable re-checked + item-collision). Both other guards
+	# passed above, so a false here can only mean an item already occupies the tile.
+	if not _spawn_item.call(tile, item.resource_path):
+		return { "ok": false, "reason": "(%d, %d) already has an item" % [tile.x, tile.y] }
+	return { "ok": true, "data": { "line": "%s spawned a %s at (%d, %d)." % [by, item.display_name, tile.x, tile.y] } }
 
 
 ## Resolve a weapon by lowercase name (v0.10.0 /w): GameConfig.weapon_by_name FIRST (roster display_name),

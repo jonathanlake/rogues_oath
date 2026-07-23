@@ -654,6 +654,33 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.18.0 (2026-07-23, overnight) — INVENTORY v1 (M5-lite, pulled ahead of M4a/M4b —
+  Jon).** The parked "N-beat potion commit" ships. DECISIONS (Jon, this session):
+  walk-over auto-pickup; potion heals 10 over a 2-beat drink; the heal lands at the
+  DRINK'S END — killed mid-drink = potion consumed, no heal (the Commitment Rule bite:
+  "attack or drink, not both"); items v1 = pre-placed + dev-spawn (goblin drop tables
+  stay in M5); 5 slots (the HUD hotbar), no stacking, bags die with the player
+  (permadeath — fresh/late-join spawns start empty, so no late-join sync exists).
+  SYSTEMS: ItemType resource + GameConfig.item_catalog/item_by_name (+ duplicate-name
+  catalog warnings); replicated GroundItem nodes via a third MultiplayerSpawner (host-
+  exclusive spawns, NO occupancy claim — walk-over by construction); host-side
+  InventoryReferee (bags, walk-over pickup at the glide-settle seam — monsters don't
+  loot, arrival-only detection; `use_item` validator with distinct rejects
+  dead/busy/"nothing in that slot"/"can't use that"; consume-on-commit, commit_in_place
+  roots the drinker, end-of-drink timer carries the round generation);
+  CombatReferee.apply_heal — heals are their OWN pipe (apply_damage stays damage-only),
+  clamped to max, the `heal` event carries the ACTUAL applied delta; god blocks damage,
+  never healing. FEEDBACK (§2.3.4 all prongs): green drink tint held for the stamped
+  window, green "+N" popup, distinct pickup/heal sounds (pitched placeholders), log
+  lines ("picks up" / "drinks…" / "recovers N HP (h/m)" / self-only "(your bag is
+  full)"). Input: 1-5 keys (use_slot_N actions); harness use=/usewait= + potion= knobs
+  + tap tokens 1-5; /item dev command. VERIFIED two-instance event-trace: pickup slots
+  0→1 on both peers + hotbar icon screenshot; damage→drink→heal with the clamp proven
+  (amount 5 applied of 10, hp_after 20); use-while-moving rejected busy; empty-slot
+  reject; killed mid-drink → died, ZERO heal; F5 mid-drink → zero heal into the fresh
+  round; kick/shoot/click regressions green. Feel= Jon+Jeff: drink-cue readability,
+  pickup/heal sounds, potion numbers (10 HP / 2 beats), hotbar look, full-bag flow
+  (code-verified only — spawn caps prevented a 6-potion scripted run).
 - **v0.17.3 (2026-07-23, overnight)** — Jon's v0.17.2 playtest fixes, part 1 of the
   overnight run. (1) SHIFT+CLICK ground fire (mouse-aim v2.1): shift+click fires the bow
   at any in-range tile — lane denial returns behind an explicit modifier; plain clicks
