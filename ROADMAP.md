@@ -170,11 +170,13 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   keeps a full solid border — MoveReferee's `_NO_TILE` sentinel assumes (0,0) is wall —
   and regeneration must rebuild WorldGrid's cached A* grid (a stale grid paths through the
   old walls).
+  *Design-pass research (outside canon + GLM cross-check): see `docs/research/procgen-minimap-m4.md`.*
   **Done =** a generated dungeon with a start and a goal, walkable in multiplayer.
 
 - [ ] **M4b — Seeing the Dungeon** **[size M]** *(Q3 answered: 8-way — LoS must handle
   diagonals and corner cases)*
   LoS/fog; minimap that also shows teammates.
+  *Design-pass research (minimap data model, Godot impl, fog): see `docs/research/procgen-minimap-m4.md`.*
   **Done =** a start-to-goal run exists with real visibility rules.
 
 - [x] **M5-lite — Inventory v1** **[size M]** *(pulled ahead of M4a/M4b — Jon's call,
