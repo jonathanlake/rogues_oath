@@ -35,3 +35,10 @@ extends Resource
 ## default) — the rogue overrides it with backstab.tres. A non-coder grants a class an ability by
 ## dropping a PassiveAbility .tres into this array, no code edit.
 @export var passives: Array[PassiveAbility] = []
+
+## The class's WEAPON ROSTER (v0.17.0) — the loadout this class carries and Tab-cycles through. EMPTY (the
+## default) = use the GLOBAL GameConfig.weapon_roster fallback (the shipped dagger↔longsword cycle); NON-EMPTY
+## overrides it, so the swap validator cycles THIS list and a host-side set_class equips its FIRST entry. The
+## roster is resolved HOST-side from the player's current class (server-authoritative — never client inference).
+## ranger → [longsword, bow]. Designer-editable (add / reorder .tres here, no code).
+@export var weapon_roster: Array[WeaponType] = []

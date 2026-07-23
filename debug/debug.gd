@@ -81,6 +81,18 @@ var _has_click: bool = false
 # walk to visibly bend before the next target replaces it.
 var _click_delay_sec: float = 1.5
 
+# Shoot harness (shoot=, v0.17.0): fire one shoot intent per target tile through the REAL pipe
+# (submit_intent("shoot", {"target_tile": ...})) from EITHER role, testing the ranged/bow flow end-to-end —
+# the host validates (range / busy / nothing-to-draw), commits the draw, and looses the traveling arrow.
+# Semicolon-separated tile list like click=; deliberately bypasses mouse input (chunk 2) to exercise the
+# SERVER path. Anchored at the movewait= timing per role, spaced movedelay= apart (mirrors _schedule_moves).
+var _shoot_tiles: Array[Vector2i] = []
+var _has_shoot: bool = false
+# shootwait=: shoot='s OWN first-fire delay (mirrors holdwait=), so draw-then-move sequences can
+# stagger shoot against move= (both default to the shared movewait anchor and would otherwise race —
+# needed to prove the draw's busy window rejects a mid-draw move). -1 = unset: shared anchor.
+var _shoot_wait_sec: float = -1.0
+
 # Tempo harness (tempo=/tempowait=): fire ONE set_tempo intent through the REAL pipe (submit_intent)
 # from EITHER role, testing the runtime tempo knob (§2.8.3) end-to-end — the host validates/clamps and
 # broadcasts, both peers adopt it. Deliberately bypasses the +/- key sampling (like move= bypasses
@@ -260,6 +272,10 @@ func _ready() -> void:
 			_parse_click_list(arg.trim_prefix("click="))
 		elif arg.begins_with("clickdelay="):
 			_click_delay_sec = arg.trim_prefix("clickdelay=").to_float()
+		elif arg.begins_with("shootwait="):
+			_shoot_wait_sec = arg.trim_prefix("shootwait=").to_float()
+		elif arg.begins_with("shoot="):
+			_parse_shoot_list(arg.trim_prefix("shoot="))
 		elif arg.begins_with("tempo="):
 			_tempo_beat = arg.trim_prefix("tempo=").to_float()
 			_has_tempo = true
@@ -424,6 +440,10 @@ func _schedule_input_knobs(default_anchor_sec: float) -> void:
 		_schedule_taps(move_anchor)
 	if _has_click:
 		_schedule_clicks(move_anchor)
+	# shoot= fires at the move anchor, one target every movedelay= (mirrors move=), so a scripted run can
+	# loose a sequence of arrows through the real pipe after both peers have spawned.
+	if _has_shoot:
+		_schedule_shoots(_shoot_wait_sec if _shoot_wait_sec >= 0.0 else move_anchor)
 	# tempo= fires mid-sequence by default (move anchor + 2s) so a concurrent move=/hold= shows glide
 	# durations change across the tempo boundary; tempowait= pins it (e.g. early, for a late-join test).
 	if _has_tempo:
@@ -643,6 +663,30 @@ func _schedule_clicks(delay_sec: float) -> void:
 		await get_tree().create_timer(0.1).timeout
 		Input.parse_input_event(_click_event(window_pos, false))
 		print("[Debug] click: released at tile %s" % tile)
+
+
+## Parse a semicolon-separated tile list (e.g. "10,4;3,7") into _shoot_tiles — exact mirror of
+## _parse_click_list. A malformed entry is skipped with a warning rather than aborting the run.
+func _parse_shoot_list(spec: String) -> void:
+	for entry in spec.split(";", false):
+		var parts := entry.strip_edges().split(",", false)
+		if parts.size() == 2 and parts[0].strip_edges().is_valid_int() and parts[1].strip_edges().is_valid_int():
+			_shoot_tiles.append(Vector2i(parts[0].strip_edges().to_int(), parts[1].strip_edges().to_int()))
+			_has_shoot = true
+		elif not entry.strip_edges().is_empty():
+			push_warning("[Debug] shoot=: malformed entry '%s' (skipped)" % entry)
+
+
+## Fire the shoot list through the REAL pipe (submit_intent("shoot", ...)) after the initial delay, one
+## target every _move_delay_sec (mirror of _schedule_moves). Bypasses mouse input (chunk 2) so it exercises
+## the SERVER's ranged adjudication — range / busy / nothing-to-draw rejects, the draw commit, and the loose.
+func _schedule_shoots(delay_sec: float) -> void:
+	await get_tree().create_timer(delay_sec).timeout
+	for i in _shoot_tiles.size():
+		if i > 0:
+			await get_tree().create_timer(_move_delay_sec).timeout
+		print("[Debug] shoot: submitting shoot target_tile=%s" % _shoot_tiles[i])
+		NetEvents.submit_intent("shoot", { "target_tile": _shoot_tiles[i] })
 
 
 ## Build one synthetic left-mouse event at a viewport position.

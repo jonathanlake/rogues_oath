@@ -121,26 +121,54 @@ extends Resource
 ## repaint a rig from a swap/sync event's weapon name.
 @export var weapon_roster: Array[WeaponType] = []
 
+## The MASTER weapon catalog (v0.17.0) — EVERY weapon a name may resolve to, whether or not it sits in a
+## Tab-cycle. weapon_by_name resolves from THIS, so `weapon=bow` (and a class-roster weapon like the bow)
+## resolves even though the global Tab roster above stays the shipped dagger↔longsword pair. Superset of
+## every roster (global + per-class). Designer-editable; add a weapon here to make its name resolvable.
+@export var weapon_catalog: Array[WeaponType] = []
+
+## Arrows-hit-allies toggle (v0.17.0, DESIGN ranged). true (default) = an arrow STOPS at the first
+## living occupant on its path, ally or enemy (friendly fire on). false = arrows PASS THROUGH allies
+## everywhere, stopping only at the first hostile. Read HOST-side by CombatReferee's projectile travel;
+## never the wire. A playtest toggle — flip in the .tres, no code.
+@export var projectile_hits_allies: bool = true
+
 
 # ── Weapon roster helpers ─────────────────────────────────────────────────────
 
-## Resolve a weapon by its display_name through the roster, or null if absent. The single lookup the
-## swap validator, the late-join weapon sync, and the debug weapon= knob share, so the roster stays
-## the one place a weapon id maps to a resource.
+## Resolve a weapon by its display_name through the CATALOG (v0.17.0), or null if absent. The single lookup
+## the swap validator, the late-join weapon sync, the class-equip, and the debug weapon= knob share — the
+## catalog (not a Tab roster) is the one place a weapon id maps to a resource, so any weapon in the game is
+## name-resolvable regardless of which cycle it belongs to.
 func weapon_by_name(name: String) -> WeaponType:
+	for w in weapon_catalog:
+		if w != null and w.display_name == name:
+			return w
+	# Fallback for a config authored without a catalog (the shipped .tres has one; this guards any
+	# future/experimental GameConfig): the global Tab roster is the pre-catalog resolution source, so
+	# name lookups never silently break just because the catalog was left empty.
 	for w in weapon_roster:
 		if w != null and w.display_name == name:
 			return w
 	return null
 
-## The next weapon in the roster after `current` — the swap TOGGLE (cycles; a 2-weapon roster just
-## alternates). An unknown / null current (not in the roster) starts at the first entry. Returns
-## `current` unchanged when the roster is empty (a misconfiguration — nothing to swap to).
-func next_weapon(current: WeaponType) -> WeaponType:
-	if weapon_roster.is_empty():
+## The active swap ROSTER for a player of `player_class` (v0.17.0): the class's own weapon_roster when it is
+## non-empty, else the GLOBAL weapon_roster fallback. The ONE resolution the swap validator + class-equip
+## share, so "which weapons does THIS player cycle" is answered in exactly one place, host-side.
+func active_weapon_roster(player_class: PlayerClass) -> Array[WeaponType]:
+	if player_class != null and not player_class.weapon_roster.is_empty():
+		return player_class.weapon_roster
+	return weapon_roster
+
+## The next weapon in `roster` after `current` — the swap TOGGLE (cycles; a 2-weapon roster just alternates).
+## An unknown / null current (not in the roster) starts at the first entry. Returns `current` unchanged when
+## the roster is empty (a misconfiguration — nothing to swap to). The caller passes the active roster
+## (active_weapon_roster) so the cycle honours a class loadout when one is set.
+func next_weapon(current: WeaponType, roster: Array[WeaponType]) -> WeaponType:
+	if roster.is_empty():
 		return current
-	var idx := weapon_roster.find(current)  # -1 when absent → (idx + 1) wraps to the first entry
-	return weapon_roster[(idx + 1) % weapon_roster.size()]
+	var idx := roster.find(current)  # -1 when absent → (idx + 1) wraps to the first entry
+	return roster[(idx + 1) % roster.size()]
 
 
 ## The authored player-class roster (v0.10.0). ONE authoring site for the classes a player may BE:

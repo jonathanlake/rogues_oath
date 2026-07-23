@@ -132,6 +132,38 @@ static func atlas_region(coords: Vector2i) -> Rect2:
 	return Rect2(coords.x * TILE_PX, coords.y * TILE_PX, TILE_PX, TILE_PX)
 
 
+## 8-connected Bresenham line of tiles from `from` to `to`, in grid coords. EXCLUDES the start tile and
+## INCLUDES the target; the returned length equals the CHEBYSHEV distance (one king-step per tile, a
+## diagonal counting as a single step). Used by the traveling-arrow projectile (v0.17.0), which resolves
+## authoritative occupancy per ARRIVAL TILE — a moving body, not a sight ray.
+##
+## PER-TILE ONLY — NOT LoS-correct for adjudicated SIGHT: diagonal corner-cutting is unhandled here (a
+## diagonal step may pass between two walls that touch only at a corner, which a true line-of-sight must
+## refuse). DO NOT reuse this for vision / sight checks until the LoS-proper pass lands that corner rule.
+## from == to yields an empty array (no tiles beyond the start).
+static func line_tiles(from: Vector2i, to: Vector2i) -> Array[Vector2i]:
+	var tiles: Array[Vector2i] = []
+	var x := from.x
+	var y := from.y
+	var dx := absi(to.x - from.x)
+	var dy := absi(to.y - from.y)
+	var sx := 1 if to.x > from.x else -1
+	var sy := 1 if to.y > from.y else -1
+	var err := dx - dy
+	# Standard integer Bresenham with BOTH axis-steps allowed per iteration — the variant that walks a
+	# clean 8-way line (a diagonal when both fire), so the tile count is max(dx, dy) = Chebyshev distance.
+	while x != to.x or y != to.y:
+		var e2 := 2 * err
+		if e2 > -dy:
+			err -= dy
+			x += sx
+		if e2 < dx:
+			err += dx
+			y += sy
+		tiles.append(Vector2i(x, y))
+	return tiles
+
+
 # ── Pathfinding ───────────────────────────────────────────────────────────────
 
 # Lazily-built A* over the room, shared by every caller (static, like everything here). Solids

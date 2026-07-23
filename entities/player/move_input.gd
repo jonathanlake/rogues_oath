@@ -44,6 +44,10 @@ signal path_target_set(tile: Vector2i)
 ## The walk target is gone — arrived, unreachable, or dropped after rejects (keys cannot
 ## cancel a walk: §2.2.9 amendment). The parent hides the path marker.
 signal path_target_cleared
+## A left-click while a RANGED weapon is equipped (v0.17.0): the clicked tile is a shoot target. The parent
+## submits the "shoot" intent (it owns the wire, exactly as it does move_requested → glide_to). Fire-and-
+## forget — no latch here; the host validates range/busy and rejects to sender (the bonk fires generically).
+signal shoot_requested(tile: Vector2i)
 
 # ── Exports ───────────────────────────────────────────────────────────────────
 
@@ -80,6 +84,12 @@ signal path_target_cleared
 ## Set by the parent: true only on the local player's node. A remote/disabled MoveInput never
 ## samples (it still exists in the scene so the node graph is uniform on every peer).
 var enabled: bool = false
+
+## The equipped weapon's range in tiles, pushed by the parent (Player.set_weapon) whenever the weapon
+## changes (v0.17.0). > 0 = RANGED: a left-click SHOOTS at the clicked tile instead of stepping. 0 = melee
+## (the default), so the click keeps its existing step/walk behaviour. The parent owns equipped_weapon and
+## pushes this down — the sampler never reaches up to read it.
+var weapon_range_tiles: int = 0
 
 # ── Private vars ──────────────────────────────────────────────────────────────
 
@@ -250,6 +260,13 @@ func _unhandled_input(event: InputEvent) -> void:
 	# Viewport coords → world via the canvas transform inverse (camera/stretch-safe), → tile.
 	var world_pos: Vector2 = get_viewport().get_canvas_transform().affine_inverse() * mouse.position
 	var tile := WorldGrid.world_to_tile(world_pos)
+	# Ranged weapon (v0.17.0): a left-click SHOOTS at the clicked tile instead of stepping. The parent
+	# submits "shoot" (it owns the wire); the host validates range/busy/nothing-to-draw and rejects to
+	# sender (§2.2.8 bonk — no latch here). This sits AFTER the focus-release above, so it respects the
+	# same chat gate a step click does. Melee (range 0) falls through to the existing step/walk logic.
+	if weapon_range_tiles > 0:
+		shoot_requested.emit(tile)
+		return
 	# Adjacent-only click mode (§2.2.9 provisionally on via config, Jon/Jeff 2026-07-19): with
 	# click_pathing_enabled=false the mouse can only step to one of the 8 neighbors of _current_tile —
 	# no target, no A*, no marker, no "Can't reach that.". A click that IS a Chebyshev neighbor

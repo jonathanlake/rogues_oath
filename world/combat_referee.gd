@@ -62,11 +62,20 @@ var _move_referee = null
 # Null on clients (activate never runs there).
 var _pace = null
 
+# Monotonic per-shot projectile id (v0.17.0), host-only. Stamped into each projectile_launched /
+# projectile_ended pair so multiple arrows in flight stay id-keyed and independent. Never reset mid-session.
+var _next_projectile_id: int = 1
+# In-flight arrows: projectile id -> { shooter_id, damage, path, clipped, index, tile_duration }. THE
+# authoritative flight state, host-only — captured PRIMITIVES at loose (never node refs), advanced one tile
+# per arrival timer, erased the instant the arrow ends (hit / blocked / spent). Empty on clients.
+var _projectiles: Dictionary = {}
+
 
 ## Host-only entry point, called by Main inside its is_server() branch AFTER MoveReferee.activate()
 ## and set_monsters() and the PaceReferee, and BEFORE any spawn — so the container enter hooks seed HP
 ## for every entity, including the host's own player, and the pace resolver is on hand the first time an
 ## attack window is stamped. Wires both containers' membership signals the same way MoveReferee does.
+## Registers the "shoot" intent validator on the shared pipe (the way MoveReferee registers "glide_to").
 ## Never called on clients (their combat referee stays inert).
 func activate(players: Node2D, monsters: Node2D, move_referee: Node, pace: Node) -> void:
 	_players = players
@@ -77,6 +86,7 @@ func activate(players: Node2D, monsters: Node2D, move_referee: Node, pace: Node)
 	_players.child_exiting_tree.connect(_on_entity_exiting)
 	_monsters.child_entered_tree.connect(_on_entity_entered)
 	_monsters.child_exiting_tree.connect(_on_entity_exiting)
+	NetEvents.register_handler("shoot", _validate_shoot)
 
 
 # ── Public methods ────────────────────────────────────────────────────────────
@@ -256,6 +266,216 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 	get_tree().create_timer(windup_sec).timeout.connect(
 			_resolve_windup.bind(attacker_id, target_tile, "windup", 0.0))
 	return windup_sec + recovery_sec
+
+
+# ── Ranged shot (v0.17.0, the bow — traveling-arrow model) ─────────────────────
+
+## The "shoot" intent validator (host-only; registered on the shared pipe in activate()). A player submits
+## shoot {target_tile}; the host adjudicates from ITS own truth (occupancy, weapon, pace), commits the
+## shooter for the FULL attack window, telegraphs the DRAW, and looses a traveling arrow when the draw ends.
+## Reject reasons are DISTINCT per §2.2.8 (reject-to-sender). Returns a DEFERRED accept on success — the
+## windup + projectile events ARE the outcome, so no generic "shoot" event is broadcast (mirror of /class).
+func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
+	# Liveness (log-suppressed like a dead glide — the died event already told the player).
+	if not is_alive(sender_peer_id):
+		return { "ok": false, "reason": "dead" }
+	# BUSY — the SAME commit-window predicate melee/swap read (is_entity_moving covers a glide AND a
+	# commit_in_place record), so a shot can never interrupt or overlap a committed action (Commitment Rule).
+	if _move_referee.is_entity_moving(sender_peer_id):
+		return { "ok": false, "reason": "busy" }
+	var shooter := _node_of_id(sender_peer_id)
+	# Ranged discriminator: range_tiles > 0. A melee (0) or bare-handed weapon has nothing to draw with.
+	var weapon: WeaponType = shooter.equipped_weapon if shooter is Entity else null
+	if weapon == null or weapon.range_tiles <= 0:
+		return { "ok": false, "reason": "Nothing to draw with." }
+	# Never trust the wire — the target tile must be a real Vector2i.
+	var tt = data.get("target_tile")
+	if typeof(tt) != TYPE_VECTOR2I:
+		return { "ok": false, "reason": "bad target" }
+	var target_tile: Vector2i = tt
+	var shooter_tile: Vector2i = _move_referee.tile_of_entity(sender_peer_id)
+	if target_tile == shooter_tile:
+		return { "ok": false, "reason": "Can't shoot your own tile." }
+	# Range gate: CHEBYSHEV distance to the CLICKED tile ≤ the weapon's range_tiles (server-authoritative,
+	# read from the shared weapon resource — never a client value).
+	var cheb := maxi(absi(target_tile.x - shooter_tile.x), absi(target_tile.y - shooter_tile.y))
+	if cheb > weapon.range_tiles:
+		return { "ok": false, "reason": "Out of range." }
+
+	# ── Accept ──
+	# Forcing-window arming (§2.8.7): a shot is a hostile action, so the shooter stamps at the TACTICAL beat
+	# (no fast first draw) and stays tactical afterward. Armed BEFORE the stamps, mirroring wind_up/_begin_bump.
+	if _pace != null:
+		_pace.report_hostile_action(sender_peer_id)
+	# Stamp-and-bake (§2.8): the FULL attack_beats window is the shooter's committed occupancy; the DRAW
+	# (windup_beats) looses the arrow partway through it. Both stamped ONCE now at the shooter's resolved pace.
+	var busy_sec := _recovery_duration_of(shooter)   # weapon.attack_beats × pace beat — the whole occupied window
+	var windup_sec := _windup_duration_of(shooter)   # weapon.windup_beats × pace beat — the draw before loose
+	if GameManager.debug_windup_override_sec > 0.0:
+		windup_sec = GameManager.debug_windup_override_sec
+	# Misconfiguration guard (GLM milestone review #2): a .tres with windup_beats > attack_beats (or a big
+	# windupsec= override) would end the commit BEFORE the loose — a free-action window while the draw timer
+	# still pends (Commitment Rule violation). The commit always covers the draw.
+	busy_sec = maxf(busy_sec, windup_sec)
+	# Commit the FULL window in place (from==to — the shooter is rooted while drawing AND recovering; no
+	# occupancy move). A miss means it went busy between the checks and now (host single-threaded; defensive).
+	if not _move_referee.commit_in_place(sender_peer_id, busy_sec):
+		return { "ok": false, "reason": "busy" }
+	# Telegraph the draw on the EXISTING `windup` event shape (+ the weapon name). A player-posted windup is
+	# a harmless no-op in playback (the handler narrow-casts to Monster) until chunk 2's draw rig; the event
+	# still broadcasts so headless assertions see it. as_peer = shooter (mirrors wind_up).
+	NetEvents.post_event("windup", {
+		"entity_id": sender_peer_id,
+		"name": _name_of(shooter),
+		"target_tile": target_tile,
+		"windup_sec": windup_sec,
+		"weapon": weapon.display_name,
+	}, sender_peer_id)
+	# LOOSE at the end of the draw. Host SceneTreeTimer (survives despawn by construction, like _resolve_windup);
+	# the callback self-guards on is_alive — a shooter killed mid-draw looses NOTHING (the death teardown
+	# already erased its commit). Capture PRIMITIVES only (never node refs): shooter id + tile, damage, weapon
+	# name, per-tile speed. The path is built at loose from the still-rooted shooter tile.
+	get_tree().create_timer(windup_sec).timeout.connect(_loose_arrow.bind(
+			sender_peer_id, shooter_tile, target_tile, weapon.damage,
+			weapon.display_name, weapon.projectile_tiles_per_beat))
+	return { "ok": true, "deferred": true }
+
+
+## Loose the arrow at the end of the draw (host-only, from the commit timer). Builds the flight path NOW,
+## broadcasts projectile_launched, and starts the per-tile arrival chain. Everything is captured PRIMITIVES
+## (no node refs), so a shooter that despawns MID-FLIGHT can't crash the arrow (its damage/identity are baked).
+func _loose_arrow(shooter_id: int, shooter_tile: Vector2i, target_tile: Vector2i,
+		damage: int, weapon_name: String, tiles_per_beat: float) -> void:
+	# Mid-draw erasure (Q9 / M3): a shooter that died or despawned during the draw looses nothing — the death
+	# teardown (clear_entity) already erased its commit record. This mirrors _resolve_windup's is-alive guard.
+	if not is_alive(shooter_id):
+		return
+	# Path = the 8-way line shooter→target, CLIPPED to end at the last OPEN tile before the first wall (an
+	# arrow can't fly through a wall). `clipped` records whether a wall cut it short (→ "blocked") vs it
+	# reaching the target tile (→ "spent").
+	var clip := _clip_line_at_walls(WorldGrid.line_tiles(shooter_tile, target_tile))
+	var path: Array[Vector2i] = clip["path"]
+	var clipped: bool = clip["clipped"]
+	var proj_id := _next_projectile_id
+	_next_projectile_id += 1
+	# Per-tile flight time, stamped ONCE at loose (never rescaled mid-flight — same as a glide's baked
+	# seconds): the shooter's resolved beat (tactical here — it is mid-forcing-window) ÷ tiles-per-beat.
+	var tile_duration := PaceReferee.beat_or_explore(_pace, shooter_id) / maxf(tiles_per_beat, 0.001)
+	# Broadcast the launch (as_peer = shooter, mirroring windup) so every peer can render the flight in chunk
+	# 2. Paired 1:1 with a projectile_ended by id in EVERY case, including the empty (adjacent-wall) path.
+	NetEvents.post_event("projectile_launched", {
+		"id": proj_id,
+		"shooter_id": shooter_id,
+		"path": path,
+		"tile_duration_sec": tile_duration,
+		"weapon": weapon_name,
+	}, shooter_id)
+	# Adjacent-wall click: no open tile to enter, the arrow thunks immediately. The commit window still runs
+	# in full (Commitment Rule) — only the arrow did nothing. End at the shooter's tile (its last open spot).
+	if path.is_empty():
+		_end_projectile(proj_id, shooter_tile, "blocked", "")
+		return
+	_projectiles[proj_id] = {
+		"shooter_id": shooter_id,
+		"damage": damage,
+		"path": path,
+		"clipped": clipped,
+		"index": 0,
+		"tile_duration": tile_duration,
+	}
+	get_tree().create_timer(tile_duration).timeout.connect(_arrow_step.bind(proj_id))
+
+
+## One tile-arrival tick for an in-flight arrow (host-only). Reads AUTHORITATIVE occupancy at the arrival
+## tile (the same source move/combat referees read — Q4 destination-based) and applies THE ONE HIT RULE:
+## stop at the first STOPPABLE occupant. No hit → advance, or finalize at the terminal tile.
+func _arrow_step(proj_id: int) -> void:
+	var p = _projectiles.get(proj_id)
+	if p == null:
+		return  # already ended (defensive — the id was erased on a hit / terminal)
+	var index: int = p["index"]
+	var tile: Vector2i = (p["path"] as Array)[index]
+	var shooter_id: int = p["shooter_id"]
+	var occ_id: int = _move_referee.entity_at(tile)
+	# THE ONE HIT RULE: a STOPPABLE occupant eats the arrow HERE — apply arrow damage (the existing attack
+	# event carries HP / log / cues) and end "hit".
+	if occ_id != _NO_ENTITY and _is_stoppable(occ_id, shooter_id):
+		apply_damage(shooter_id, occ_id, int(p["damage"]), "arrow", 0.0)
+		_end_projectile(proj_id, tile, "hit", "")
+		return
+	# Terminal tile with no stoppable hit: "blocked" if a wall clipped the path, else "spent" (reached the
+	# target). A SKIPPED ally sitting on the spent tile is NAMED so chunk 2 can log "sails past <name>".
+	if index >= (p["path"] as Array).size() - 1:
+		var outcome := "blocked" if p["clipped"] else "spent"
+		var target_name := ""
+		if outcome == "spent" and occ_id != _NO_ENTITY and _is_skipped_ally(occ_id, shooter_id):
+			target_name = _name_of(_node_of_id(occ_id))
+		_end_projectile(proj_id, tile, outcome, target_name)
+		return
+	# Pass through (empty tile, or a non-stoppable ally): advance to the next arrival tick.
+	p["index"] = index + 1
+	get_tree().create_timer(p["tile_duration"]).timeout.connect(_arrow_step.bind(proj_id))
+
+
+## Finalize an arrow: forget its flight state and broadcast projectile_ended (server-authored, peer 0 —
+## an outcome, mirror of `died`). `target_name` rides only for a skipped ally on the spent tile (chunk 2's
+## distinct "sails past <name>" line); absent otherwise, so a plain end stays a minimal dict.
+func _end_projectile(proj_id: int, tile: Vector2i, outcome: String, target_name: String) -> void:
+	_projectiles.erase(proj_id)
+	var data := { "id": proj_id, "tile": tile, "outcome": outcome }
+	if not target_name.is_empty():
+		data["target_name"] = target_name
+	NetEvents.post_event("projectile_ended", data)
+
+
+## Clip an 8-way line to the tiles an arrow can actually reach: every OPEN tile up to (but not including)
+## the first wall. Returns { path, clipped } — `clipped` true when a wall cut the line short of its end.
+func _clip_line_at_walls(line: Array[Vector2i]) -> Dictionary:
+	var open_tiles: Array[Vector2i] = []
+	var clipped := false
+	for tile in line:
+		if WorldGrid.is_wall(tile):
+			clipped = true
+			break
+		open_tiles.append(tile)
+	return { "path": open_tiles, "clipped": clipped }
+
+
+## Is this occupant STOPPABLE by the shooter's arrow? Living, not the shooter itself, and — when
+## projectile_hits_allies is OFF — hostile to the shooter (allies pass through). With the flag ON (default)
+## any living non-shooter body stops it (friendly fire). Read HOST-side from shared config.
+func _is_stoppable(occ_id: int, shooter_id: int) -> bool:
+	if not is_alive(occ_id) or occ_id == shooter_id:
+		return false
+	if GameManager.config.projectile_hits_allies:
+		return true
+	return _is_hostile_pair(shooter_id, occ_id)
+
+
+## Is this occupant an ally the arrow PASSED THROUGH (skipped)? Only meaningful with projectile_hits_allies
+## OFF: a living non-shooter body NOT hostile to the shooter. Used to name a skipped ally on the spent tile.
+func _is_skipped_ally(occ_id: int, shooter_id: int) -> bool:
+	if GameManager.config.projectile_hits_allies:
+		return false
+	if not is_alive(occ_id) or occ_id == shooter_id:
+		return false
+	return not _is_hostile_pair(shooter_id, occ_id)
+
+
+## Hostility between the shooter and an occupant, resolved through their nodes (server truth, never the
+## wire). If a node is GONE (e.g. the shooter despawned mid-flight), fall back to ID-SIGN allegiance —
+## players are positive ids, monsters negative, and v1's only teams are players-vs-monsters (plus the
+## all_hostile dev knob) — so a posthumous arrow keeps the SAME ally/hostile behavior it was loosed with
+## and projectile_hits_allies=false stays reliable (GLM milestone review #3). Never "default to stoppable":
+## that would silently flip the designer toggle on shooter death.
+func _is_hostile_pair(shooter_id: int, occ_id: int) -> bool:
+	var shooter := _node_of_id(shooter_id)
+	var occ := _node_of_id(occ_id)
+	if shooter != null and occ != null:
+		return shooter.is_hostile_to(occ)
+	if GameManager.all_hostile:
+		return true
+	return (shooter_id > 0) != (occ_id > 0)
 
 
 ## Host-side stat accessors, read by MoveReferee for a bump/AoO so combat numbers live in ONE place

@@ -44,6 +44,14 @@ const _SLASH_STARTUP_WINDBACK_RAD := 0.20
 # during startup, then drives out. Presentation feel; tune by eye.
 const _STAB_START_RADIUS_PX := 6.0
 
+# Bow-draw feel (v0.17.0, the "draw" style). All PIXELS/feel, tune by eye. The arrow nocks a touch AHEAD
+# of the bow at draw start, PULLS back over the draw, then SPRINGS forward on release before it hides (the
+# flying arrow is the separate Projectile node — the rig arrow only nocks/looses).
+const _DRAW_ARROW_FORWARD_PX := 2.0
+const _DRAW_ARROW_PULL_PX := 6.0
+const _LOOSE_SNAP_PX := 6.0
+const _LOOSE_SNAP_SEC := 0.06
+
 @onready var _sprite: Sprite2D = $Sprite2D
 
 # The weapon currently presented, set by the Player (set_weapon). Null hides the rig (no-weapon
@@ -51,6 +59,9 @@ const _STAB_START_RADIUS_PX := 6.0
 var _weapon: WeaponType = null
 # The swing tween, held so a fresh swing kills a lingering one and so it never outlives the node.
 var _swing_tween: Tween = null
+# The bow's nocked-ARROW sprite (v0.17.0), built in code on first draw — a SECOND Sprite2D that windows the
+# weapon's projectile_atlas_coords out of the SAME items.png. Only ever visible during a bow draw/loose.
+var _arrow_sprite: Sprite2D = null
 
 
 func _ready() -> void:
@@ -135,3 +146,95 @@ func play_swing(dir: Vector2i, duration_sec: float) -> void:
 	# Presentation over: hide the sprite. play_swing is the SINGLE owner of "weapon visible" — every
 	# swing shows on entry and hides here, so an idle avatar shows no weapon between strikes.
 	_swing_tween.chain().tween_callback(func() -> void: _sprite.visible = false)
+
+
+## Play the bow-DRAW telegraph toward `dir` over `windup_sec` (v0.17.0, the "draw" style). Driven by Main off
+## the `windup` event on EVERY peer — so the draw reads identically on the wire, no new sync. The bow raises
+## SKYWARD (90° off the aim) and rotates DOWN to the aim over the draw; a nocked ARROW sprite pulls back a few
+## px across it. The matching play_loose (off projectile_launched) snaps the release and hides the rig; if the
+## loose never comes (shooter died mid-draw) Main calls hide_draw off the `died` event. Null weapon / non-
+## positive windup no-op. Reuses the swing-tween slot (a draw and a swing can't co-occur — the shooter is busy).
+func play_draw(dir: Vector2i, windup_sec: float) -> void:
+	if _weapon == null or windup_sec <= 0.0:
+		return
+	var unit := Vector2(dir.x, dir.y).normalized() if dir != Vector2i.ZERO else Vector2(1.0, 0.0)
+	var aim := unit.angle()
+	var orbit := _weapon.orbit_radius_px
+	if _swing_tween != null and _swing_tween.is_valid():
+		_swing_tween.kill()
+	# Bow sprite: shown at the weapon region, out on the orbit radius, at its baseline rotation.
+	_sprite.visible = true
+	_sprite.region_rect = WorldGrid.atlas_region(_weapon.atlas_coords)
+	_sprite.position = Vector2(orbit, 0.0)
+	_sprite.rotation = _SPRITE_BASELINE_ROT_RAD
+	# Nocked arrow: a touch ahead of the bow at draw start; it pulls BACK over the draw.
+	_ensure_arrow_sprite()
+	_arrow_sprite.visible = true
+	_arrow_sprite.region_rect = WorldGrid.atlas_region(_weapon.projectile_atlas_coords)
+	_arrow_sprite.position = Vector2(orbit + _DRAW_ARROW_FORWARD_PX, 0.0)
+	_arrow_sprite.rotation = _SPRITE_BASELINE_ROT_RAD
+	# The rig starts pointing 90° off the aim (SKYWARD for a level shot) and rotates down to the aim over the
+	# whole draw, while the arrow pulls back — the readable "nock, draw, hold on target" telegraph.
+	rotation = aim - PI * 0.5
+	_swing_tween = create_tween()
+	_swing_tween.set_parallel(true)
+	_swing_tween.tween_property(self, "rotation", aim, windup_sec)
+	_swing_tween.tween_property(_arrow_sprite, "position:x", orbit - _DRAW_ARROW_PULL_PX, windup_sec)
+
+
+## Release snap for a bow shot (v0.17.0), driven off the matching projectile_launched. Points at the aim,
+## springs the bow + arrow FORWARD a few px, then hides the rig — the flying arrow is the separate Projectile
+## node. Safe if no draw is currently showing (a late-joiner that missed the windup just flashes and hides).
+func play_loose(dir: Vector2i) -> void:
+	var unit := Vector2(dir.x, dir.y).normalized() if dir != Vector2i.ZERO else Vector2(1.0, 0.0)
+	var aim := unit.angle()
+	var orbit := _weapon.orbit_radius_px if _weapon != null else _STAB_START_RADIUS_PX
+	if _swing_tween != null and _swing_tween.is_valid():
+		_swing_tween.kill()
+	rotation = aim
+	# Full state init, NOT inherited from a prior draw/swing (GLM milestone review #1): a late-joiner
+	# that missed the windup reaches here with whatever regions/positions the sprites last held (or a
+	# zero region on a freshly built arrow sprite) — set region, position, and rotation explicitly so
+	# the release flash is always the RIGHT image at the RIGHT offset.
+	_sprite.visible = true
+	if _weapon != null:
+		_sprite.region_rect = WorldGrid.atlas_region(_weapon.atlas_coords)
+	_sprite.position = Vector2(orbit, 0.0)
+	_sprite.rotation = _SPRITE_BASELINE_ROT_RAD
+	_ensure_arrow_sprite()
+	_arrow_sprite.visible = true
+	if _weapon != null:
+		_arrow_sprite.region_rect = WorldGrid.atlas_region(_weapon.projectile_atlas_coords)
+	_arrow_sprite.position = Vector2(orbit - _DRAW_ARROW_PULL_PX, 0.0)
+	_arrow_sprite.rotation = _SPRITE_BASELINE_ROT_RAD
+	_swing_tween = create_tween()
+	_swing_tween.set_parallel(true)
+	_swing_tween.tween_property(_arrow_sprite, "position:x", orbit + _LOOSE_SNAP_PX, _LOOSE_SNAP_SEC)
+	_swing_tween.tween_property(_sprite, "position:x", orbit + _LOOSE_SNAP_PX * 0.5, _LOOSE_SNAP_SEC)
+	_swing_tween.chain().tween_callback(hide_draw)
+
+
+## Hide the bow rig immediately (v0.17.0): kill any draw/loose tween and hide both sprites. Called at the end
+## of play_loose and by Main off the `died` event, so a shooter killed mid-draw doesn't leave a bow hanging.
+func hide_draw() -> void:
+	if _swing_tween != null and _swing_tween.is_valid():
+		_swing_tween.kill()
+	_sprite.visible = false
+	_sprite.position = Vector2.ZERO
+	if _arrow_sprite != null:
+		_arrow_sprite.visible = false
+		_arrow_sprite.position = Vector2.ZERO
+	rotation = 0.0
+
+
+## Lazily build the nocked-arrow Sprite2D (v0.17.0) the first time a bow is drawn — a code-built child of the
+## rig (mirrors hud.gd's code-built chrome), windowing the SAME items.png. Hidden until a draw shows it.
+func _ensure_arrow_sprite() -> void:
+	if _arrow_sprite != null:
+		return
+	_arrow_sprite = Sprite2D.new()
+	_arrow_sprite.texture = ITEMS_TEX
+	_arrow_sprite.region_enabled = true
+	_arrow_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_arrow_sprite.visible = false
+	add_child(_arrow_sprite)

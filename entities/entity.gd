@@ -174,6 +174,9 @@ func glide_to(to_tile: Vector2i, duration_sec: float) -> void:
 func play_attack(dir: Vector2i, with_sound := true) -> void:
 	_bowstring(dir)
 	if with_sound:
+		# Reset the pitch a bow DRAW (play_draw) may have shifted down, so a following melee swing sounds
+		# normal — the draw/loose are the only callers that repitch this stream.
+		_attack_audio.pitch_scale = 1.0
 		_attack_audio.play()
 
 
@@ -252,6 +255,33 @@ func set_weapon(weapon: WeaponType) -> void:
 ## whiff bowstring) and the recovery tint (play_recovery), exactly as a player's swing does.
 func play_weapon_swing(dir: Vector2i, duration_sec: float) -> void:
 	_weapon_rig.play_swing(dir, duration_sec)
+
+
+## Bow-DRAW telegraph (v0.17.0), driven by Main off the `windup` event for a "draw"-style weapon (player OR
+## a future monster archer). Forwards the aim + window to the rig (which raises the bow skyward then aims it,
+## nocking the arrow) and plays a DRAW sound: the $Attack whoosh pitched DOWN so the creaky draw is audibly
+## its own cue (Jon: "no string animation, but with a sound"). Every peer renders it from the one event — the
+## telegraph is identical on the wire, no new sync. `dir` is the 8-way step toward the target tile.
+func play_draw(dir: Vector2i, windup_sec: float) -> void:
+	_weapon_rig.play_draw(dir, windup_sec)
+	_attack_audio.pitch_scale = 0.7
+	_attack_audio.play()
+
+
+## Bow release (v0.17.0), driven by Main off the matching `projectile_launched`. Snaps the rig's release (bow
+## + arrow spring forward, then hide) and plays the LOOSE sound — the $Attack whoosh at normal pitch (a
+## distinct pitch from the draw above, per §2.3.4). The flying arrow itself is a separate Projectile node.
+func play_loose(dir: Vector2i) -> void:
+	_weapon_rig.play_loose(dir)
+	_attack_audio.pitch_scale = 1.0
+	_attack_audio.play()
+
+
+## Force-hide the weapon rig (v0.17.0). Main calls this off the `died` event so a shooter killed mid-draw
+## never leaves a drawn bow hanging (the node despawns a beat later, but this clears the visual at once —
+## mirroring how a monster's windup coil vanishes with its node). A no-op for a rig already hidden.
+func hide_weapon_rig() -> void:
+	_weapon_rig.hide_draw()
 
 
 # ── Private methods ───────────────────────────────────────────────────────────

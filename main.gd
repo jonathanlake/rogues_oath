@@ -141,6 +141,9 @@ var _tactical_border: Control = null
 # Floating-combat-text FX layer (v0.10.1), world-space under Main after Monsters. Owns damage_popup;
 # the attack handler calls it per-peer off the broadcast `attack` event. Present on every peer.
 @onready var _fx := $FxLayer
+# In-flight arrow visuals (v0.17.0), projectile id -> Projectile node. Per-peer presentation only, keyed by
+# the host's monotonic id so multiple arrows coexist; projectile_launched adds, projectile_ended removes+ends.
+var _projectiles: Dictionary = {}
 # Host-only slash-command referee (v0.10.1), extracted from Main into its own component. Present on
 # every peer (it's in main.tscn) but activate()d + registered as the "dev_command" handler ONLY inside
 # the is_server() branch, so a client's node stays inert (mirrors the referees).
@@ -435,7 +438,8 @@ func _ready() -> void:
 		# Extracted into its own DevCommands component (v0.10.1): activate it host-side with the container +
 		# combat refs it needs (/god toggles combat's godded dict, /w & /m read the sender's name off
 		# Players), then register its validate as the handler. Inert on clients (activate never runs there).
-		_dev_commands.activate(_players, _combat)
+		# The move referee rides along for the /class equip busy guard (v0.17.0 — no equip mid-commit).
+		_dev_commands.activate(_players, _combat, _referee)
 		NetEvents.register_handler("dev_command", _dev_commands.validate)
 		print("[HOST] server started (peer %d) — spawning host player" % multiplayer.get_unique_id())
 		# Spawn the host's own player immediately — no RPC needed. (_spawn_config records the reset
@@ -637,6 +641,12 @@ func _on_net_event(event: Dictionary) -> void:
 			# A host-resolved pace flip (Tactical Zones v1, §2.8.7). Every peer plays the cue for its OWN
 			# player only — the tempo bar emphasizes YOUR active dial (the log line comes from game_log).
 			_handle_pace_changed_event(event)
+		"projectile_launched":
+			# An arrow loosed (v0.17.0, host-authored). CHUNK-1 STUB — see the handler.
+			_handle_projectile_launched_event(event)
+		"projectile_ended":
+			# An arrow ended (hit / blocked / spent). CHUNK-1 STUB — see the handler.
+			_handle_projectile_ended_event(event)
 
 
 ## Play back an accepted glide. Resolve the mover by entity id: positive is a player, negative a
@@ -717,7 +727,10 @@ func _handle_attack_event(event: Dictionary) -> void:
 		# reads as damage taken (§2.3.4 — distinct outcomes stay distinct). Attacker-side cues (swing,
 		# rig, recovery) are unchanged — the world still reacts, only the victim's damage feedback is gated.
 		var godded := bool(data.get("godded", false))
-		if attacker != null:
+		# Arrow HIT (v0.17.0): SUPPRESS the attacker-side lunge/swing here. The shooter's cue was the draw +
+		# release (windup / projectile_launched) when it loosed — a lunge now, as the remote arrow lands,
+		# would be a wrong double-cue (§2.3.4). Only the TARGET's hurt + popup play (below) for an arrow.
+		if attacker != null and kind != "arrow":
 			# Swing sound RESTORED (v0.6.2, Jon: attack must be audible AND distinct from the hit —
 			# swing = high short whoosh, impact = low thud; pitch-separated in the scenes).
 			attacker.play_attack(dir, true)
@@ -786,15 +799,26 @@ func _handle_attack_event(event: Dictionary) -> void:
 ## exactly the telegraph window on every peer.
 func _handle_windup_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
-	# Wind-up cues are Monster surface — deliberate narrow cast off the Entity resolver.
-	var monster := _node_for_peer(int(data.get("entity_id", 0))) as Monster
+	# Extended to ANY Entity (v0.17.0): the bow DRAW telegraph is a PLAYER windup too, so resolve the entity
+	# (player OR monster) and DISPATCH on the event's weapon. A "draw"-style weapon (the bow) plays the draw
+	# telegraph on the rig; anything else (a monster's claw — no/melee weapon field) keeps the coil-and-flash.
+	var entity := _node_for_peer(int(data.get("entity_id", 0)))
+	if entity == null:
+		return
+	var target_tile: Vector2i = data.get("target_tile", entity.tile)
+	var windup_sec := float(data.get("windup_sec", 0.0))
+	# Face the telegraph direction — toward the committed target tile (v0.10.0), per-peer deterministic.
+	entity.face_toward(signi(target_tile.x - entity.tile.x))
+	var weapon := GameManager.config.weapon_by_name(str(data.get("weapon", "")))
+	if weapon != null and weapon.attack_style == "draw":
+		# Bow draw (player, or a future monster archer): the rig raises + aims + nocks the arrow toward the
+		# target tile over the draw. The matching projectile_launched plays the release (play_loose).
+		entity.play_draw(_step_sign(target_tile - entity.tile), windup_sec)
+		return
+	# Monster claw coil-and-flash (unchanged): the coil pulls AWAY from the target (monster - target sign).
+	var monster := entity as Monster
 	if monster != null:
-		var target_tile: Vector2i = data.get("target_tile", monster.tile)
-		var dir_away := _step_sign(monster.tile - target_tile)
-		# Face the telegraph direction — toward the target tile it's winding up on (v0.10.0), the
-		# opposite of the coil's away-direction. Same event data, per-peer deterministic.
-		monster.face_toward(signi(target_tile.x - monster.tile.x))
-		monster.play_windup(dir_away, float(data.get("windup_sec", 0.0)))
+		monster.play_windup(_step_sign(monster.tile - target_tile), windup_sec)
 
 
 ## Play back a death (§2.3.4): the death sound on every peer (Main-level — the node itself vanishes
@@ -808,6 +832,13 @@ func _handle_died_event(event: Dictionary) -> void:
 	# Local presentation only — no wire event; a fresh spawn (F5) re-seeds via on_player_spawned.
 	var data: Dictionary = event.get("data", {})
 	var dead_id := int(data.get("entity_id", 0))
+	# Bow-draw cleanup (v0.17.0): a shooter killed MID-DRAW never gets a loose to hide its rig, so clear the
+	# drawn bow now (the node despawns a beat later, but this drops the visual at once — mirroring how a
+	# monster's windup coil vanishes with its node). Resolve while the node is still valid (the died event runs
+	# before the despawn replication); a no-op for any entity not mid-draw.
+	var dead_node := _node_for_peer(dead_id)
+	if dead_node != null:
+		dead_node.hide_weapon_rig()
 	# Prune the dead entity from the overlay's live pace dict (v0.10.3) — its node frees so a stale entry is
 	# already inert (no node to ring), but drop it for hygiene so the dict tracks only living players.
 	_tactical_players.erase(dead_id)
@@ -905,6 +936,54 @@ func _handle_pace_changed_event(event: Dictionary) -> void:
 	# cadence at once. Presentation/pacing only; adjudication stays host-side (never reads this).
 	GameManager.local_pace_is_tactical = _local_pace_tactical
 	_update_tempo_display()
+
+
+## An arrow loosed (v0.17.0): play the shooter's rig RELEASE (+ loose sound) and spawn the LOCAL flying-arrow
+## visual under the FX layer, keyed by the event id (multiple arrows in flight coexist). All per-peer from the
+## one event — no new sync. The flight seconds + path are the host's baked values, so every peer's arrow flies
+## the identical arc; the matching projectile_ended ends this same id.
+func _handle_projectile_launched_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var proj_id := int(data.get("id", 0))
+	var shooter_id := int(data.get("shooter_id", 0))
+	var path: Array = data.get("path", [])
+	var tile_dur := float(data.get("tile_duration_sec", 0.0))
+	var weapon := GameManager.config.weapon_by_name(str(data.get("weapon", "")))
+	var atlas: Vector2i = weapon.projectile_atlas_coords if weapon != null else Vector2i(0, 23)
+	var shooter := _node_for_peer(shooter_id)
+	# Release snap on the shooter's rig + loose sound (ends the draw telegraph). dir toward the first path
+	# tile; an empty path (adjacent-wall shot) falls back to a horizontal snap.
+	if shooter != null:
+		var dir := Vector2i.ZERO
+		if not path.is_empty():
+			dir = _step_sign((path[0] as Vector2i) - shooter.tile)
+		shooter.play_loose(dir)
+	# Spawn the flying-arrow visual (code-built Projectile, under the world-space FX layer). The shooter node
+	# is present on every peer that received this launch (no mid-flight late-join replay), so the fallback is
+	# purely defensive.
+	var shooter_tile := Vector2i.ZERO
+	if shooter != null:
+		shooter_tile = shooter.tile
+	elif not path.is_empty():
+		shooter_tile = path[0]
+	var proj := Projectile.new()
+	_fx.add_child(proj)
+	proj.launch(shooter_tile, path, tile_dur, atlas)
+	_projectiles[proj_id] = proj
+
+
+## An arrow ended (hit / blocked / spent): SNAP its visual to the terminal tile and play the outcome (a
+## blocked arrow bursts a puff; a hit/spent arrow just clears — a HIT's target cues ride the `attack` event,
+## and the log lines come from game_log's own projectile_ended handler). Late-join tolerant: an id we never
+## launched (a client that joined mid-flight) is simply not in the dict — end silently, no crash, no log.
+func _handle_projectile_ended_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var proj_id := int(data.get("id", 0))
+	var proj := _projectiles.get(proj_id) as Projectile
+	if proj == null:
+		return
+	_projectiles.erase(proj_id)
+	proj.finish(data.get("tile", Vector2i.ZERO) as Vector2i, str(data.get("outcome", "spent")))
 
 
 ## Per-peer local camera follow (M3.5 + ghost-cam v0.10.4). Track OUR OWN avatar's position each frame;
@@ -1163,9 +1242,10 @@ func _node_for_peer(entity_id: int) -> Entity:
 ## the game log adds the line via its own connection). Rejects reach only the sender, so the
 ## local player is always the right target.
 func _on_intent_rejected(action: String, reason: String) -> void:
-	# glide_to and swap_weapon (M3.7) both bonk the sender's own player: a refused swap (busy) gets the
-	# same distinct sound+flash as a refused move, so "the host refused" is never a silent no-op (§2.3.4).
-	if action != "glide_to" and action != "swap_weapon":
+	# glide_to, swap_weapon (M3.7), and shoot (v0.17.0) all bonk the sender's own player: a refused move / swap
+	# / shot gets the same distinct sound+flash, so "the host refused" is never a silent no-op (§2.3.4). A
+	# shoot reject (out of range, busy, nothing to draw) thus fires the bonk exactly like a refused move.
+	if action != "glide_to" and action != "swap_weapon" and action != "shoot":
 		return
 	var me := _players.get_node_or_null(str(multiplayer.get_unique_id())) as Player
 	if me == null:
@@ -1661,7 +1741,10 @@ func _validate_swap_weapon(sender_peer_id: int, _data: Dictionary) -> Dictionary
 	# swap mid-commit is refused (bonk), state unchanged (Commitment Rule).
 	if _referee.is_entity_moving(sender_peer_id):
 		return { "ok": false, "reason": "busy" }
-	var next: WeaponType = GameManager.config.next_weapon(player_node.equipped_weapon)
+	# Cycle the sender's ACTIVE roster (v0.17.0): its class weapon_roster when set, else the global roster —
+	# resolved host-side from the player's current class (server-authoritative, never a client value).
+	var roster := GameManager.config.active_weapon_roster(player_node.player_class)
+	var next: WeaponType = GameManager.config.next_weapon(player_node.equipped_weapon, roster)
 	if next == null or next == player_node.equipped_weapon:
 		# Empty/single-weapon roster (a misconfiguration) — nothing to swap to. Silent to the log; the
 		# sender still gets the bonk so the input isn't a silent no-op.

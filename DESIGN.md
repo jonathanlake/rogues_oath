@@ -480,6 +480,25 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    the main threat to the "no perpetual kiting" pillar (Appendix: "Why lock movement too?")
    — a ranged build that glides, shoots, glides again needs the same hard-choice pressure
    melee has. Needs its own pass alongside the build system.
+   **ANSWERED for ranged v1 (Jon+Jeff, 2026-07-22, Discord). Implemented v0.17.0 — the
+   TRAVELING-PROJECTILE model** (chosen over hitscan: "fits the real-time aspect" — Jon).
+   The shot is a commitment (the draw wind-up costs full beats on the one timeline, Jeff:
+   "make sure it has the wind up start"); the loosed arrow is an independent EFFECT that
+   flies the Bresenham lane tile-by-tile at a fractional-beat rate (beats-authored:
+   `projectile_tiles_per_beat`), adjudicated per tile-arrival against Q4 destination-based
+   occupancy — dodging = stepping out of the lane during the draw, prediction not reflexes.
+   THE ONE HIT RULE: the arrow stops at the first stoppable occupant (living, not the
+   shooter, and — with the `projectile_hits_allies` GameConfig toggle OFF — not an ally).
+   Friendly fire ON by default (Jon: first-occupant body-blocking is on-brand). Mouse-click
+   aiming (click a tile in range = commit request; server adjudicates; wall-clicks = "fire
+   down this lane"). Bow v1: ranger roster [longsword, bow], 7-tile Chebyshev range,
+   3 attack_beats (2-beat draw + 1 recovery), damage 4, sky-to-horizontal draw telegraph +
+   nocked arrow + pitched draw/loose sounds (Jon's spec — no string animation). Ranged
+   kiting pressure: the 3-beat rooted draw IS the hard choice; a mid-draw move request
+   pipelines (Q7 slot) and starts only after the window. STILL OPEN in this question:
+   LoS-proper (arrows use per-tile wall clipping; diagonal corner-cutting accepted v1),
+   gamepad aiming, monster ranged attackers, ranged backstab/facing (the normalized-delta
+   note in combat_referee).
 
 7. **Pipelined next-step vs stop-and-go.** Wire-test finding (2026-07-18): a client's travel
    is stop-and-go — between consecutive steps the client must wait a full submit→verdict
@@ -603,6 +622,29 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.17.0 (2026-07-22)** — THE BOW: first ranged weapon, traveling-arrow model (open
+  question #6 ANSWERED for ranged v1 — see that entry for the full spec). New: WorldGrid
+  Bresenham `line_tiles` (doc-flagged NOT LoS-correct until the corner rule); WeaponType
+  ranged fields (`range_tiles`, `projectile_tiles_per_beat`, `projectile_atlas_coords`,
+  "draw" style); bow.tres (3 beats, 2-beat draw, damage 4, range 7); PlayerClass
+  weapon_roster + ranger [longsword, bow] (global Tab-cycle untouched for other classes;
+  new weapon_catalog is the name-lookup source); `shoot` intent with distinct §2.2.8
+  rejects; server-side flight (per-tile arrival timers reading Q4 occupancy, ONE HIT RULE,
+  `projectile_hits_allies` toggle default true); `projectile_launched/ended` events;
+  per-peer Projectile node (id-keyed, snap-then-free, late-join tolerant); WeaponRig draw
+  style (skyward→aim rotation + nocked arrow + pitched draw/loose sounds); mouse-click
+  shoot input; /class equips roster[0] (busy-guarded). EMERGENT KEEPER: a mid-draw move
+  request PIPELINES (Q7's slot) and starts only after the commit window — archers pre-
+  buffer their escape step; commitment intact (event-trace verified: loose 3.0s → glide
+  3.5s → arrow lands 3.625s). Verified two-instance headless: hostile hit (hp 20→16, kind
+  "arrow"), ally hit (FF on), ally pass-through + "sails past <name>" (FF off), wall clip
+  → blocked, spent, out-of-range/busy rejects, re-loose with two arrows in flight, tempo
+  scaling (tactical 0.8 → windup 1.6/tile 0.2), windowed screenshots (draw pose, release,
+  ranger loadout end-to-end). GLM chunk + milestone reviews: 6 accepted fixes (catalog
+  fallback, /class busy guard, loose-state init, windup≤window clamp, id-sign allegiance
+  for posthumous arrows, hide_draw resets). Feel= Jon+Jeff: bow numbers (3 beats/damage 4/
+  range 7/arrow speed 4 tiles-per-beat), draw telegraph readability, FF-on default,
+  mouse-aim feel, shoot-vs-move input coexistence.
 - **v0.16.2 (2026-07-22)** — F11 cache fix (Jon's report: the 4th press dropped a maximized
   player to the small window). ENGINE FINDING (sequence-probed): with resizable=false,
   Windows will not hold a true maximize — `window_get_mode()` DECAYS to WINDOWED one frame

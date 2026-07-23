@@ -249,6 +249,18 @@ func _on_event_received(event: Dictionary) -> void:
 			if int(data.get("entity_id", 0)) == multiplayer.get_unique_id():
 				var tactical := str(data.get("pace", "explore")) == "tactical"
 				add_line("— Tactical pace —" if tactical else "— Explore pace —")
+		"projectile_ended":
+			# The arrow's terminal outcome (v0.17.0, §2.3.4 — a distinct line per outcome). A HIT is already
+			# logged by the `attack` event (kind "arrow"), so only block/spent surface here. A "spent" shot
+			# that grazed a skipped ally names them (the referee stamps target_name) so the near-miss reads.
+			match str(data.get("outcome", "")):
+				"blocked":
+					add_line("The arrow shatters on the wall.")
+				"spent":
+					if data.has("target_name"):
+						add_line("The arrow sails past %s." % str(data.get("target_name", "")))
+					else:
+						add_line("The arrow flies wide.")
 
 
 ## Compose the combat-log line for one `attack` event, one distinct phrasing per outcome (§2.3.4):
@@ -281,6 +293,12 @@ func _log_attack(data: Dictionary) -> void:
 	if str(data.get("kind", "")) == "free":
 		add_line("%s gets a free attack on %s — %d damage." % [attacker_name, target_name, damage])
 		return
+	if str(data.get("kind", "")) == "arrow":
+		# A landed arrow shot (v0.17.0): a DISTINCT verb ("shoots") from a melee hit (§2.3.4), same running-HP readout.
+		add_line("%s shoots %s for %d (%d/%d)." % [
+			attacker_name, target_name, damage,
+			int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
+		return
 	# A landed bump or wind-up hit, with the target's running HP after the blow.
 	add_line("%s hits %s for %d (%d/%d)." % [
 		attacker_name, target_name, damage,
@@ -297,6 +315,8 @@ func _on_intent_rejected(action: String, reason: String) -> void:
 		# host's reason to the SENDER only (rejects reach only the sender) so a typo is never a silent
 		# no-op (§2.3.4). Distinct wording from a rejected chat/move so the three don't blur.
 		add_line("(command failed: %s)" % reason)
+	elif action == "shoot":
+		_log_shoot_reject(reason)
 
 
 # A refused move must never be silent when the cause is the world (§2.3.4): a wall/corner/occupied
@@ -327,6 +347,17 @@ func _log_glide_reject(reason: String) -> void:
 			pass
 		_:
 			add_line("Move rejected (%s)." % reason)
+
+
+## A refused shot (v0.17.0): the host's reasons are already player-facing sentences ("Out of range.",
+## "Nothing to draw with.", "Can't shoot your own tile."), so surface them verbatim — except "busy" / "dead",
+## suppressed like a move's (you're committed / gone; the bonk sound already says it, no log spam).
+func _log_shoot_reject(reason: String) -> void:
+	match reason:
+		"busy", "dead":
+			pass
+		_:
+			add_line(reason)
 
 
 # Neutralize user text before it reaches a bbcode_enabled label: only "[" can open a tag, so

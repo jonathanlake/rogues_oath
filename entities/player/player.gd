@@ -66,10 +66,10 @@ func _ready() -> void:
 	_name_label.text = display_name
 	set_hp_display(max_hp, max_hp)
 
-	# Seed the weapon rig from the scene-assigned weapon (longsword by default) on every peer, so a
-	# fresh spawn / F5 respawn shows the scene-default weapon; a non-default weapon arrives later via
-	# a swap event or the late-join sync (set_weapon). Wired here — the rig never reaches up.
-	_weapon_rig.set_weapon(equipped_weapon)
+	# Seed the weapon from the scene-assigned weapon (longsword by default) on every peer, so a fresh spawn /
+	# F5 respawn shows the scene-default weapon; a non-default weapon arrives later via a swap event or the
+	# late-join sync. set_weapon (not the raw rig call) so the local sampler's ranged flag is seeded too.
+	set_weapon(equipped_weapon)
 
 	# MoveInput samples only on the local player's node. Every peer instantiates the child (uniform
 	# node graph) but only ours is enabled.
@@ -86,6 +86,9 @@ func _ready() -> void:
 	if _move_input.enabled:
 		_move_input.path_target_set.connect(_on_path_target_set)
 		_move_input.path_target_cleared.connect(func(): _path_marker.visible = false)
+		# Ranged-shot click (v0.17.0): the sampler reports a shoot target; this node owns the wire (mirror of
+		# move_requested → glide_to). Local player only — only our sampler ever emits it.
+		_move_input.shoot_requested.connect(_on_shoot_requested)
 
 
 # ── Public methods ────────────────────────────────────────────────────────────
@@ -115,6 +118,15 @@ func set_class(new_class: PlayerClass) -> void:
 	_sprite.region_enabled = true
 	_sprite.region_rect = WorldGrid.atlas_region(new_class.atlas_coords)
 	_sprite.flip_h = was_flipped
+
+
+## Adopt a weapon (v0.17.0 override): the Entity base updates equipped_weapon + repaints the rig; on top of
+## that, PUSH the weapon's range down to the local input sampler so a left-click knows whether to shoot
+## (range_tiles > 0) or step. Driven on the swap/sync event and the spawn seed on every peer; the sampler is
+## enabled only on our own node, but pushing the value on every peer is harmless (a remote sampler never samples).
+func set_weapon(weapon: WeaponType) -> void:
+	super(weapon)
+	_move_input.weapon_range_tiles = weapon.range_tiles if weapon != null else 0
 
 
 ## Relay a reject to the local sampler WITHOUT any cue (1a, v0.10.2). Used for "occupied_hostile":
@@ -175,6 +187,13 @@ func _on_move_requested(dir: Vector2i, _fresh: bool) -> void:
 	# submit fires identically for fresh AND auto-walk continuation steps, so `fresh` is now unused.
 	# Vector2i survives RPC natively; the host re-derives everything from ITS origin + this dir.
 	NetEvents.submit_intent("glide_to", { "dir": dir })
+
+
+## The local sampler reported a ranged-shot target (v0.17.0): submit the "shoot" intent through the one pipe
+## (mirror of _on_move_requested). The host validates from ITS truth (range/busy/occupancy) and, on accept,
+## commits the draw + looses the arrow; a reject bonks our own player. Vector2i survives RPC natively.
+func _on_shoot_requested(target_tile: Vector2i) -> void:
+	NetEvents.submit_intent("shoot", { "target_tile": target_tile })
 
 
 ## A click set/replaced the walk target: plant the marker on the tile. top_level marker →

@@ -1,8 +1,11 @@
 [gd_resource type="Resource" script_class="PlayerClass" format=3]
 
 [ext_resource type="Script" path="res://resources/player_class.gd" id="1_class"]
+[ext_resource type="Resource" path="res://resources/weapons/longsword.tres" id="2_longsword"]
+[ext_resource type="Resource" path="res://resources/weapons/bow.tres" id="3_bow"]
 
 [resource]
 script = ExtResource("1_class")
 display_name = "ranger"
 atlas_coords = Vector2i(2, 0)
+weapon_roster = Array[Resource]([ExtResource("2_longsword"), ExtResource("3_bow")])

@@ -18,18 +18,21 @@ extends Node
 ## event and defers (no dev_command broadcast). Unknown command / bad field / non-number / out-of-range
 ## value → reject with a reason (sender-only, like a refused move).
 
-# The Players container + combat referee, handed in by Main via activate() on the HOST only. Players is
-# read to resolve the sender's node (name, class); combat owns the /god invulnerability toggle. Never
-# reached up from; null on clients (activate never runs there).
+# The Players container + combat/move referees, handed in by Main via activate() on the HOST only.
+# Players is read to resolve the sender's node (name, class); combat owns the /god invulnerability
+# toggle; move answers the busy check for the /class equip guard (v0.17.0). Never reached up from;
+# null on clients (activate never runs there).
 var _players: Node2D = null
 var _combat = null
+var _move_referee = null
 
 
 ## Host-only entry point, called by Main inside its is_server() branch after the referees are wired.
 ## Never called on clients (their node stays inert).
-func activate(players: Node2D, combat: Node) -> void:
+func activate(players: Node2D, combat: Node, move_referee: Node) -> void:
 	_players = players
 	_combat = combat
+	_move_referee = move_referee
 
 
 # ── Public methods ──────────────────────────────────────────────────────────────
@@ -176,6 +179,21 @@ func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dic
 		"class": player_class.display_name,
 		"by": by,
 	})
+	# Class loadout (v0.17.0): a class with its own weapon_roster equips its FIRST weapon (roster[0]) on the
+	# switch — a ranger becomes a ranger holding the longsword, no bare-hands gap. Equipping RIDES the existing
+	# swap_weapon event (host-side set_weapon first, then broadcast so every peer adopts it) — NEVER a
+	# client-side class→weapon inference. A class with no roster (empty) leaves the current weapon untouched.
+	# BUSY guard (GLM chunk-1 review): mid-commit the equip is SKIPPED (the class change itself is cosmetic +
+	# passives and stays) — re-arming a weapon inside a committed action window would be exactly the overlap
+	# the swap validator's busy reject exists to prevent (Commitment Rule). The player can Tab after.
+	if not player_class.weapon_roster.is_empty() and not _move_referee.is_entity_moving(sender_peer_id):
+		var starting := player_class.weapon_roster[0]
+		player_node.set_weapon(starting)
+		NetEvents.post_event("swap_weapon", {
+			"entity_id": sender_peer_id,
+			"weapon": starting.display_name,
+			"by": by,
+		}, sender_peer_id)
 	# Deferred: the class_changed broadcast IS the outcome — suppress the generic dev_command broadcast
 	# (ok:true so it isn't a reject; deferred:true so NetEvents skips the broadcast + seq).
 	return { "ok": true, "deferred": true }

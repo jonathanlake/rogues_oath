@@ -46,8 +46,23 @@ extends Resource
 ## 0 = the instant strike at commit — today's default for both weapons. > 0 = the preserved
 ## telegraph/whiff machinery (CombatReferee.wind_up), the dial a future heavy weapon (greatsword)
 ## turns up, where damage genuinely lands later and a long startup_frac becomes honest. Wired 0
-## this milestone; the machinery M3.5 preserved is a .tres number away.
+## this milestone; the machinery M3.5 preserved is a .tres number away. The bow's DRAW (v0.17.0) reuses
+## it as the delay from commit to LOOSE (windup_beats before the arrow leaves the string).
 @export var windup_beats: float = 0.0
+
+## RANGE in tiles (v0.17.0, the ranged discriminator). 0 = a MELEE weapon (the default — dagger/longsword);
+## > 0 = a RANGED weapon whose shot is validated host-side against the CLICKED tile by CHEBYSHEV distance
+## (bow 7). Read HOST-side by CombatReferee's shoot validator; never the wire.
+@export var range_tiles: int = 0
+
+## Arrow flight speed in TILES PER (tactical) BEAT (v0.17.0). The referee stamps a shot's per-tile flight
+## time ONCE at loose as beat_sec ÷ this, then never rescales it mid-flight (like a glide's baked seconds).
+## Bigger = a faster arrow. Read HOST-side when a ranged shot looses; ignored for a melee weapon (range 0).
+@export var projectile_tiles_per_beat: float = 4.0
+
+## Sprite cell (column, row) into assets/32rogues/items.png for the flying PROJECTILE (v0.17.0),
+## presentation-only — chunk 2's arrow rig windows this out of the sheet. Ignored for a melee weapon.
+@export var projectile_atlas_coords: Vector2i = Vector2i(0, 23)
 
 # ── Animation (presentation-only; gameplay NEVER reads these) ──────────────────
 
@@ -57,8 +72,9 @@ extends Resource
 @export var atlas_coords: Vector2i = Vector2i(3, 0)
 
 ## The swing shape the rig plays (DESIGN §2.3.7). "stab" = a straight thrust toward the target
-## (reach_px); "slash" = a rotational arc across the target (arc_degrees). v1 vocabulary.
-@export_enum("stab", "slash") var attack_style: String = "slash"
+## (reach_px); "slash" = a rotational arc across the target (arc_degrees); "draw" = the bow's
+## nock-and-release (v0.17.0, used by chunk 2's rig — harmless to gameplay, which never reads this). v1 vocabulary.
+@export_enum("stab", "slash", "draw") var attack_style: String = "slash"
 
 ## Phase fractions of the stamped attack window (DESIGN §2.3.7). Presentation-only slices — the rig
 ## NORMALIZES them at playback (divides each by their sum), so they need not sum to exactly 1.0 and
