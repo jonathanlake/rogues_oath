@@ -100,6 +100,21 @@ func on_boundary() -> void:
 	_think()
 
 
+## Damage is an AGGRO SOURCE (v0.17.2 review fix). Called host-side by the parent monster's forwarder when
+## this monster takes a hit: today aggro is a proximity scan at think-time only, so a 7-tile arrow would
+## never wake the brain — a shot must aggro REGARDLESS of aggro_range_tiles (no free sniping). Inert if not
+## activated (a client's brain, or the brainless dummy, never runs). Latches _aggroed and schedules a
+## prompt re-think on the normal back-off cadence; it does NOT interrupt a committed in-flight glide — the
+## Commitment Rule applies to monsters too, so the next think/boundary handles retargeting. DESIGN NOTE: the
+## chase still targets the NEAREST player (existing model) — a shot from a FARTHER player aggros this monster
+## but it chases whoever is closest, not necessarily the shooter.
+func notify_attacked() -> void:
+	if not _active:
+		return
+	_aggroed = true
+	_reschedule()
+
+
 # ── Private methods ───────────────────────────────────────────────────────────
 
 ## Decide and submit at most ONE step (or log the adjacent-attack seam). Gated on not-busy and on

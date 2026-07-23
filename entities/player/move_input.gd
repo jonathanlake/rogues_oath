@@ -273,7 +273,16 @@ func _unhandled_input(event: InputEvent) -> void:
 	# (it owns the wire); the host validates range/busy/nothing-to-draw and rejects to sender (§2.2.8 bonk —
 	# no latch here). This sits AFTER the focus-release above, so it respects the same chat gate a step click
 	# does. Melee (range 0) falls through to the existing step/walk logic.
+	# SHIFT+CLICK (v2.1): with SHIFT held the shot fires UNCONDITIONALLY at the clicked tile, skipping the
+	# hostile predicate — deliberate lane-denial GROUND fire behind an explicit modifier (loose at empty
+	# ground to deny a lane). A PLAIN click keeps the hostile-gated routing below (shoot only if the
+	# predicate is true, else fall through to step/walk). The host still adjudicates every shot regardless —
+	# this modifier only changes the CLIENT-side routing (§2.2.9 convenience), never the server's verdict.
 	if weapon_range_tiles > 0:
+		if mouse.shift_pressed:
+			# Explicit ground fire: no predicate check, no fall-through — the modifier IS the intent.
+			shoot_requested.emit(tile)
+			return
 		if shoot_target_check.is_valid():
 			if shoot_target_check.call(tile):
 				# A hostile is on the clicked tile (this peer's replicated truth): loose at it. The host

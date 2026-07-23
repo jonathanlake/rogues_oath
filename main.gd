@@ -462,6 +462,13 @@ func _ready() -> void:
 		# (goblin= knob); on by default for menu play (GameManager.spawn_monsters).
 		if GameManager.spawn_monsters:
 			_spawn_goblins()
+		# Debug goblinat= (v0.17.2): ADD one goblin at an EXACT tile, independent of goblin=/spawn_monsters,
+		# for combat tests needing precise range geometry (first use: the ranged-aggro verification — bow
+		# range 7 vs goblin aggro 5). Unset = the impossible sentinel; set = spawn through the SAME guarded
+		# per-tile step (walkable + tile-free, negative id, brain activated). Host-only (this branch is
+		# is_server()); session-start only (an F5 reset does not re-apply it, mirroring debug_starting_weapon).
+		if GameManager.debug_goblin_at != GameManager.DEBUG_GOBLIN_AT_UNSET:
+			_spawn_monster_at(GameManager.debug_goblin_at, GOBLIN_TYPE_PATH)
 		NetworkManager.peer_connected.connect(_on_peer_connected)
 		NetworkManager.peer_disconnected.connect(_on_peer_disconnected)
 	else:
@@ -1509,31 +1516,35 @@ func _spawn_goblins() -> void:
 	for tile in GOBLIN_SPAWN_TILES:
 		if cap >= 0 and spawned >= cap:
 			break
-		if not WorldGrid.is_walkable(tile) or not _referee.is_tile_free(tile):
-			push_warning("[Main] goblin spawn tile %s not walkable/free — skipping (map-coupled)" % tile)
-			continue
-		var entity_id := _next_monster_id
-		_next_monster_id -= 1
-		_monster_spawner.spawn({
-			"entity_id": entity_id,
-			"type_path": GOBLIN_TYPE_PATH,
-			"tile": tile,
-		})
-		spawned += 1
+		# A skipped (walled/occupied) tile does NOT consume a cap slot — the cap counts goblins
+		# actually placed, so _spawn_monster_at's return drives the tally.
+		if _spawn_monster_at(tile, GOBLIN_TYPE_PATH):
+			spawned += 1
 
-	# The training dummy — same guarded, negative-id spawn path as a goblin, but NOT counted against
+	# The training dummy — same guarded, negative-id spawn step as a goblin, but NOT counted against
 	# the goblin cap (it is a practice fixture, not a monster the goblin=N knob governs). Skipped with
 	# a warning if its tile is walled/occupied, exactly like a goblin.
-	if not WorldGrid.is_walkable(DUMMY_SPAWN_TILE) or not _referee.is_tile_free(DUMMY_SPAWN_TILE):
-		push_warning("[Main] training dummy tile %s not walkable/free — skipping (map-coupled)" % DUMMY_SPAWN_TILE)
-		return
-	var dummy_id := _next_monster_id
+	_spawn_monster_at(DUMMY_SPAWN_TILE, DUMMY_TYPE_PATH)
+
+
+## Host-only per-tile monster spawn step (v0.17.2 extract), shared by _spawn_goblins (each map goblin +
+## the dummy) and the goblinat= debug knob. Guards the tile (walkable + occupancy-free) — a walled/occupied
+## tile is SKIPPED with a warning and returns false so the caller decides whether that consumes a cap slot.
+## On success it takes the next monotonic negative entity id and replicates the spawn config (the type PATH,
+## never a Resource over the wire) so every peer loads the same authored .tres; the spawner's host-side
+## spawn_function activates the brain for a has_brain type. Returns whether a monster was actually placed.
+func _spawn_monster_at(tile: Vector2i, type_path: String) -> bool:
+	if not WorldGrid.is_walkable(tile) or not _referee.is_tile_free(tile):
+		push_warning("[Main] monster spawn tile %s not walkable/free — skipping (map-coupled)" % tile)
+		return false
+	var entity_id := _next_monster_id
 	_next_monster_id -= 1
 	_monster_spawner.spawn({
-		"entity_id": dummy_id,
-		"type_path": DUMMY_TYPE_PATH,
-		"tile": DUMMY_SPAWN_TILE,
+		"entity_id": entity_id,
+		"type_path": type_path,
+		"tile": tile,
 	})
+	return true
 
 
 ## Host-only. Builds the replicated spawn config. spawn_index is the server-assigned slot;

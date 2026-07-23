@@ -505,7 +505,12 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    shot); any other click falls through to the normal step/walk input, so a bow-wielder
    can still move with the mouse. The v0.17.0 "wall-clicks = fire down this lane"
    behavior is REMOVED (no ground fire; a deliberate lane-denial keybind can return later
-   if missed). Also v0.17.2, presentation-only: arrows fly the TRUE straight line to the
+   if missed). **v2.1 (v0.17.3, Jon): SHIFT+click ground-fires** — the lane-denial /
+   deliberate-ally-shot capability returns behind an explicit modifier; plain clicks stay
+   hostile-gated. Also v0.17.3: **damage is an aggro source** — a monster that takes
+   damage from any range latches aggro (no free sniping from outside its radius); the
+   chase still targets the NEAREST player (a farther sniper aggros the monster but it
+   closes on whoever is closest — revisit if builds make sniping a role). Also v0.17.2, presentation-only: arrows fly the TRUE straight line to the
    target (the Bresenham path stays authoritative for adjudication — it was never meant
    to be the visual), and art orientation became per-weapon designer data (WeaponType
    art_points_deg / projectile_art_points_deg) — the 32rogues sheet is NOT uniformly
@@ -649,6 +654,19 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.17.3 (2026-07-23, overnight)** — Jon's v0.17.2 playtest fixes, part 1 of the
+  overnight run. (1) SHIFT+CLICK ground fire (mouse-aim v2.1): shift+click fires the bow
+  at any in-range tile — lane denial returns behind an explicit modifier; plain clicks
+  stay hostile-gated (verified: plain click on empty ground → no shot; shift+click →
+  windup at exactly the clicked tile). (2) DAMAGE AGGROS (#6 amended): a monster hit
+  from ANY range latches aggro — new brain seam `notify_attacked()` called host-side
+  from apply_damage for a surviving Monster target; chase still targets the nearest
+  player. Verified with exact geometry (new `goblinat=` harness knob): goblin at
+  Chebyshev 6 (inside bow-7, outside aggro-5) stayed idle a full negative-control run,
+  then chased immediately after one arrow in the positive run. (3) MELEE ART REVERT
+  (Jon's veto): `art_points_deg` default −45→−90 restores the pre-v0.17.2 melee look
+  exactly; bow/arrow keep their verified orientations. Harness: `shiftclick=` +
+  `goblinat=` knobs added (keepers). Kick regression green.
 - **v0.17.2 (2026-07-23)** — BOW FEEL FIXES (Jon's playtest of v0.17.1): three reports, all
   fixed. (1) MOUSE-AIM v2: a click SHOOTS only when the clicked tile holds a hostile —
   empty-tile clicks now MOVE again (with a bow equipped, every click used to fire); the

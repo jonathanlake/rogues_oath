@@ -78,8 +78,16 @@ var _hold_wait_sec: float = -1.0
 var _click_tiles: Array[Vector2i] = []
 var _has_click: bool = false
 # Interval between successive scripted clicks (seconds) — long enough by default for a short
-# walk to visibly bend before the next target replaces it.
+# walk to visibly bend before the next target replaces it. SHARED by click= and shiftclick=.
 var _click_delay_sec: float = 1.5
+
+# Shift-click harness (shiftclick=, v0.17.2): an EXACT mirror of click= except the synthesized mouse
+# event carries shift_pressed=true, driving MoveInput's shift+click GROUND-FIRE branch (loose at the
+# clicked tile unconditionally, skipping the hostile predicate — deliberate lane denial). Same tile-list
+# format, same timing anchors, same _click_delay_sec spacing; the shift flag is threaded through the shared
+# scheduler/synthesis (_run_clicks / _click_event), not a copy of the click= functions.
+var _shiftclick_tiles: Array[Vector2i] = []
+var _has_shiftclick: bool = false
 
 # Shoot harness (shoot=, v0.17.0): fire one shoot intent per target tile through the REAL pipe
 # (submit_intent("shoot", {"target_tile": ...})) from EITHER role, testing the ranged/bow flow end-to-end —
@@ -224,6 +232,11 @@ func _ready() -> void:
 	# host-only starting-weapon knob (M3.7): weapon=dagger|longsword resolves through the roster
 	# and applies to the host own player at session start (GameManager.debug_starting_weapon).
 	var starting_weapon := ""
+	# goblinat=x,y (v0.17.2): host-only exact-tile goblin placement for combat range tests. Parsed to a
+	# SINGLE tile (via the shared _parse_tile_list, first entry) and applied to GameManager.debug_goblin_at
+	# in the host branch. has_ tracks presence so an unparsed/absent arg leaves the sentinel untouched.
+	var goblin_at_tile := Vector2i.ZERO
+	var has_goblin_at := false
 	for arg in args:
 		if arg.begins_with("screenshot="):
 			_schedule_screenshot(arg.trim_prefix("screenshot="))
@@ -268,6 +281,8 @@ func _ready() -> void:
 			_tap_sec = arg.trim_prefix("tapsec=").to_float()
 		elif arg.begins_with("holdwait="):
 			_hold_wait_sec = arg.trim_prefix("holdwait=").to_float()
+		elif arg.begins_with("shiftclick="):
+			_parse_shiftclick_list(arg.trim_prefix("shiftclick="))
 		elif arg.begins_with("click="):
 			_parse_click_list(arg.trim_prefix("click="))
 		elif arg.begins_with("clickdelay="):
@@ -297,6 +312,13 @@ func _ready() -> void:
 			GameManager.debug_range_overlay_start_visible = arg.trim_prefix("rangeoverlay=").to_int() != 0
 		elif arg.begins_with("hostile="):
 			all_hostile = arg.trim_prefix("hostile=").to_int() != 0
+		elif arg.begins_with("goblinat="):
+			# Single-tile read: reuse the shared list parser, take the first entry. A malformed value
+			# leaves has_goblin_at false (the parser warns), so the knob stays inert on a typo.
+			var goblin_at_tiles := _parse_tile_list(arg.trim_prefix("goblinat="), "goblinat=")
+			if not goblin_at_tiles.is_empty():
+				goblin_at_tile = goblin_at_tiles[0]
+				has_goblin_at = true
 		elif arg.begins_with("goblin="):
 			goblin_count = arg.trim_prefix("goblin=").to_int()
 		elif arg.begins_with("weapon="):
@@ -348,6 +370,11 @@ func _ready() -> void:
 		# on the client and without the arg. The swap=/swapwait= knobs fire the swap intent mid-run.
 		if not starting_weapon.is_empty():
 			GameManager.debug_starting_weapon = starting_weapon
+		# goblinat= is host-only: stash the exact goblin spawn tile so main.gd places ONE goblin there at
+		# session start (through the shared guarded spawn step), independent of goblin=. Set before
+		# host_game(); inert on the client and without the arg (the sentinel stays put).
+		if has_goblin_at:
+			GameManager.debug_goblin_at = goblin_at_tile
 		# goblin= is host-only: the autostart run is monster-free unless opted in, so movement
 		# harness runs (move=/hold=/tap=/click=) keep their clean occupancy. goblin=N caps the count
 		# (0 = none, N>0 = up to N); knob absent (-1) stays monster-free. Set before host_game() so Main
@@ -440,6 +467,10 @@ func _schedule_input_knobs(default_anchor_sec: float) -> void:
 		_schedule_taps(move_anchor)
 	if _has_click:
 		_schedule_clicks(move_anchor)
+	# shiftclick= shares click='s anchor + spacing; it only differs in the shift flag threaded to the
+	# synthesized event (drives MoveInput's ground-fire branch). Independent knob, so both can run together.
+	if _has_shiftclick:
+		_schedule_shiftclicks(move_anchor)
 	# shoot= fires at the move anchor, one target every movedelay= (mirrors move=), so a scripted run can
 	# loose a sequence of arrows through the real pipe after both peers have spawned.
 	if _has_shoot:
@@ -631,38 +662,70 @@ func _tap_events(token: String, pressed: bool) -> Array[InputEvent]:
 ## entries are skipped with a warning rather than aborting the run. Tiles are NOT validated
 ## against the grid here — an unreachable tile is a legitimate test value ("Can't reach that.").
 func _parse_click_list(spec: String) -> void:
+	_click_tiles = _parse_tile_list(spec, "click=")
+	_has_click = not _click_tiles.is_empty()
+
+
+## Parse shiftclick='s tile list (v0.17.2) — the SAME semicolon-separated "x,y;..." format as click=,
+## into _shiftclick_tiles. Shares the one parser (_parse_tile_list); the shift flag is applied at
+## SYNTHESIS time (_run_clicks / _click_event), so parsing is byte-identical to click=.
+func _parse_shiftclick_list(spec: String) -> void:
+	_shiftclick_tiles = _parse_tile_list(spec, "shiftclick=")
+	_has_shiftclick = not _shiftclick_tiles.is_empty()
+
+
+## Shared tile-list parser for click= / shiftclick= (v0.17.2): semicolon-separated "x,y" entries →
+## Array[Vector2i]. A malformed entry is skipped with a warning (named by `knob`) rather than aborting the
+## run — a typo shouldn't silently drop the test. Tiles are NOT grid-validated (an unreachable/ground tile
+## is a legitimate test value). One parser so the two knobs can never diverge on format.
+func _parse_tile_list(spec: String, knob: String) -> Array[Vector2i]:
+	var tiles: Array[Vector2i] = []
 	for entry in spec.split(";", false):
 		var parts := entry.strip_edges().split(",", false)
 		if parts.size() == 2 and parts[0].strip_edges().is_valid_int() and parts[1].strip_edges().is_valid_int():
-			_click_tiles.append(Vector2i(parts[0].strip_edges().to_int(), parts[1].strip_edges().to_int()))
-			_has_click = true
+			tiles.append(Vector2i(parts[0].strip_edges().to_int(), parts[1].strip_edges().to_int()))
 		elif not entry.strip_edges().is_empty():
-			push_warning("[Debug] click=: malformed entry '%s' (skipped)" % entry)
+			push_warning("[Debug] %s malformed entry '%s' (skipped)" % [knob, entry])
+	return tiles
 
 
-## Fire the click list: for each tile, inject a left-mouse press then (0.1s later) its release at
-## the tile's center, spaced _click_delay_sec apart. The events traverse the real input pipeline
-## into MoveInput._unhandled_input — the genuine click-to-move path, not a shortcut around it.
-## Position must be in WINDOW coordinates: parse_input_event treats the event as if it came from
-## the OS, so the engine applies the canvas_items stretch transform (2× here) window → viewport
-## INBOUND before delivery, and MoveInput then inverts get_canvas_transform() viewport → world. So the
-## synthesis must compose the FULL round-trip its inverse expects: world → viewport via the canvas
-## transform (the M3.5 follow Camera2D makes this NON-identity — without this term scripted clicks land
-## on the wrong tile), then viewport → window via get_screen_transform(). get_screen_transform() and
-## get_canvas_transform() are both read at fire time, so this stays correct under a maximized/letterboxed
-## window AND a moving camera rather than hardcoding any offset or scale.
+## Fire the click list (plain click-to-move): a thin wrapper over the shared _run_clicks with shift=false.
+## The events traverse the real input pipeline into MoveInput._unhandled_input — the genuine click-to-move
+## path, not a shortcut around it. The window-coordinate position math lives in _run_clicks (see there).
 func _schedule_clicks(delay_sec: float) -> void:
+	_run_clicks(_click_tiles, delay_sec, false)
+
+
+## shiftclick= (v0.17.2): the same scheduled click stream, synthesized with shift_pressed=true so it drives
+## MoveInput's shift+click ground-fire branch. Thin wrapper over the shared _run_clicks — no copy of the loop.
+func _schedule_shiftclicks(delay_sec: float) -> void:
+	_run_clicks(_shiftclick_tiles, delay_sec, true)
+
+
+## Shared click runner for click= / shiftclick= (v0.17.2): fire the tile list as press+release pairs at each
+## tile's center, spaced _click_delay_sec apart, with `shift` threaded into the synthesized event. `shift`
+## false = the plain click-to-move path; true = the ground-fire path. Position math (world → viewport →
+## window through the live screen + canvas transforms, read at fire time) is unchanged from the original
+## _schedule_clicks — see that history below. A coroutine (awaits inside); callers fire-and-forget it.
+func _run_clicks(tiles: Array[Vector2i], delay_sec: float, shift: bool) -> void:
+	var label := "shiftclick" if shift else "click"
 	await get_tree().create_timer(delay_sec).timeout
-	for i in _click_tiles.size():
+	for i in tiles.size():
 		if i > 0:
 			await get_tree().create_timer(_click_delay_sec).timeout
-		var tile := _click_tiles[i]
+		var tile := tiles[i]
+		# Position must be in WINDOW coordinates: parse_input_event treats the event as if it came from the
+		# OS, so the engine applies the canvas_items stretch transform window → viewport INBOUND before
+		# delivery, and MoveInput then inverts get_canvas_transform() viewport → world. So the synthesis must
+		# compose the FULL round-trip its inverse expects: world → viewport via the canvas transform (the M3.5
+		# follow Camera2D makes this NON-identity), then viewport → window via get_screen_transform(). Both
+		# read at fire time, so this stays correct under a maximized/letterboxed window AND a moving camera.
 		var window_pos: Vector2 = get_viewport().get_screen_transform() * get_viewport().get_canvas_transform() * WorldGrid.tile_to_world(tile)
-		print("[Debug] click: pressing at tile %s" % tile)
-		Input.parse_input_event(_click_event(window_pos, true))
+		print("[Debug] %s: pressing at tile %s" % [label, tile])
+		Input.parse_input_event(_click_event(window_pos, true, shift))
 		await get_tree().create_timer(0.1).timeout
-		Input.parse_input_event(_click_event(window_pos, false))
-		print("[Debug] click: released at tile %s" % tile)
+		Input.parse_input_event(_click_event(window_pos, false, shift))
+		print("[Debug] %s: released at tile %s" % [label, tile])
 
 
 ## Parse a semicolon-separated tile list (e.g. "10,4;3,7") into _shoot_tiles — exact mirror of
@@ -689,13 +752,16 @@ func _schedule_shoots(delay_sec: float) -> void:
 		NetEvents.submit_intent("shoot", { "target_tile": _shoot_tiles[i] })
 
 
-## Build one synthetic left-mouse event at a viewport position.
-func _click_event(screen_pos: Vector2, pressed: bool) -> InputEventMouseButton:
+## Build one synthetic left-mouse event at a viewport position. `shift` sets shift_pressed (v0.17.2):
+## false for a plain click= event, true for a shiftclick= event that drives MoveInput's ground-fire branch
+## (the InputEventMouseButton.shift_pressed the shift+click gate reads). Defaults false for any other caller.
+func _click_event(screen_pos: Vector2, pressed: bool, shift: bool = false) -> InputEventMouseButton:
 	var event := InputEventMouseButton.new()
 	event.button_index = MOUSE_BUTTON_LEFT
 	event.pressed = pressed
 	event.position = screen_pos
 	event.global_position = screen_pos
+	event.shift_pressed = shift
 	return event
 
 

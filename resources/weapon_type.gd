@@ -79,11 +79,14 @@ extends Resource
 @export var atlas_coords: Vector2i = Vector2i(3, 0)
 
 ## Screen-space direction (DEGREES, +y DOWN, 0 = right/+x, CW positive) the WEAPON art natively points as
-## authored in items.png (v0.17.1). The 32rogues melee convention is NE = -45 (the default, so dagger /
-## longsword / claw need no .tres edit); the bow art fires SW = 135 (bow.tres overrides). Presentation-only:
-## the rig rotates its sprite by -deg_to_rad(this) to map the art's native direction onto the rig's local +x.
-## One per-weapon field because the sheet is NOT uniformly oriented, so no single baseline constant can be right.
-@export var art_points_deg: float = -45.0
+## authored in items.png. The DEFAULT -90 restores the pre-v0.17.2 melee presentation (the original PI/2
+## baseline): the melee art NOMINALLY points NE on the sheet, but the -90 mapping is the look Jon confirmed
+## reads correctly IN MOTION (v0.17.2 veto of the -45 sheet-geometry value) — this field is PRESENTATION
+## TRUTH, not sheet geometry. So dagger / longsword / claw need no .tres edit; the bow art fires SW = 135
+## (bow.tres overrides explicitly). Presentation-only: the rig rotates its sprite by -deg_to_rad(this) to
+## map the art's native direction onto the rig's local +x. One per-weapon field because the sheet is NOT
+## uniformly oriented, so no single baseline constant can be right.
+@export var art_points_deg: float = -90.0
 
 ## The swing shape the rig plays (DESIGN §2.3.7). "stab" = a straight thrust toward the target
 ## (reach_px); "slash" = a rotational arc across the target (arc_degrees); "draw" = the bow's

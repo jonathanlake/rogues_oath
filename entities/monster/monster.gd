@@ -97,6 +97,17 @@ func activate_brain(referee: Node, combat: Node, pace: Node) -> void:
 	_brain.activate(referee, combat, entity_id, monster_type, pace)
 
 
+## Host-only forwarder (v0.17.2 review fix): the combat referee tells this monster it just took damage so
+## its brain treats the hit as an aggro source — a ranged arrow from beyond aggro_range_tiles still wakes it
+## (no free sniping). Null-guards the brain the same way activate_brain assumes it (the node graph is uniform
+## on every peer, so _brain is always present, but the guard mirrors the component-wiring contract); the
+## brain's own _active gate makes a client / brainless-dummy call inert anyway. Never interrupts a committed
+## action — the brain only reschedules a think (Commitment Rule applies to monsters too).
+func notify_attacked() -> void:
+	if _brain != null:
+		_brain.notify_attacked()
+
+
 ## Hostility test (DESIGN §2.2.6, plan decision 6), read HOST-side. A monster is hostile to any
 ## player and never to another monster; the debug-only GameManager.all_hostile flag ORs on top so
 ## the AoO/combat wiring can be demoed with the harness. Symmetric with Player.is_hostile_to.

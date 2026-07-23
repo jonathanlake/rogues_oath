@@ -210,6 +210,14 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 	if died:
 		_kill_entity(target_id, target_name)
 		return true
+	# Damage is an AGGRO SOURCE (v0.17.2 review fix): a SURVIVING Monster that just took a hit wakes its
+	# brain, so a ranged arrow from beyond aggro_range_tiles aggros it (no free sniping). Placed AFTER the
+	# lethal path above so a KILLING blow never notifies (dead monsters don't aggro), and after the godded
+	# early-return (a no-op hit on an invulnerable target aggros nothing). Host-only by construction —
+	# apply_damage only runs on the host. is_alive re-confirms the target survived (belt-and-suspenders with
+	# the died branch). A Player target is skipped (only monsters have a brain to wake).
+	if target is Monster and is_alive(target_id):
+		target.notify_attacked()
 	return false
 
 
