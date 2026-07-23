@@ -129,6 +129,16 @@ func set_weapon(weapon: WeaponType) -> void:
 	_move_input.weapon_range_tiles = weapon.range_tiles if weapon != null else 0
 
 
+## Inject the local sampler's shoot-target predicate (v0.17.1). Main wires this on the LOCAL player when it
+## (re)acquires the follow camera; the predicate closes over the entity containers and decides whether a
+## clicked tile holds a shootable hostile, so a ranged click only looses at a hostile (else it falls through
+## to a step). Component pattern: Main OWNS the predicate (it can see the containers), this node just forwards
+## it down to its MoveInput child — the sampler never reaches up. CLIENT-SIDE convenience only (§2.2.9); the
+## host still adjudicates every shot. Mirrors the set_weapon push-down: parent wires, component consumes.
+func set_shoot_target_check(cb: Callable) -> void:
+	_move_input.shoot_target_check = cb
+
+
 ## Relay a reject to the local sampler WITHOUT any cue (1a, v0.10.2). Used for "occupied_hostile":
 ## the sender was mid-commitment gliding into a hostile it can't bump yet (pipelined) — the bonk's
 ## thud/flash would misread as "input didn't register" (§2.2.8), so it is suppressed, but the reject

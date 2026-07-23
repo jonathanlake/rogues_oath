@@ -91,6 +91,14 @@ var enabled: bool = false
 ## pushes this down — the sampler never reaches up to read it.
 var weapon_range_tiles: int = 0
 
+## Predicate deciding whether a clicked tile holds a SHOOTABLE hostile (v0.17.1), injected down the parent
+## chain (Player.set_shoot_target_check → Main, which closes over the entity containers) — the component
+## never reaches up to read them itself. Gates the ranged click below: a ranged left-click only looses when
+## this returns true, else it FALLS THROUGH to ordinary stepping so a ranged weapon never forfeits movement.
+## CLIENT-SIDE CONVENIENCE only (§2.2.9 framing): it reads this peer's replicated node truth — the host still
+## adjudicates every shot from ITS occupancy. Unwired (empty) → degrade to always-shoot (see _unhandled_input).
+var shoot_target_check: Callable = Callable()
+
 # ── Private vars ──────────────────────────────────────────────────────────────
 
 # The four move actions, sampled together into an 8-way vector.
@@ -260,13 +268,27 @@ func _unhandled_input(event: InputEvent) -> void:
 	# Viewport coords → world via the canvas transform inverse (camera/stretch-safe), → tile.
 	var world_pos: Vector2 = get_viewport().get_canvas_transform().affine_inverse() * mouse.position
 	var tile := WorldGrid.world_to_tile(world_pos)
-	# Ranged weapon (v0.17.0): a left-click SHOOTS at the clicked tile instead of stepping. The parent
-	# submits "shoot" (it owns the wire); the host validates range/busy/nothing-to-draw and rejects to
-	# sender (§2.2.8 bonk — no latch here). This sits AFTER the focus-release above, so it respects the
-	# same chat gate a step click does. Melee (range 0) falls through to the existing step/walk logic.
+	# Ranged weapon (v0.17.0): a left-click SHOOTS at the clicked tile instead of stepping — but TARGET-GATED
+	# (v0.17.1): only at a tile holding a hostile, decided by shoot_target_check. The parent submits "shoot"
+	# (it owns the wire); the host validates range/busy/nothing-to-draw and rejects to sender (§2.2.8 bonk —
+	# no latch here). This sits AFTER the focus-release above, so it respects the same chat gate a step click
+	# does. Melee (range 0) falls through to the existing step/walk logic.
 	if weapon_range_tiles > 0:
-		shoot_requested.emit(tile)
-		return
+		if shoot_target_check.is_valid():
+			if shoot_target_check.call(tile):
+				# A hostile is on the clicked tile (this peer's replicated truth): loose at it. The host
+				# still adjudicates the shot and bonks a bad one — this gate is CONVENIENCE only (§2.2.9).
+				shoot_requested.emit(tile)
+				return
+			# No hostile there: DON'T shoot. Fall through (no return) to the adjacent-step/walk logic below,
+			# so a ground click still MOVES — a ranged weapon must not forfeit ordinary stepping (§2.2.9).
+		else:
+			# Predicate unwired (a missed parent wire): degrade to ALWAYS-SHOOT rather than silently
+			# disabling ranged combat — a wiring gap must never mute the bow (v0.17.1 fallback). One warning
+			# per click (this runs once per press, not per frame) so the gap is visible without spamming.
+			push_warning("[MoveInput] shoot-target predicate unwired — ranged click degrades to always-shoot")
+			shoot_requested.emit(tile)
+			return
 	# Adjacent-only click mode (§2.2.9 provisionally on via config, Jon/Jeff 2026-07-19): with
 	# click_pathing_enabled=false the mouse can only step to one of the 8 neighbors of _current_tile —
 	# no target, no A*, no marker, no "Can't reach that.". A click that IS a Chebyshev neighbor

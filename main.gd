@@ -985,7 +985,14 @@ func _handle_projectile_launched_event(event: Dictionary) -> void:
 		shooter_tile = path[0]
 	var proj := Projectile.new()
 	_fx.add_child(proj)
-	proj.launch(shooter_tile, path, tile_dur, atlas)
+	# Per-weapon projectile art baseline (v0.17.1): the 32rogues sheet is NOT uniformly oriented, so the arrow's
+	# native-art direction comes from the weapon's projectile_art_points_deg (authored, same .tres on every peer).
+	# -deg_to_rad maps that screen-space direction onto the flight line. Omit when weapon is null so launch()'s
+	# own arrow-NW default applies (the defensive weapon-missing path, matching the atlas fallback above).
+	if weapon != null:
+		proj.launch(shooter_tile, path, tile_dur, atlas, -deg_to_rad(weapon.projectile_art_points_deg))
+	else:
+		proj.launch(shooter_tile, path, tile_dur, atlas)
 	_projectiles[proj_id] = proj
 
 
@@ -1031,6 +1038,27 @@ func _update_camera() -> void:
 			# Snap on (re)acquire: the camera uses position_smoothing (main.tscn), so without this the view
 			# would ease in from its held position instead of snapping onto the freshly (re)acquired avatar.
 			_camera.reset_smoothing()
+			# Target-gated ranged click routing (v0.17.1): hand the freshly (re)acquired LOCAL player a
+			# predicate that decides whether a clicked tile holds a shootable hostile, so a ranged left-click
+			# only looses at a hostile and otherwise falls through to stepping. Wired HERE — the camera-acquire
+			# is this peer's "local player is bound" moment, and it runs after the player's _ready (so the
+			# sampler exists) and re-fires on every respawn/F5 (a NEW node whose sampler needs the predicate
+			# again). CLIENT-SIDE convenience only (§2.2.9): the closure reads THIS peer's replicated node truth
+			# (monster node presence ≈ living — they despawn on death; all_hostile ORs in OTHER players), never
+			# occupancy — the host still adjudicates every shot from ITS truth.
+			var local_player := _local_avatar as Player
+			if local_player != null:
+				var my_id := multiplayer.get_unique_id()
+				local_player.set_shoot_target_check(func(t: Vector2i) -> bool:
+					for m in _monsters.get_children():
+						if m is Monster and (m as Monster).tile == t:
+							return true
+					if GameManager.all_hostile:
+						for p in _players.get_children():
+							var pl := p as Player
+							if pl != null and pl.peer_id != my_id and pl.tile == t:
+								return true
+					return false)
 		return
 	# Ghost-cam: our avatar is absent AFTER having existed (i.e. we died). Follow a LIVING teammate,
 	# STICKY — re-pick only when the followed node is freed/invalid (is_instance_valid poll;

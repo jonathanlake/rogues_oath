@@ -64,12 +64,26 @@ extends Resource
 ## presentation-only — chunk 2's arrow rig windows this out of the sheet. Ignored for a melee weapon.
 @export var projectile_atlas_coords: Vector2i = Vector2i(0, 23)
 
+## Screen-space direction (DEGREES, +y DOWN, 0 = right/+x, CW positive) the PROJECTILE art natively points
+## as authored in items.png (v0.17.1). The 32rogues arrow (0,23) is drawn pointing NW = -135 (the default,
+## so no .tres needs to set it). Presentation-only: the projectile rotates by -deg_to_rad(this) to map the
+## art's native direction onto its flight line — one per-art field because the sheet is NOT uniformly
+## oriented (melee NE, arrow NW, bow SW), so no single baseline constant can be right. Ignored for melee.
+@export var projectile_art_points_deg: float = -135.0
+
 # ── Animation (presentation-only; gameplay NEVER reads these) ──────────────────
 
 ## Sprite cell (column, row) into assets/32rogues/items.png — 0-indexed, so items.txt row 1 letter
 ## a ("dagger") is (0, 0) and letter d ("long sword") is (3, 0). The rig's Sprite2D region is
 ## derived from this × WorldGrid.TILE_PX.
 @export var atlas_coords: Vector2i = Vector2i(3, 0)
+
+## Screen-space direction (DEGREES, +y DOWN, 0 = right/+x, CW positive) the WEAPON art natively points as
+## authored in items.png (v0.17.1). The 32rogues melee convention is NE = -45 (the default, so dagger /
+## longsword / claw need no .tres edit); the bow art fires SW = 135 (bow.tres overrides). Presentation-only:
+## the rig rotates its sprite by -deg_to_rad(this) to map the art's native direction onto the rig's local +x.
+## One per-weapon field because the sheet is NOT uniformly oriented, so no single baseline constant can be right.
+@export var art_points_deg: float = -45.0
 
 ## The swing shape the rig plays (DESIGN §2.3.7). "stab" = a straight thrust toward the target
 ## (reach_px); "slash" = a rotational arc across the target (arc_degrees); "draw" = the bow's

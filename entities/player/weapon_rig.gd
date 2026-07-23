@@ -7,10 +7,12 @@ extends Node2D
 ## Pivot-at-centre model (v2, replaces the side-offset nudge): the RIG sits at the avatar centre
 ## (position = ZERO) and its Sprite2D child sits at (orbit_radius_px, 0) — out along the rig's local
 ## +x. Rotating the rig ORBITS the weapon around the avatar, which is what makes a slash read as a
-## real sweeping arc rather than a tiny nudge. The sprite carries a baseline rotation (_SPRITE_
-## BASELINE_ROT_RAD) so the items.png art — drawn pointing UP — points radially OUTWARD along the
-## orbit. A slash sweeps the rig through arc_degrees across the target; a stab holds the rig on the
-## target and thrusts the sprite out along its radius.
+## real sweeping arc rather than a tiny nudge. The sprite carries a baseline rotation so the items.png art
+## points radially OUTWARD along the orbit — but the sheet is NOT uniformly oriented (melee art points NE,
+## the arrow NW, the bow SW), so that baseline is NOT one constant: it comes per-weapon from
+## WeaponType.art_points_deg / projectile_art_points_deg (v0.17.1), mapped onto the rig's local +x by the
+## _weapon_baseline_rad / _arrow_baseline_rad helpers below. A slash sweeps the rig through arc_degrees across
+## the target; a stab holds the rig on the target and thrusts the sprite out along its radius.
 ##
 ## VISIBILITY: the weapon is shown ONLY during a swing. set_weapon() keeps repainting the region but
 ## NEVER shows the sprite; play_swing() shows it on entry and hides it via a final tween_callback, so
@@ -30,11 +32,6 @@ extends Node2D
 
 # The items.png sheet (32px tiles), shared by every weapon region. uid preload per CLAUDE.md.
 const ITEMS_TEX: Texture2D = preload("uid://5r3hjjukcluj")  # assets/32rogues/items.png
-
-# Baseline Sprite2D rotation (RADIANS): the items.png art is drawn pointing UP (-y); at +PI/2 that up
-# vector maps to the rig's local +x, so the weapon points radially OUTWARD along the orbit. Tune by
-# eye if a sheet's art faces differently. Named so there is no magic number in the swing.
-const _SPRITE_BASELINE_ROT_RAD := PI * 0.5
 
 # A slash's small extra wind-back (RADIANS) during startup — the coil past the arc's near edge before
 # the sweep. Presentation feel; tune by eye.
@@ -123,7 +120,7 @@ func play_swing(dir: Vector2i, duration_sec: float) -> void:
 		_swing_tween.kill()
 	_sprite.visible = true
 	_sprite.position = Vector2(orbit, 0.0)
-	_sprite.rotation = _SPRITE_BASELINE_ROT_RAD
+	_sprite.rotation = _weapon_baseline_rad()
 	rotation = aim if is_stab else aim - arc * 0.5
 
 	_swing_tween = create_tween()
@@ -172,13 +169,13 @@ func play_draw(dir: Vector2i, windup_sec: float, weapon: WeaponType = null) -> v
 	_sprite.visible = true
 	_sprite.region_rect = WorldGrid.atlas_region(_weapon.atlas_coords)
 	_sprite.position = Vector2(orbit, 0.0)
-	_sprite.rotation = _SPRITE_BASELINE_ROT_RAD
+	_sprite.rotation = _weapon_baseline_rad()
 	# Nocked arrow: a touch ahead of the bow at draw start; it pulls BACK over the draw.
 	_ensure_arrow_sprite()
 	_arrow_sprite.visible = true
 	_arrow_sprite.region_rect = WorldGrid.atlas_region(_weapon.projectile_atlas_coords)
 	_arrow_sprite.position = Vector2(orbit + _DRAW_ARROW_FORWARD_PX, 0.0)
-	_arrow_sprite.rotation = _SPRITE_BASELINE_ROT_RAD
+	_arrow_sprite.rotation = _arrow_baseline_rad()
 	# The rig starts pointing 90° off the aim (SKYWARD for a level shot) and rotates down to the aim over the
 	# whole draw, while the arrow pulls back — the readable "nock, draw, hold on target" telegraph.
 	rotation = aim - PI * 0.5
@@ -210,13 +207,13 @@ func play_loose(dir: Vector2i, weapon: WeaponType = null) -> void:
 	if _weapon != null:
 		_sprite.region_rect = WorldGrid.atlas_region(_weapon.atlas_coords)
 	_sprite.position = Vector2(orbit, 0.0)
-	_sprite.rotation = _SPRITE_BASELINE_ROT_RAD
+	_sprite.rotation = _weapon_baseline_rad()
 	_ensure_arrow_sprite()
 	_arrow_sprite.visible = true
 	if _weapon != null:
 		_arrow_sprite.region_rect = WorldGrid.atlas_region(_weapon.projectile_atlas_coords)
 	_arrow_sprite.position = Vector2(orbit - _DRAW_ARROW_PULL_PX, 0.0)
-	_arrow_sprite.rotation = _SPRITE_BASELINE_ROT_RAD
+	_arrow_sprite.rotation = _arrow_baseline_rad()
 	_swing_tween = create_tween()
 	_swing_tween.set_parallel(true)
 	_swing_tween.tween_property(_arrow_sprite, "position:x", orbit + _LOOSE_SNAP_PX, _LOOSE_SNAP_SEC)
@@ -248,3 +245,21 @@ func _ensure_arrow_sprite() -> void:
 	_arrow_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_arrow_sprite.visible = false
 	add_child(_arrow_sprite)
+
+
+## The baseline rotation mapping the WEAPON art's native direction onto the rig's local +x (v0.17.1): the art
+## points art_points_deg in screen space (+y down, CW positive), so -deg_to_rad(that) turns it onto +x. The
+## sheet is NOT uniformly oriented, so this is per-weapon, not one constant. Weapon-null-safe: falls back to
+## the old melee NE baseline (+PI/4) so a no-weapon rig still points sanely.
+func _weapon_baseline_rad() -> float:
+	if _weapon == null:
+		return PI * 0.25
+	return -deg_to_rad(_weapon.art_points_deg)
+
+
+## Same mapping for the nocked-ARROW sprite (v0.17.1), from projectile_art_points_deg. Weapon-null-safe:
+## falls back to the old arrow NW baseline (3*PI/4) so a freshly built arrow sprite still points sanely.
+func _arrow_baseline_rad() -> float:
+	if _weapon == null:
+		return PI * 0.75
+	return -deg_to_rad(_weapon.projectile_art_points_deg)

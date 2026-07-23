@@ -499,6 +499,18 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    LoS-proper (arrows use per-tile wall clipping; diagonal corner-cutting accepted v1),
    gamepad aiming, monster ranged attackers, ranged backstab/facing (the normalized-delta
    note in combat_referee).
+   **MOUSE-AIM v2 (v0.17.2, Jon 2026-07-23) — supersedes the wall-click lane-fire above.**
+   A left-click SHOOTS only when the clicked tile holds a hostile (client-side routing
+   convenience against replicated monster nodes — the server still adjudicates every
+   shot); any other click falls through to the normal step/walk input, so a bow-wielder
+   can still move with the mouse. The v0.17.0 "wall-clicks = fire down this lane"
+   behavior is REMOVED (no ground fire; a deliberate lane-denial keybind can return later
+   if missed). Also v0.17.2, presentation-only: arrows fly the TRUE straight line to the
+   target (the Bresenham path stays authoritative for adjudication — it was never meant
+   to be the visual), and art orientation became per-weapon designer data (WeaponType
+   art_points_deg / projectile_art_points_deg) — the 32rogues sheet is NOT uniformly
+   oriented (melee tips point NE, the arrow NW, the bow fires SW), so no single baseline
+   constant can ever be right.
    **POINT-BLANK amended (v0.17.1, Jon — option A of four).** A ranged weapon has no melee
    swing, so keyboard-bumping an adjacent hostile is a weaponless KICK: a flat
    `GameConfig.kick_damage` (default 1, deliberately low — a desperation poke, not a main
@@ -637,6 +649,27 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.17.2 (2026-07-23)** — BOW FEEL FIXES (Jon's playtest of v0.17.1): three reports, all
+  fixed. (1) MOUSE-AIM v2: a click SHOOTS only when the clicked tile holds a hostile —
+  empty-tile clicks now MOVE again (with a bow equipped, every click used to fire); the
+  v0.17.0 wall-click lane-fire is REMOVED (#6 amended). Client-side routing convenience
+  (injected predicate over replicated monster nodes; unwired fallback warns + keeps old
+  behavior); the server still adjudicates every shot. Verified two-instance: click on the
+  dummy → shoot (windup "bow" + launch), click adjacent-empty → glide, click far-empty →
+  nothing. (2) ZIG-ZAG arrows: the flight visual now flies ONE straight line to the
+  terminal tile over the same total time (per-tile Bresenham tweens staircased at shallow
+  angles); the Bresenham path stays authoritative for adjudication; impact snaps to the
+  closest point ON the flight line (no lateral pop). (3) ROTATIONS: root cause — the
+  32rogues item sheet is NOT uniformly oriented (melee tips NE −45°, arrow NW −135°, bow
+  fires SW +135°) while the code assumed one up-pointing baseline; the global constants are
+  replaced by designer-editable per-weapon fields (WeaponType.art_points_deg /
+  projectile_art_points_deg, melee-convention defaults so only bow.tres overrides).
+  Verified by magnified screenshot: the flying arrow now points ALONG its flight line; the
+  draw pose reads as a real drawn bow (arc toward target, string toward archer, arrow
+  level). Melee (dagger/longsword) alignment is corrected by the same math (was 45°
+  off-radial since M3.7, unnoticed in motion) — mid-swing screenshot capture was
+  inconclusive (sprite camouflage), Jon eyeballs in motion and can veto via the .tres
+  fields, no code.
 - **v0.17.1 (2026-07-23)** — THE BOW, fix pass: v0.17.0 code-review findings (10 confirmed +
   2 below-cap) plus one DESIGN decision. NEW MECHANIC — the point-blank KICK (option A, Jon):
   a RANGED weapon (`range_tiles > 0`) has no melee swing, so keyboard-bumping an adjacent

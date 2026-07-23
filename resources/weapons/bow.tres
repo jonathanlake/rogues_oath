@@ -12,4 +12,5 @@ range_tiles = 7
 projectile_tiles_per_beat = 4.0
 projectile_atlas_coords = Vector2i(0, 23)
 atlas_coords = Vector2i(2, 9)
+art_points_deg = 135.0
 attack_style = "draw"
