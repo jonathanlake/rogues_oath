@@ -782,9 +782,10 @@ func _handle_attack_event(event: Dictionary) -> void:
 	# occupied window; the rig normalizes the phase fractions inside it.
 	if attacker is Entity and data.has("weapon") and str(data.get("weapon", "")) != "":
 		attacker.play_weapon_swing(dir, float(data.get("duration_sec", 0.0)))
-	# Local attacker's swing-busy mirror for a bump (decision 2) — players only (positive id), so
-	# commit_in_place is Player surface: deliberate narrow cast, not cruft.
-	if kind == "bump" and attacker_id == multiplayer.get_unique_id():
+	# Local attacker's swing-busy mirror for a bump OR kick (decision 2; v0.17.1 kick) — players only
+	# (positive id), so commit_in_place is Player surface: deliberate narrow cast, not cruft. A kick is a
+	# bump-shaped commit (a ranged weapon's point-blank strike), so it roots the local kicker identically.
+	if (kind == "bump" or kind == "kick") and attacker_id == multiplayer.get_unique_id():
 		var local_attacker := attacker as Player
 		if local_attacker != null:
 			local_attacker.commit_in_place(float(data.get("duration_sec", 0.0)))
@@ -812,13 +813,22 @@ func _handle_windup_event(event: Dictionary) -> void:
 	var weapon := GameManager.config.weapon_by_name(str(data.get("weapon", "")))
 	if weapon != null and weapon.attack_style == "draw":
 		# Bow draw (player, or a future monster archer): the rig raises + aims + nocks the arrow toward the
-		# target tile over the draw. The matching projectile_launched plays the release (play_loose).
-		entity.play_draw(_step_sign(target_tile - entity.tile), windup_sec)
+		# target tile over the draw. The matching projectile_launched plays the release (play_loose). The
+		# event-resolved weapon is passed down (v0.17.1 review #9) so a late-joiner still in the weapon-sync
+		# retry window paints the RIGHT art for the draw, not whatever the rig last cached.
+		entity.play_draw(_step_sign(target_tile - entity.tile), windup_sec, weapon)
 		return
 	# Monster claw coil-and-flash (unchanged): the coil pulls AWAY from the target (monster - target sign).
 	var monster := entity as Monster
 	if monster != null:
 		monster.play_windup(_step_sign(monster.tile - target_tile), windup_sec)
+		return
+	# Player windup fallback (v0.17.1 review #6): a committed PLAYER windup whose weapon is unresolvable or
+	# isn't a "draw" style would otherwise render NO telegraph (the two branches above are the only ones), so
+	# a committed action would be silent — a §2.3.4 violation. Play a default held white flash so every
+	# committed windup has SOME telegraph. Defensive: no shipped content triggers this today (the only player
+	# windup is the bow's draw), so a flash floor suffices; a bespoke A/V telegraph waits for a real weapon.
+	entity.play_windup_fallback(windup_sec)
 
 
 ## Play back a death (§2.3.4): the death sound on every peer (Main-level — the node itself vanishes
@@ -891,6 +901,11 @@ func _handle_swap_weapon_event(event: Dictionary) -> void:
 		return
 	var weapon := GameManager.config.weapon_by_name(str(data.get("weapon", "")))
 	if weapon == null:
+		# LOUD, not silent (v0.17.1 review #2): a host-broadcast weapon name the catalog can't resolve means
+		# this peer keeps the OLD weapon while the host + game_log say the swap succeeded — a silent desync.
+		# The startup GameConfig.validate_catalog_covers_rosters (host-side) should have caught the authoring
+		# gap already; this is the runtime backstop so a slipped-through case is visible, not swallowed.
+		push_warning("[Main] swap_weapon: '%s' not in weapon_catalog — this peer desynced from the host (kept its old weapon)." % str(data.get("weapon", "")))
 		return
 	player.set_weapon(weapon)
 	# Equipment-panel refresh (v0.12.0): if it's our own player the HUD re-reads the main-hand weapon name.
@@ -957,7 +972,9 @@ func _handle_projectile_launched_event(event: Dictionary) -> void:
 		var dir := Vector2i.ZERO
 		if not path.is_empty():
 			dir = _step_sign((path[0] as Vector2i) - shooter.tile)
-		shooter.play_loose(dir)
+		# Event-resolved weapon passed down (v0.17.1 review #9): a late-joiner whose rig cache is still stale
+		# in the weapon-sync retry window paints the RIGHT release art from the launch event, not the old weapon.
+		shooter.play_loose(dir, weapon)
 	# Spawn the flying-arrow visual (code-built Projectile, under the world-space FX layer). The shooter node
 	# is present on every peer that received this launch (no mid-flight late-join replay), so the fallback is
 	# purely defensive.
@@ -1407,6 +1424,12 @@ func _reset_round() -> void:
 		node.free()
 	for node in _monsters.get_children():
 		node.free()
+
+	# Ghost-arrow cleanup (v0.17.1 review #4): bump the combat referee's round generation and drop in-flight
+	# arrow state BEFORE the respawn, so a draw pending its loose (or an arrow mid-flight) from the old round
+	# can't fire into the fresh one — a same-peer respawn reuses the id and defeats the is_alive guard, so the
+	# generation stamp is what invalidates the stale timer. Host-only, alongside the mass frees above.
+	_combat.reset_round()
 
 	# Clear the local tactical border (v0.10.3): a reset frees every avatar without posting a `died` event,
 	# so nothing else would drop it on the resetting peer. On EVERY OTHER peer the respawn's seed

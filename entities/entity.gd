@@ -32,6 +32,12 @@ const _HURT_FLASH_COLOR := Color(1.0, 0.3, 0.3)
 # recovery cleanly replaces it (the documented flash-cue precedence).
 const _RECOVERY_TINT := Color(0.55, 0.55, 0.62)
 
+# The held tint for the DEFAULT player wind-up telegraph fallback (v0.17.1 review #6, play_windup_fallback):
+# a BRIGHT flash (modulate MULTIPLIES, so >1 brightens) held for the windup window then eased back — the
+# "winding up" tell for a committed player windup with no bespoke draw art. Deliberately distinct from the
+# recovery dim (this brightens) and the red hurt flash. Only ever the defensive fallback path, never the bow.
+const _WINDUP_FALLBACK_TINT := Color(1.6, 1.6, 1.6)
+
 # ── Signals ──────────────────────────────────────────────────────────────────
 
 ## Emitted the instant a glide begins (before the tween runs). Player wires it to block its own
@@ -218,6 +224,26 @@ func play_recovery(duration_sec: float) -> void:
 	_flash_tween.tween_property(self, "modulate", Color.WHITE, ease_sec)
 
 
+## Default player WIND-UP telegraph fallback (v0.17.1 review #6). Main plays this off a `windup` event when
+## the entity is a PLAYER whose weapon is unresolvable or isn't a "draw" style — the two rendered branches
+## (bow draw / monster coil) don't cover it, so without this a committed player windup would be SILENT
+## (§2.3.4 forbids a committed action with no telegraph). A held bright flash over `windup_sec`, then eased
+## back — distinct from the recovery dim (this brightens) and the hurt flash (red). Shares the _flash_tween
+## slot like the other modulate cues. DEFENSIVE: no shipped content triggers it (the only player windup is
+## the bow's draw); a flash floor suffices until a real non-draw player windup weapon earns a bespoke A/V.
+## A non-positive window is a no-op (matches play_recovery).
+func play_windup_fallback(windup_sec: float) -> void:
+	if windup_sec <= 0.0:
+		return
+	if _flash_tween != null and _flash_tween.is_valid():
+		_flash_tween.kill()
+	modulate = _WINDUP_FALLBACK_TINT
+	_flash_tween = create_tween()
+	var ease_sec := minf(0.12, windup_sec)
+	_flash_tween.tween_interval(windup_sec - ease_sec)
+	_flash_tween.tween_property(self, "modulate", Color.WHITE, ease_sec)
+
+
 ## Update the under-feet HP readout ("hp/max") from an `attack` event's hp_after. Presentation
 ## only — the authoritative HP lives in the host's CombatReferee; this node just renders what the
 ## event carries. max rides the event so no peer needs to query the referee.
@@ -262,8 +288,11 @@ func play_weapon_swing(dir: Vector2i, duration_sec: float) -> void:
 ## nocking the arrow) and plays a DRAW sound: the $Attack whoosh pitched DOWN so the creaky draw is audibly
 ## its own cue (Jon: "no string animation, but with a sound"). Every peer renders it from the one event — the
 ## telegraph is identical on the wire, no new sync. `dir` is the 8-way step toward the target tile.
-func play_draw(dir: Vector2i, windup_sec: float) -> void:
-	_weapon_rig.play_draw(dir, windup_sec)
+func play_draw(dir: Vector2i, windup_sec: float, weapon: WeaponType = null) -> void:
+	# Event-resolved weapon (v0.17.1 review #9): when Main passes the windup event's own weapon, the rig
+	# repaints from it so a late-joiner still in the weapon-sync retry window draws the RIGHT art, not a stale
+	# cache. Defaulted null keeps the rig's cached _weapon (any non-event caller is unaffected).
+	_weapon_rig.play_draw(dir, windup_sec, weapon)
 	_attack_audio.pitch_scale = 0.7
 	_attack_audio.play()
 
@@ -271,8 +300,10 @@ func play_draw(dir: Vector2i, windup_sec: float) -> void:
 ## Bow release (v0.17.0), driven by Main off the matching `projectile_launched`. Snaps the rig's release (bow
 ## + arrow spring forward, then hide) and plays the LOOSE sound — the $Attack whoosh at normal pitch (a
 ## distinct pitch from the draw above, per §2.3.4). The flying arrow itself is a separate Projectile node.
-func play_loose(dir: Vector2i) -> void:
-	_weapon_rig.play_loose(dir)
+func play_loose(dir: Vector2i, weapon: WeaponType = null) -> void:
+	# Event-resolved weapon (v0.17.1 review #9): same as play_draw — a late-joiner paints the RIGHT release
+	# art from the launch event rather than a stale rig cache. Defaulted null keeps the cached _weapon.
+	_weapon_rig.play_loose(dir, weapon)
 	_attack_audio.pitch_scale = 1.0
 	_attack_audio.play()
 

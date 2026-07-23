@@ -499,6 +499,21 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    LoS-proper (arrows use per-tile wall clipping; diagonal corner-cutting accepted v1),
    gamepad aiming, monster ranged attackers, ranged backstab/facing (the normalized-delta
    note in combat_referee).
+   **POINT-BLANK amended (v0.17.1, Jon — option A of four).** A ranged weapon has no melee
+   swing, so keyboard-bumping an adjacent hostile is a weaponless KICK: a flat
+   `GameConfig.kick_damage` (default 1, deliberately low — a desperation poke, not a main
+   attack), its own "kicks" log verb + no weapon graphic (a bare-handed-bump-shaped commit),
+   gated on `range_tiles > 0` so melee weapons keep their swing. Chosen over B (punished
+   point-blank shot), C (auto-swap to a melee alt — rejected: a silent uncommanded weapon
+   change) and D. **Option D is the deferred richer version**: the kick keeps its low damage
+   and gains a 1-tile KNOCKBACK — kick the enemy back to re-open shooting range, turning
+   "cornered with a bow" from a punishment into a tool. D needs a server-authoritative
+   defender-move system designed against occupancy + the Commitment Rule (does an external
+   shove interrupt a committed windup/glide? wall / map-edge / into-another-entity cases), so
+   it is its own future feature, not this pass. The kick's `_begin_bump` branch is where D's
+   knockback call slots in. STILL OPEN feel=: the kick reuses the bow's recovery window (so
+   it commits at shot-recovery speed, 1.5s vs a melee 0.5s) — a dedicated `kick_duration` may
+   be warranted; the 1-damage number.
 
 7. **Pipelined next-step vs stop-and-go.** Wire-test finding (2026-07-18): a client's travel
    is stop-and-go — between consecutive steps the client must wait a full submit→verdict
@@ -622,6 +637,26 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
 
 ### Changelog
 
+- **v0.17.1 (2026-07-23)** — THE BOW, fix pass: v0.17.0 code-review findings (10 confirmed +
+  2 below-cap) plus one DESIGN decision. NEW MECHANIC — the point-blank KICK (option A, Jon):
+  a RANGED weapon (`range_tiles > 0`) has no melee swing, so keyboard-bumping an adjacent
+  hostile is now a weaponless KICK — a flat `GameConfig.kick_damage` (default 1), its own
+  "kicks" log verb, NO weapon graphic — instead of the bow doing a 4-damage slash arc. Bow-
+  only (a dagger/longsword bump still swings for its own damage); knockback (option D — kick
+  the enemy back a tile to re-open range) is deferred to a future feature (see #6). Verified
+  two-instance: bow-bump → `kind:"kick"`, damage 1, no weapon field; dagger-bump regression →
+  `kind:"bump"`, damage 2, `weapon:"dagger"`. FIXES: shoot accept path now sets the shooter's
+  authoritative facing + fires the `before_attack` seam (parity with wind_up); F5-mid-draw
+  ghost arrows eliminated (round-generation guard — verified: mid-draw F5 → 0 `projectile_
+  launched`, baseline shoot still looses); catalog⊉rosters caught at startup (host-side
+  `validate_catalog_covers_rosters`) + a loud runtime warning on the swap-null branch;
+  `/class` equip guards a null roster[0] slot and surfaces a player-visible "weapon not
+  equipped — busy" line on a busy-skip; distinct "draws the bow…" log (was "winds up…"); a
+  default held-flash telegraph for any non-draw player windup; late-joiner rig paints the
+  event-resolved weapon (draw + loose); equal-deadline loose/commit tie ordered loose-first;
+  disconnected-shooter pace re-arm gated on `is_alive`; the 8 shoot methods moved under the
+  Private-methods header (script-order). Feel= Jon+Jeff: kick reuses the bow's recovery window
+  (1.5s vs a melee 0.5s) — a dedicated `kick_duration` may be wanted; the 1-damage number.
 - **v0.17.0 (2026-07-22)** — THE BOW: first ranged weapon, traveling-arrow model (open
   question #6 ANSWERED for ranged v1 — see that entry for the full spec). New: WorldGrid
   Bresenham `line_tiles` (doc-flagged NOT LoS-correct until the corner rule); WeaponType

@@ -189,8 +189,14 @@ func _on_event_received(event: Dictionary) -> void:
 			_log_attack(data)
 		"windup":
 			# The telegraph tell (§2.3.4): a distinct "winding up" line so the wind-up is legible in
-			# the log, not only on-screen.
-			add_line("%s winds up..." % str(data.get("name", "")))
+			# the log, not only on-screen. A DRAW-style windup (the bow) carries a `weapon` field (a
+			# monster's coil-windup posts none), so branch to a distinct "draws the <weapon>..." line
+			# (v0.17.1 review #7) — a bow draw must never read the same as a monster winding up.
+			var windup_weapon := str(data.get("weapon", ""))
+			if windup_weapon != "":
+				add_line("%s draws the %s..." % [str(data.get("name", "")), windup_weapon])
+			else:
+				add_line("%s winds up..." % str(data.get("name", "")))
 		"died":
 			# Death line (§2.3.4). The dying entity's OWN client gets a second-person line so a
 			# player knows it was them (their node is already gone — this is the spectate placeholder,
@@ -235,7 +241,13 @@ func _on_event_received(event: Dictionary) -> void:
 			# The /class referee outcome (v0.10.0): one line naming who became which class, on every peer, so
 			# a live class change is legible in the log — the mirror of swap_weapon (state adopted by main.gd's
 			# handler from this same event). Names/classes go through add_line's sink escape.
-			add_line("%s becomes a %s." % [str(data.get("by", "Someone")), str(data.get("class", "class"))])
+			# weapon_skipped (v0.17.1 review #5): the class switched but its loadout equip was SKIPPED because
+			# the player was mid-commit — append a distinct clause so the "success" line doesn't mislead (the
+			# equip is recoverable: Tab to equip). Present-only flag, so a normal switch reads exactly as before.
+			var class_line := "%s becomes a %s." % [str(data.get("by", "Someone")), str(data.get("class", "class"))]
+			if bool(data.get("weapon_skipped", false)):
+				class_line += " (weapon not equipped — busy; Tab to equip.)"
+			add_line(class_line)
 		"pace_changed":
 			# The pace-flip cue (Tactical Zones v1, §2.8.7). A TWO-SIGNAL cue — tempo-bar emphasis + this
 			# log line — and deliberately NO sound: pace flips are a two-signal cue by audio-grammar choice
@@ -296,6 +308,13 @@ func _log_attack(data: Dictionary) -> void:
 	if str(data.get("kind", "")) == "arrow":
 		# A landed arrow shot (v0.17.0): a DISTINCT verb ("shoots") from a melee hit (§2.3.4), same running-HP readout.
 		add_line("%s shoots %s for %d (%d/%d)." % [
+			attacker_name, target_name, damage,
+			int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
+		return
+	if str(data.get("kind", "")) == "kick":
+		# A point-blank KICK (v0.17.1): a ranged weapon's wielder bumped an adjacent hostile — no melee
+		# swing, so a DISTINCT verb ("kicks") from a shot or a slash (§2.3.4), same running-HP readout.
+		add_line("%s kicks %s for %d (%d/%d)." % [
 			attacker_name, target_name, damage,
 			int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
 		return

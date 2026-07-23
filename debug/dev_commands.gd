@@ -174,20 +174,33 @@ func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dic
 	# Apply host-side FIRST (authoritative), then broadcast — mirrors _validate_swap_weapon. set_class
 	# repaints the host's own sprite at validator time too; the call_local re-apply stays idempotent.
 	player_node.set_class(player_class)
-	NetEvents.post_event("class_changed", {
-		"entity_id": sender_peer_id,
-		"class": player_class.display_name,
-		"by": by,
-	})
 	# Class loadout (v0.17.0): a class with its own weapon_roster equips its FIRST weapon (roster[0]) on the
 	# switch — a ranger becomes a ranger holding the longsword, no bare-hands gap. Equipping RIDES the existing
 	# swap_weapon event (host-side set_weapon first, then broadcast so every peer adopts it) — NEVER a
 	# client-side class→weapon inference. A class with no roster (empty) leaves the current weapon untouched.
-	# BUSY guard (GLM chunk-1 review): mid-commit the equip is SKIPPED (the class change itself is cosmetic +
-	# passives and stays) — re-arming a weapon inside a committed action window would be exactly the overlap
-	# the swap validator's busy reject exists to prevent (Commitment Rule). The player can Tab after.
-	if not player_class.weapon_roster.is_empty() and not _move_referee.is_entity_moving(sender_peer_id):
-		var starting := player_class.weapon_roster[0]
+	# Resolve the equip's eligibility FIRST (v0.17.1), BEFORE posting class_changed, so a busy-skip can ride
+	# a flag ON that event (you cannot amend an event peers already received). Two skip reasons, handled apart:
+	var has_roster := not player_class.weapon_roster.is_empty()
+	var starting: WeaponType = player_class.weapon_roster[0] if has_roster else null
+	# #3: a NULL roster[0] slot (a misconfigured class .tres) — warn host-side and skip, never set_weapon(null).
+	# This is an authoring bug, not a runtime state, so it is a dev-facing push_warning, not a player line.
+	if has_roster and starting == null:
+		push_warning("[dev_commands] /class %s: weapon_roster[0] is null — fix the class .tres. Weapon equip skipped." % player_class.display_name)
+	# #5: BUSY skip (GLM chunk-1 review) — mid-commit the equip is SKIPPED (the class change itself is cosmetic
+	# + passives and stays); re-arming a weapon inside a committed window is exactly the overlap the swap
+	# validator's busy reject prevents (Commitment Rule). This is RECOVERABLE (Tab after), so surface it
+	# player-visibly via a weapon_skipped flag on class_changed — the "success" line must not silently mislead.
+	var busy: bool = _move_referee.is_entity_moving(sender_peer_id)
+	var weapon_skipped: bool = has_roster and starting != null and busy
+	var class_data := {
+		"entity_id": sender_peer_id,
+		"class": player_class.display_name,
+		"by": by,
+	}
+	if weapon_skipped:
+		class_data["weapon_skipped"] = true  # present-only, like other optional event fields
+	NetEvents.post_event("class_changed", class_data)
+	if has_roster and starting != null and not busy:
 		player_node.set_weapon(starting)
 		NetEvents.post_event("swap_weapon", {
 			"entity_id": sender_peer_id,

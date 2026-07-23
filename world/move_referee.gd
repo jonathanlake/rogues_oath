@@ -517,11 +517,23 @@ func _begin_bump(attacker_id: int, attacker, target_id: int, target, dir: Vector
 	# reading the ATTACKER's facing sees the post-swing direction; the DEFENDER's facing is untouched
 	# here (a bump never turns the victim), so backstab evaluates the victim's own last-committed facing.
 	_facing[attacker_id] = dir
+	# KICK vs SWING (v0.17.1, option A): a RANGED weapon (range_tiles > 0) has no melee swing, so a
+	# point-blank bump is a weaponless KICK — a flat kick_damage (config), kind "kick", NO weapon graphic
+	# (combat_referee suppresses the weapon stamp for a kick). A MELEE weapon keeps its swing damage_of +
+	# kind "bump". NOTE: range_tiles > 0 is today equivalent to "ranged" (only the bow has it) — it is the
+	# kick-eligibility predicate. If a future MELEE reach weapon ever wants range_tiles > 0, gate the kick
+	# on a dedicated weapon flag instead of raw range. Option D (a 1-tile knockback on the kick) slots in here.
+	# Resolved FIRST (v0.17.1 review #1) so `kind` is known before fire_before_attack — a kick's observation
+	# seam must see "kick", not "bump" (parity with apply_damage's ctx kind and the shoot path's "shoot").
+	var weapon: WeaponType = attacker.equipped_weapon if attacker is Entity else null
+	var is_kick := weapon != null and weapon.range_tiles > 0
+	var kind := "kick" if is_kick else "bump"
+	var damage: int = GameManager.config.kick_damage if is_kick else _combat.damage_of(attacker)
 	# before_attack observation seam (v0.11.0): fire the attacker's passives' read-only pre-commit hook
 	# at bump ENTRY, before any damage math. Host-only (this referee is inert on clients). Delegated to
 	# CombatReferee, which owns passive resolution + the ctx build; a no-passive attacker (or a monster) no-ops.
 	if _combat != null:
-		_combat.fire_before_attack(attacker_id, target_id, "bump")
+		_combat.fire_before_attack(attacker_id, target_id, kind)
 	# Anti-cheese, ordered FIRST (Tactical Zones v1, §2.8.7): a bump is the ONLY way a player attacks in
 	# M3, and _begin_bump is where that attack's own window (bump_duration_of, below) is stamped. Report
 	# the hostile action to the pace resolver BEFORE that stamp so the triggering swing is ITSELF a
@@ -534,10 +546,9 @@ func _begin_bump(attacker_id: int, attacker, target_id: int, target, dir: Vector
 	# wall-clock deadline — so the bump path arming here and re-arming in apply_damage cost nothing.
 	if _pace != null:
 		_pace.report_hostile_action(attacker_id)
-	var damage: int = _combat.damage_of(attacker)
 	var duration: float = _combat.bump_duration_of(attacker)
 	commit_in_place(attacker_id, duration)
-	_combat.apply_damage(attacker_id, target_id, damage, "bump", duration)
+	_combat.apply_damage(attacker_id, target_id, damage, kind, duration)
 	return { "ok": true, "deferred": true }
 
 

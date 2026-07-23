@@ -133,6 +133,14 @@ extends Resource
 ## never the wire. A playtest toggle — flip in the .tres, no code.
 @export var projectile_hits_allies: bool = true
 
+## Point-blank KICK damage (v0.17.1, DESIGN ranged, option A). Flat damage a RANGED weapon
+## (range_tiles > 0) deals when its wielder keyboard-bumps an adjacent hostile — a bow has no melee
+## swing, so a point-blank bump is a desperation kick, not a slash. A MELEE weapon (range_tiles == 0)
+## keeps its normal swing damage (weapon.damage) instead; this value is read ONLY on the ranged-bump
+## path. Deliberately low — the kick is a get-off-me poke, not a wielder's main-hand attack. Read
+## HOST-side by MoveReferee._begin_bump. Option D (a knockback on the kick) is a future, separate add.
+@export var kick_damage: int = 1
+
 
 # ── Weapon roster helpers ─────────────────────────────────────────────────────
 
@@ -159,6 +167,25 @@ func active_weapon_roster(player_class: PlayerClass) -> Array[WeaponType]:
 	if player_class != null and not player_class.weapon_roster.is_empty():
 		return player_class.weapon_roster
 	return weapon_roster
+
+## Misconfiguration guard (v0.17.1 review #2). Every weapon that any roster (global + per-class) can
+## equip MUST be name-resolvable through weapon_catalog — swap/class-equip/late-join sync all resolve a
+## weapon by display_name via weapon_by_name (which reads the catalog), so a roster weapon missing from
+## the catalog resolves to null on peers and desyncs SILENTLY while the host's log says success. This
+## walks every roster entry and push_warnings any whose display_name the catalog can't resolve, so a
+## mis-authored .tres is caught ONCE at session start (called host-side from CombatReferee.activate),
+## not mid-fight. Pure diagnostic — mutates nothing. display_name is the join key on BOTH sides
+## (weapon_by_name matches w.display_name), so this checks exactly what the runtime resolves.
+func validate_catalog_covers_rosters() -> void:
+	var rosters: Array = [weapon_roster]
+	for c in class_roster:
+		if c != null:
+			rosters.append(c.weapon_roster)
+	for roster in rosters:
+		for w in roster:
+			if w != null and weapon_by_name(w.display_name) == null:
+				push_warning("[GameConfig] weapon '%s' is in a roster but NOT in weapon_catalog — it will resolve to null on peers and desync a swap/equip. Add it to weapon_catalog." % w.display_name)
+
 
 ## The next weapon in `roster` after `current` — the swap TOGGLE (cycles; a 2-weapon roster just alternates).
 ## An unknown / null current (not in the roster) starts at the first entry. Returns `current` unchanged when

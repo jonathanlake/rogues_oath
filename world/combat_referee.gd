@@ -70,6 +70,13 @@ var _next_projectile_id: int = 1
 # per arrival timer, erased the instant the arrow ends (hit / blocked / spent). Empty on clients.
 var _projectiles: Dictionary = {}
 
+# Round generation (v0.17.1 review #4), host-only. Bumped by reset_round() on every F5 dev round-reset.
+# Captured into each pending _loose_arrow bind at accept and re-checked when the draw timer fires, so a
+# draw in flight when the round resets looses NOTHING into the fresh round — a same-peer respawn reuses
+# the peer id and thus passes the is_alive guard, but its generation no longer matches. Same idiom as
+# _next_monster_id's never-reset negative ids: identity that a stale timer can never match post-reset.
+var _round_gen: int = 0
+
 
 ## Host-only entry point, called by Main inside its is_server() branch AFTER MoveReferee.activate()
 ## and set_monsters() and the PaceReferee, and BEFORE any spawn — so the container enter hooks seed HP
@@ -87,6 +94,11 @@ func activate(players: Node2D, monsters: Node2D, move_referee: Node, pace: Node)
 	_monsters.child_entered_tree.connect(_on_entity_entered)
 	_monsters.child_exiting_tree.connect(_on_entity_exiting)
 	NetEvents.register_handler("shoot", _validate_shoot)
+	# Misconfiguration guard (v0.17.1 review #2), host-only: warn ONCE at session start if any roster weapon
+	# (global or per-class) is missing from weapon_catalog — such a weapon resolves to null on peers and
+	# desyncs a swap/equip SILENTLY at runtime. Runs here (not _ready) because activate is host-only and fires
+	# after GameManager.config is loaded, so the catalog/rosters are guaranteed present and authoritative.
+	GameManager.config.validate_catalog_covers_rosters()
 
 
 # ── Public methods ────────────────────────────────────────────────────────────
@@ -155,7 +167,12 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 	# purely for stamp ORDERING (no fast first swing); apply_damage / wind_up are the UNIFORM catch-alls
 	# that guarantee every player-dealt hostile action arms regardless of path. Re-arming on the bump path
 	# is idempotent-by-design — each hostile action refreshes the same wall-clock deadline.
-	if _pace != null and attacker_id > 0:
+	# is_alive gate (v0.17.1 review #10): a traveling arrow can land AFTER its shooter disconnected —
+	# baked primitives keep the hit valid — and re-arming a gone peer's forcing window would re-create
+	# _force_until[id] after cleanup already erased it (a permanent, harmless dict key). Gate on liveness
+	# so a dead/departed attacker arms nothing. attacker_id > 0 stays: report_hostile_action is the
+	# player-only forcing window; a monster (negative id) never arms one regardless.
+	if _pace != null and attacker_id > 0 and is_alive(attacker_id):
 		_pace.report_hostile_action(attacker_id)
 	# Passive modify_damage dispatch (v0.11.0). AFTER the god-check (a godded no-op returned above and
 	# runs NO passives), BEFORE the HP mutation. Run the ATTACKER's passives SEQUENTIALLY in array order
@@ -268,6 +285,95 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 	return windup_sec + recovery_sec
 
 
+## Host-side stat accessors, read by MoveReferee for a bump/AoO so combat numbers live in ONE place
+## (this referee). Damage is per-entity (player melee_damage / monster attack_damage); the bump's
+## recovery tail is the attacker's recovery beats. Duck-typed across the two entity kinds; an
+## unknown node reads harmless defaults. DELIBERATELY not collapsed to one Entity read: Player's
+## export keeps its tuned name melee_damage (pinned in player.tscn), so the two stats keep their
+## own names and this accessor stays the one translation point.
+func damage_of(node: Node) -> int:
+	# Weapon-first (v0.9.3): ANY Entity's equipped_weapon.damage wins for both kinds; the per-kind
+	# legacy field is the null-weapon fallback, then a hard 0. Explicit order: weapon → legacy → DEFAULT.
+	if node is Entity and node.equipped_weapon != null:
+		return node.equipped_weapon.damage
+	if node is Player:
+		return node.melee_damage
+	if node is Monster and node.monster_type != null:
+		return node.monster_type.attack_damage
+	return 0
+
+
+## The bump's busy tail (seconds): the attacker's recovery beats stamped at the live beat — instant
+## strike + N-beat recovery (DESIGN §2.8). Delegates to _recovery_duration_of so player and monster
+## bumps share the one beats→seconds conversion (a monster never bumps in M3, but the accessor stays
+## total for a future monster bumper).
+func bump_duration_of(node: Node) -> float:
+	return _recovery_duration_of(node)
+
+
+## Fire the ATTACKER's before_attack passives (v0.11.0 read-only observation seam). Host-only public
+## entry: MoveReferee._begin_bump calls it at a player bump's entry; wind_up calls it at wind-up entry.
+## Resolves the attacker's passive list and runs each hook with a read-only ctx; a no-passive attacker
+## (or a monster, or an unresolved node) no-ops. The contract (PassiveAbility.before_attack) forbids
+## this hook cancelling or mutating the attack — it observes/arms only, so nothing here touches state.
+func fire_before_attack(attacker_id: int, target_id: int, kind: String) -> void:
+	# No resolvable target (a wind-up whose tile has no occupant at entry passes target_id 0): skip the
+	# hook rather than hand every passive a null target to guard against — defense-in-depth for the
+	# read-only contract. A targetless swing has nothing for an observation hook to observe.
+	if target_id == 0:
+		return
+	var attacker := _node_of_id(attacker_id)
+	var passives := _passives_of(attacker)
+	if passives.is_empty():
+		return
+	var target := _node_of_id(target_id)
+	var ctx := {
+		"attacker": attacker,
+		"target": target,
+		"attacker_id": attacker_id,
+		"target_id": target_id,
+		"kind": kind,
+		"weapon": attacker.equipped_weapon if attacker is Entity else null,
+		"attacker_facing": _move_referee.facing_of(attacker_id),
+		"target_facing": _move_referee.facing_of(target_id),
+	}
+	for p in passives:
+		p.before_attack(ctx)
+
+
+## Positional BEHIND-ARC test (v0.11.0), a pure-math static so any passive (or future system) can reuse
+## it (Jeff's ask) — Backstab is the first caller. `behind` = the approach vector (sign-vector from the
+## attacker's tile toward the target's tile) points the SAME rough way the target faces: dot > 0 STRICTLY.
+## That is the classic wide backstab arc — the rear 3 octants of the defender's 8-way facing; dot == 0 is
+## a FLANK (not behind), and a ZERO target_facing (never-moved: faces nowhere) is never a backstab.
+## ADJACENCY ASSUMPTION: all combat is melee-adjacent today, so approach is a clean 8-way sign; the parked
+## ranged pass (Q6) revisits this with a normalized delta. Vector2i has no dot(), so it's spelled out.
+static func is_attack_from_behind(attacker_tile: Vector2i, target_tile: Vector2i, target_facing: Vector2i) -> bool:
+	if target_facing == Vector2i.ZERO:
+		return false
+	var approach := (target_tile - attacker_tile).sign()
+	return approach.x * target_facing.x + approach.y * target_facing.y > 0
+
+
+## Host-only F5 round-reset hook (v0.17.1 review #4), called by Main._reset_round BEFORE it frees the
+## avatars. Bumps the round generation and drops all in-flight arrow state so nothing from the old round
+## bleeds into the fresh one: clearing _projectiles neutralizes every in-flight _arrow_step chain (each
+## chained timer re-looks up its id in _projectiles and bails when absent — and _next_projectile_id is
+## monotonic, so a stale callback can never collide with a fresh arrow), while the bumped _round_gen
+## catches the OTHER case a cleared dict can't — a draw still pending its loose (its projectile record
+## does not exist yet), whose captured generation no longer matches. Idempotent; safe to call any time.
+## SCOPE (GLM v0.17.1): F5 (_reset_round) is the ONLY mass-respawn path today. Any FUTURE round-transition
+## that frees + respawns entities (game-over restart, floor change) MUST also call this, or a pending loose
+## from the prior round would pass the generation guard into the new one — the reset hook lives here so
+## every such path has one call to make.
+func reset_round() -> void:
+	_round_gen += 1
+	_projectiles.clear()
+
+
+# ── Private methods ───────────────────────────────────────────────────────────
+
+
 # ── Ranged shot (v0.17.0, the bow — traveling-arrow model) ─────────────────────
 
 ## The "shoot" intent validator (host-only; registered on the shared pipe in activate()). A player submits
@@ -307,6 +413,15 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# (no fast first draw) and stays tactical afterward. Armed BEFORE the stamps, mirroring wind_up/_begin_bump.
 	if _pace != null:
 		_pace.report_hostile_action(sender_peer_id)
+	# Server facing + before_attack at accept (v0.17.1 review #1), mirroring wind_up (231/235). The shooter
+	# turns to face its committed target tile so a backstab adjudicates from the TURNED facing — not the
+	# stale pre-shot direction the sprite is visibly leaving (main.gd's face_toward turns the art the same
+	# way) — and the read-only before_attack observation seam fires for the shooter's passives, parity with
+	# every other committed attack. fire_before_attack is contractually observe-only (it cannot cancel or
+	# mutate the shot). Facing set through MoveReferee (it owns _facing); a zero dir no-ops (target == shooter
+	# was rejected above). The occupant re-resolves at loose — this is best-effort observation, as in wind_up.
+	_move_referee.set_facing(sender_peer_id, (target_tile - shooter_tile).sign())
+	fire_before_attack(sender_peer_id, _move_referee.entity_at(target_tile), "shoot")
 	# Stamp-and-bake (§2.8): the FULL attack_beats window is the shooter's committed occupancy; the DRAW
 	# (windup_beats) looses the arrow partway through it. Both stamped ONCE now at the shooter's resolved pace.
 	var busy_sec := _recovery_duration_of(shooter)   # weapon.attack_beats × pace beat — the whole occupied window
@@ -317,6 +432,20 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# windupsec= override) would end the commit BEFORE the loose — a free-action window while the draw timer
 	# still pends (Commitment Rule violation). The commit always covers the draw.
 	busy_sec = maxf(busy_sec, windup_sec)
+	# LOOSE timer armed BEFORE commit_in_place (v0.17.1 review #8). Co-due SceneTreeTimers fire in CREATION
+	# order, and commit_in_place creates its OWN completion timer internally — so at the misconfiguration TIE
+	# (busy_sec == windup_sec: windup_beats >= attack_beats, or a windupsec= override) the loose must be the
+	# earlier-created timer, else the commit-completion promotes a pipelined move BEFORE the arrow launches.
+	# In normal play busy_sec > windup_sec (recovery tail), so the two land in different frames and order is
+	# moot — this only bites at the tie. The commit miss below is purely defensive: is_entity_moving was
+	# checked at entry and nothing yields between (single-threaded host), so the commit cannot actually fail
+	# here and the loose is never orphaned. Host SceneTreeTimer (survives despawn by construction, like
+	# _resolve_windup). Capture PRIMITIVES only (never node refs): the round generation (review #4), shooter
+	# id + tile, damage, weapon name, per-tile speed. round_gen makes an F5-mid-draw loose NOTHING into the
+	# fresh round — a same-peer respawn defeats is_alive, but the generation check catches it.
+	get_tree().create_timer(windup_sec).timeout.connect(_loose_arrow.bind(
+			_round_gen, sender_peer_id, shooter_tile, target_tile, weapon.damage,
+			weapon.display_name, weapon.projectile_tiles_per_beat))
 	# Commit the FULL window in place (from==to — the shooter is rooted while drawing AND recovering; no
 	# occupancy move). A miss means it went busy between the checks and now (host single-threaded; defensive).
 	if not _move_referee.commit_in_place(sender_peer_id, busy_sec):
@@ -331,21 +460,19 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 		"windup_sec": windup_sec,
 		"weapon": weapon.display_name,
 	}, sender_peer_id)
-	# LOOSE at the end of the draw. Host SceneTreeTimer (survives despawn by construction, like _resolve_windup);
-	# the callback self-guards on is_alive — a shooter killed mid-draw looses NOTHING (the death teardown
-	# already erased its commit). Capture PRIMITIVES only (never node refs): shooter id + tile, damage, weapon
-	# name, per-tile speed. The path is built at loose from the still-rooted shooter tile.
-	get_tree().create_timer(windup_sec).timeout.connect(_loose_arrow.bind(
-			sender_peer_id, shooter_tile, target_tile, weapon.damage,
-			weapon.display_name, weapon.projectile_tiles_per_beat))
 	return { "ok": true, "deferred": true }
 
 
 ## Loose the arrow at the end of the draw (host-only, from the commit timer). Builds the flight path NOW,
 ## broadcasts projectile_launched, and starts the per-tile arrival chain. Everything is captured PRIMITIVES
 ## (no node refs), so a shooter that despawns MID-FLIGHT can't crash the arrow (its damage/identity are baked).
-func _loose_arrow(shooter_id: int, shooter_tile: Vector2i, target_tile: Vector2i,
+func _loose_arrow(round_gen: int, shooter_id: int, shooter_tile: Vector2i, target_tile: Vector2i,
 		damage: int, weapon_name: String, tiles_per_beat: float) -> void:
+	# Round-generation guard FIRST (v0.17.1 review #4): a draw in flight when F5 reset the round must loose
+	# NOTHING into the fresh round. is_alive alone can't catch it — a same-peer respawn reuses the id and is
+	# alive again — so the captured generation (bumped by reset_round) is the identity that no longer matches.
+	if round_gen != _round_gen:
+		return
 	# Mid-draw erasure (Q9 / M3): a shooter that died or despawned during the draw looses nothing — the death
 	# teardown (clear_entity) already erased its commit record. This mirrors _resolve_windup's is-alive guard.
 	if not is_alive(shooter_id):
@@ -478,78 +605,6 @@ func _is_hostile_pair(shooter_id: int, occ_id: int) -> bool:
 	return (shooter_id > 0) != (occ_id > 0)
 
 
-## Host-side stat accessors, read by MoveReferee for a bump/AoO so combat numbers live in ONE place
-## (this referee). Damage is per-entity (player melee_damage / monster attack_damage); the bump's
-## recovery tail is the attacker's recovery beats. Duck-typed across the two entity kinds; an
-## unknown node reads harmless defaults. DELIBERATELY not collapsed to one Entity read: Player's
-## export keeps its tuned name melee_damage (pinned in player.tscn), so the two stats keep their
-## own names and this accessor stays the one translation point.
-func damage_of(node: Node) -> int:
-	# Weapon-first (v0.9.3): ANY Entity's equipped_weapon.damage wins for both kinds; the per-kind
-	# legacy field is the null-weapon fallback, then a hard 0. Explicit order: weapon → legacy → DEFAULT.
-	if node is Entity and node.equipped_weapon != null:
-		return node.equipped_weapon.damage
-	if node is Player:
-		return node.melee_damage
-	if node is Monster and node.monster_type != null:
-		return node.monster_type.attack_damage
-	return 0
-
-
-## The bump's busy tail (seconds): the attacker's recovery beats stamped at the live beat — instant
-## strike + N-beat recovery (DESIGN §2.8). Delegates to _recovery_duration_of so player and monster
-## bumps share the one beats→seconds conversion (a monster never bumps in M3, but the accessor stays
-## total for a future monster bumper).
-func bump_duration_of(node: Node) -> float:
-	return _recovery_duration_of(node)
-
-
-## Fire the ATTACKER's before_attack passives (v0.11.0 read-only observation seam). Host-only public
-## entry: MoveReferee._begin_bump calls it at a player bump's entry; wind_up calls it at wind-up entry.
-## Resolves the attacker's passive list and runs each hook with a read-only ctx; a no-passive attacker
-## (or a monster, or an unresolved node) no-ops. The contract (PassiveAbility.before_attack) forbids
-## this hook cancelling or mutating the attack — it observes/arms only, so nothing here touches state.
-func fire_before_attack(attacker_id: int, target_id: int, kind: String) -> void:
-	# No resolvable target (a wind-up whose tile has no occupant at entry passes target_id 0): skip the
-	# hook rather than hand every passive a null target to guard against — defense-in-depth for the
-	# read-only contract. A targetless swing has nothing for an observation hook to observe.
-	if target_id == 0:
-		return
-	var attacker := _node_of_id(attacker_id)
-	var passives := _passives_of(attacker)
-	if passives.is_empty():
-		return
-	var target := _node_of_id(target_id)
-	var ctx := {
-		"attacker": attacker,
-		"target": target,
-		"attacker_id": attacker_id,
-		"target_id": target_id,
-		"kind": kind,
-		"weapon": attacker.equipped_weapon if attacker is Entity else null,
-		"attacker_facing": _move_referee.facing_of(attacker_id),
-		"target_facing": _move_referee.facing_of(target_id),
-	}
-	for p in passives:
-		p.before_attack(ctx)
-
-
-## Positional BEHIND-ARC test (v0.11.0), a pure-math static so any passive (or future system) can reuse
-## it (Jeff's ask) — Backstab is the first caller. `behind` = the approach vector (sign-vector from the
-## attacker's tile toward the target's tile) points the SAME rough way the target faces: dot > 0 STRICTLY.
-## That is the classic wide backstab arc — the rear 3 octants of the defender's 8-way facing; dot == 0 is
-## a FLANK (not behind), and a ZERO target_facing (never-moved: faces nowhere) is never a backstab.
-## ADJACENCY ASSUMPTION: all combat is melee-adjacent today, so approach is a clean 8-way sign; the parked
-## ranged pass (Q6) revisits this with a normalized delta. Vector2i has no dot(), so it's spelled out.
-static func is_attack_from_behind(attacker_tile: Vector2i, target_tile: Vector2i, target_facing: Vector2i) -> bool:
-	if target_facing == Vector2i.ZERO:
-		return false
-	var approach := (target_tile - attacker_tile).sign()
-	return approach.x * target_facing.x + approach.y * target_facing.y > 0
-
-
-# ── Private methods ───────────────────────────────────────────────────────────
-
 ## Build the shared `attack` event dict for a LANDED or GODDED hit (v0.10.1 dedup) — the ONE construction
 ## both paths use, differing only in the damage / hp_after values passed and the godded flag. The weapon
 ## stamp (v0.9.3): ANY Entity attacker with an equipped weapon stamps its `weapon` id so every peer
@@ -580,7 +635,11 @@ func _build_attack_data(attacker: Node, attacker_id: int, target: Node, target_i
 		# duplicate(): the caller's ctx["tags"] stays live through the after_attack pass — a future
 		# after_attack passive appending there must never mutate the already-posted event's array.
 		data["tags"] = tags.duplicate()
-	if attacker is Entity and attacker.equipped_weapon != null:
+	# Weapon stamp drives the rig swing on playback (main.gd) — stamped for EVERY kind that swings a
+	# weapon (bump / windup / strike / free / arrow). EXCLUDE "kick" (v0.17.1): a ranged weapon's
+	# point-blank bump has no melee swing, so it must carry NO weapon field (the rig-swing tail is
+	# field-gated) — a kick renders like a bare-handed bump, never the bow slash arc.
+	if attacker is Entity and attacker.equipped_weapon != null and kind != "kick":
 		data["weapon"] = attacker.equipped_weapon.display_name
 	return data
 

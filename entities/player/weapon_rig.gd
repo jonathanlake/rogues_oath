@@ -154,7 +154,13 @@ func play_swing(dir: Vector2i, duration_sec: float) -> void:
 ## px across it. The matching play_loose (off projectile_launched) snaps the release and hides the rig; if the
 ## loose never comes (shooter died mid-draw) Main calls hide_draw off the `died` event. Null weapon / non-
 ## positive windup no-op. Reuses the swing-tween slot (a draw and a swing can't co-occur — the shooter is busy).
-func play_draw(dir: Vector2i, windup_sec: float) -> void:
+func play_draw(dir: Vector2i, windup_sec: float, weapon: WeaponType = null) -> void:
+	# Event-resolved weapon WINS (v0.17.1 review #9): when Main passes the windup event's own weapon, adopt it
+	# into the cache so a late-joiner whose set_weapon sync hasn't landed yet draws the RIGHT art (all reads
+	# below are from _weapon, repainted from atlas_coords at line ~167). Null keeps the cache — no non-event
+	# caller is affected. Correcting to the authoritative event value is exactly what the pending sync would do.
+	if weapon != null:
+		_weapon = weapon
 	if _weapon == null or windup_sec <= 0.0:
 		return
 	var unit := Vector2(dir.x, dir.y).normalized() if dir != Vector2i.ZERO else Vector2(1.0, 0.0)
@@ -185,7 +191,11 @@ func play_draw(dir: Vector2i, windup_sec: float) -> void:
 ## Release snap for a bow shot (v0.17.0), driven off the matching projectile_launched. Points at the aim,
 ## springs the bow + arrow FORWARD a few px, then hides the rig — the flying arrow is the separate Projectile
 ## node. Safe if no draw is currently showing (a late-joiner that missed the windup just flashes and hides).
-func play_loose(dir: Vector2i) -> void:
+func play_loose(dir: Vector2i, weapon: WeaponType = null) -> void:
+	# Event-resolved weapon WINS (v0.17.1 review #9), same as play_draw: adopt the launch event's weapon so a
+	# late-joiner paints the RIGHT release art. Null keeps the cache. The full state-init below then reads it.
+	if weapon != null:
+		_weapon = weapon
 	var unit := Vector2(dir.x, dir.y).normalized() if dir != Vector2i.ZERO else Vector2(1.0, 0.0)
 	var aim := unit.angle()
 	var orbit := _weapon.orbit_radius_px if _weapon != null else _STAB_START_RADIUS_PX
