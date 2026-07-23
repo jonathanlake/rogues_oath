@@ -16,8 +16,9 @@ don't bloat.
 linear ROADMAP milestone (ranged combat §2.9, items/inventory §2.10) gets a **living DESIGN
 §2.x spec section with an embedded `[x]/[ ]` status checklist** — one edit site for both the
 "how it works" and the "path to complete." That section is current-truth and edits freely; the
-DESIGN changelog stays the append-only release history (a spec edit doesn't spawn a changelog
-entry — the shipped behavior already gets its release line). ROADMAP *points* to the section
+design changelog (`docs/design-changelog.md`, split out of DESIGN.md 2026-07-23) stays the
+append-only release history (a spec edit doesn't spawn a changelog entry — the shipped behavior
+already gets its release line). ROADMAP *points* to the section
 rather than duplicating the checklist; milestones still own any gate that is a milestone (e.g.
 M5 owns items' drop-tables/pipeline bar — the §2.10 track references it). A capability earns a
 track only once it's genuinely multi-stage AND partially shipped; one-off work stays a flat
@@ -38,7 +39,7 @@ irrevocable the moment you make them. 2D top-down, Godot 4.x, GL Compatibility r
   existing alone doesn't trigger it — it's there for sharing/releases; Jon's call, 2026-07-21).
 - Each version lands with a git tag + a GitHub Release: patch notes written for Jeff (plain
   language, what changed and why) + the exported `.exe` attached — the Releases page is the
-  single "notes + download" link. Notes may summarize the DESIGN changelog entry, never
+  single "notes + download" link. Notes may summarize the design-changelog entry, never
   contradict it.
 
 ---
@@ -121,7 +122,7 @@ Consistency, not law:
   Local ground truth: the Godot 4.7-stable class reference lives at `../godot-ref/doc/classes/`
   and `../godot-ref/modules/*/doc_classes/` — grep it whenever unsure about an API.
 - Build versioning: `application/config/version` in project.godot is the single source of
-  truth (kept in step with the DESIGN changelog version); the menu shows it and startup
+  truth (kept in step with the design-changelog version); the menu shows it and startup
   prints it. Exports are `C:/Users/Public/Downloads/rogues_oath_v<version>.exe` — always
   pass the explicit absolute path to `--export-release` (the preset-path form can silently
   no-op) and verify LastWriteTime after. Bump the version in the same commit that adds the
@@ -151,5 +152,7 @@ Placeholder-to-possibly-final: use it for all prototyping.
   running a `/goal` night or anything cron-shaped.
 - Current status + the milestone chain live in **`ROADMAP.md`** — read it at session start;
   update its checkboxes in the milestone's final commit.
+- Release history (the append-only changelog) lives in **`docs/design-changelog.md`** — DESIGN.md
+  holds current design only. The human-facing doc-map (who reads what) is the table in **`README.md`**.
 - If **`HANDOFF.md`** exists, a milestone is mid-flight — read it right after ROADMAP.md.
   It records in-flight state only and is deleted in the milestone's final commit.

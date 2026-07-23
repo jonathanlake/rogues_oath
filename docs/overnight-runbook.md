@@ -28,7 +28,7 @@ below).
    explicitly, evidence over opinion.
 4. **Verify** — the `harness-verify` skill's gate. Deterministic assertions first;
    honesty rule applies.
-5. **Land** — commit (one per item, repo conventions), DESIGN changelog entry +
+5. **Land** — commit (one per item, repo conventions), `docs/design-changelog.md` entry +
    version bump in that same commit.
 6. Next item, until the night's scope or a stop condition is reached.
 
