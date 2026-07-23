@@ -14,13 +14,15 @@ don't bloat.
 
 **Capability tracks:** a feature that matures across many versions and doesn't map to one
 linear ROADMAP milestone (ranged combat §2.9, items/inventory §2.10) gets a **living DESIGN
-§2.x spec section with an embedded `[x]/[ ]` status checklist** — one edit site for both the
-"how it works" and the "path to complete." That section is current-truth and edits freely; the
-design changelog (`docs/design-changelog.md`, split out of DESIGN.md 2026-07-23) stays the
-append-only release history (a spec edit doesn't spawn a changelog entry — the shipped behavior
-already gets its release line). ROADMAP *points* to the section
-rather than duplicating the checklist; milestones still own any gate that is a milestone (e.g.
-M5 owns items' drop-tables/pipeline bar — the §2.10 track references it). A capability earns a
+§2.x spec section** describing how it works, what's shipped-so-far vs still-envisioned (in
+prose), and a "Complete when …" definition of done — one edit site for the design and its
+realized scope. **Checkboxes never appear in DESIGN — `[x]/[ ]` status tracking lives only in
+ROADMAP** (a checkbox always means "ROADMAP status," so the two docs never blur). That section
+is current-truth and edits freely; the design changelog (`docs/design-changelog.md`, split out
+of DESIGN.md 2026-07-23) stays the append-only release history (a spec edit doesn't spawn a
+changelog entry — the shipped behavior already gets its release line). ROADMAP *points* to the
+section rather than duplicating it; milestones still own any gate that is a milestone (e.g. M5
+owns items' drop-tables/pipeline bar — the §2.10 track references it). A capability earns a
 track only once it's genuinely multi-stage AND partially shipped; one-off work stays a flat
 ROADMAP parking-lot bullet.
 

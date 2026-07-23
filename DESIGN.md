@@ -411,20 +411,18 @@ hostile tile; SHIFT+click fires at any in-range tile (lane denial / deliberate F
 weapon has no melee swing, so a point-blank keyboard-bump is a weaponless KICK (low fixed damage;
 Q6 option A). Taking damage from any range AGGROS the target.
 
-v1 → complete:
-- [x] The bow — traveling shot, mouse + shift aim, point-blank kick, damage-aggro, straight-line
-  flight + per-weapon art orientation (v0.17.0–v0.17.3).
-- [ ] Monster ranged attackers (the model already allows a non-player shooter).
-- [ ] True line-of-sight (arrows use per-tile wall clipping today; diagonal corner-cutting
-  accepted for v1).
-- [ ] More ranged weapon types (crossbow / thrown — each a `.tres`).
-- [ ] Gamepad aiming.
-- [ ] Ranged backstab / facing (the normalized-delta note in combat_referee).
-- [ ] Kick knockback (Q6 option D — re-open shooting range; needs a server-authoritative
-  defender-move system vs the Commitment Rule).
+**Shipped so far:** the bow — traveling shot, mouse + shift aim, point-blank kick, damage-aggro,
+straight-line flight + per-weapon art orientation (v0.17.0–v0.17.3).
+
+**Still envisioned:** monster ranged attackers (the model already allows a non-player shooter);
+true line-of-sight (arrows use per-tile wall clipping today; diagonal corner-cutting accepted for
+v1); more ranged weapon types (crossbow / thrown — each a `.tres`); gamepad aiming; ranged backstab
+/ facing (the normalized-delta note in combat_referee); kick knockback (Q6 option D — re-open the
+shooting range; needs a server-authoritative defender-move system vs the Commitment Rule).
 
 **Complete when** ranged is a first-class build: multiple weapons, enemies that shoot back,
-LoS-correct, feel-locked.
+LoS-correct, feel-locked. *(Stage-by-stage progress is tracked in ROADMAP's parking lot, not here —
+this section is the design; checkboxes live only in ROADMAP.)*
 
 ### 2.10 Items & Inventory (v1 SHIPPED — v0.18.0)
 
@@ -442,18 +440,17 @@ or drink, not both"). Heals are their own referee pipe (`apply_heal`, clamped to
 damage, never healing) — the damage pipe stays damage-only. The health potion (heal 10 / 2-beat
 drink) is the v1 item; 1–5 keys use a slot; `/item` + `potion=` spawn for testing.
 
-v1 → complete:
-- [x] Item resources + catalog, ground items + walk-over pickup, 5-slot bag, use-as-commit +
-  heal pipe, hotbar + 1–5 keys, dev spawn (v0.18.0).
-- [ ] Drop tables + the designer `.tres`-only authoring gate = **M5** (that milestone owns the
-  bar; this track points at it, does not restate its Done=).
-- [ ] More item categories (buffs, keys, scrolls, throwables).
-- [ ] Equipment / wearables — coordinate with the build-system pass.
-- [ ] Open v1 questions: item stacking, drop/discard, inventory beyond the 5-slot hotbar,
-  numbers/cues (Feel=).
+**Shipped so far:** item resources + catalog, ground items + walk-over pickup, 5-slot bag,
+use-as-commit + heal pipe, hotbar + 1–5 keys, dev spawn (v0.18.0).
+
+**Still envisioned:** drop tables + the designer `.tres`-only authoring gate (= milestone **M5**,
+which owns that bar — this track points at it, doesn't restate its Done=); more item categories
+(buffs, keys, scrolls, throwables); equipment / wearables (coordinate with the build-system pass);
+the open v1 questions — item stacking, drop/discard, inventory beyond the 5-slot hotbar,
+numbers/cues (Feel=).
 
 **Complete when** items are a full designer-authored system: drop tables, multiple categories,
-the `.tres`-only gate (M5) met.
+the `.tres`-only gate (M5) met. *(Stage progress is tracked in ROADMAP, not here.)*
 
 ## Part 3 — Appendix: Why (short version)
 

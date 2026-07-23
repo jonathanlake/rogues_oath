@@ -25,14 +25,14 @@ not load.
 
 Not sure which doc to open? Start here.
 
-| Doc | What it's for | Who usually opens it |
-|-----|---------------|----------------------|
-| **[Releases](https://github.com/jonathanlake/rogues_oath/releases)** | What's new each version, in plain language, + the playable build | **Jeff** — for "what's the game like right now" |
-| this **README** | What the game is + this map of the docs | anyone new to the repo |
-| **[DESIGN.md](DESIGN.md)** | The design — vision, system spec, rationale, and **Part 4: open questions for Jeff** | design work; **Jeff → Part 1 (2-min overview) + Part 4** |
-| **[ROADMAP.md](ROADMAP.md)** | The milestone chain + current status (what's done / what's next) | Jon, for dev status |
-| **[CLAUDE.md](CLAUDE.md)** | How the project is built — structure, conventions, ground rules | contributors + the AI workflow |
-| **[docs/](docs/)** | Depth on tap: [dev commands](docs/dev-commands.md), the [overnight runbook](docs/overnight-runbook.md), the [changelog](docs/design-changelog.md), [research notes](docs/research) | as needed |
+| Doc | What it's for | What to expect |
+|-----|---------------|----------------|
+| **[Releases](https://github.com/jonathanlake/rogues_oath/releases)** | What's new each version + the playable build | Short patch notes in plain language, newest first; a Windows `.exe` attached |
+| this **README** | What the game is + this map of the docs | A short overview and this table |
+| **[DESIGN.md](DESIGN.md)** | The design: **Part 1** a 2-min overview, **Part 2** the full system spec, **Part 3** the why, **Part 4** open questions | Authoritative long-form prose; jump by section number (§2.1, §2.7…) |
+| **[ROADMAP.md](ROADMAP.md)** | The milestone chain — what's done and what's next | Checkbox milestones + a parking lot of unscheduled ideas |
+| **[CLAUDE.md](CLAUDE.md)** | How the project is built: structure, conventions, ground rules | Concise rules + a router to the docs below |
+| **[docs/](docs/)** | Depth on tap: [dev commands](docs/dev-commands.md), the [overnight runbook](docs/overnight-runbook.md), the [changelog](docs/design-changelog.md), [research notes](docs/research) | Focused single-topic files |
 
 In-game, type `/help` in the chat for the dev commands. Two-instance testing and the
 contributor ground rules are in `CLAUDE.md`.
