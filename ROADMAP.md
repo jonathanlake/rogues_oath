@@ -185,6 +185,8 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   `apply_heal` pipe + full §2.3.4 feedback, hotbar HUD binding + 1-5 keys.
   **Done =** two-instance: pick up a potion (both peers see it), see it in the hotbar,
   drink it after damage and the heal lands clamped — DEMONSTRATED (v0.18.0 event traces).
+  *Items are a CAPABILITY TRACK — spec + the path to "complete" live in **DESIGN §2.10**; M5
+  below owns the drop-tables + designer-pipeline gate.*
 
 - [ ] **M5 — Loot & Builds (remainder)** **[size M]**
   Drop tables; placeholder stats; the designer pipeline proven.
@@ -256,13 +258,12 @@ Not scheduled — pulled in when their moment comes:
   but a held key now bumps one beat later and a tap mid-rest bonks. If Jon+Jeff feel-test
   this as lag/unresponsiveness, the parked queued-attack-slot design is the venue.
 - AFK / rest zones (Q5)
-- LoS-proper + ranged remainder (Q6) — ranged combat v1 SHIPPED (the bow, v0.17.0–v0.17.3;
-  DESIGN Q6 ANSWERED, traveling-projectile model). STILL OPEN under Q6: true line-of-sight
-  (arrows use per-tile wall clipping today, diagonal corner-cutting accepted for v1), gamepad
-  aiming, monster ranged attackers, ranged backstab/facing, and — the older flag here — whether
-  AoO adjacency should respect walls/corners (M2 wires pure 8-adjacency per §2.2.6 — a hostile
-  diagonally around a wall corner currently still threatens; GLM review flag, 2026-07-17).
-  Revisit alongside the build-system pass.
+- **Ranged combat** → a CAPABILITY TRACK: spec + status checklist live in **DESIGN §2.9** (v1
+  shipped v0.17.0–v0.17.3; remaining stages — LoS-proper, monster archers, more weapons, gamepad
+  aim, ranged backstab — tracked there). One item stays parked here because it's not ranged-only:
+  whether AoO adjacency should respect walls/corners (M2 wires pure 8-adjacency per §2.2.6 — a
+  hostile diagonally around a wall corner still threatens; GLM review flag, 2026-07-17) — revisit
+  with the ranged/build-system pass.
 - Build system design pass (Rogue Fable-legibility bar, DESIGN §2.7)
 - Dungeon generation depth (beyond M4's basic rooms-and-corridors)
 - Shared-beat coordination mechanic (DESIGN §2.4.2) — only if a concrete need appears

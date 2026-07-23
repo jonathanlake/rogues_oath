@@ -393,6 +393,68 @@ becomes a positioning decision.
   interaction triggers + short exit timer, then PLAY it — radii and whether support
   bubbles are even necessary are tuning questions, not architecture.
 
+### 2.9 Ranged Combat (v1 SHIPPED — v0.17.0)
+
+**Capability track** (CLAUDE.md doc policy): a living spec + status checklist for a capability
+that matures across many versions. This section is current-truth and edits freely; the
+append-only changelog stays the per-release history. Ranged attacks as a whole — the bow is
+v1/prototype, not the end state.
+
+The pillar: ranged must carry the SAME hard-choice pressure as melee — no perpetual kiting
+(Part 1). The v1 answer (full decision rationale in Part 4 Q6): the **traveling-projectile**
+model. The shot is a committed draw (beats on the one timeline); the loosed arrow is an
+independent effect that flies its lane tile-by-tile and is adjudicated per tile-arrival against
+destination occupancy (§2.2 Q4). Dodging = stepping out of the lane during the draw (prediction,
+not reflexes). THE ONE HIT RULE: the arrow stops at the first stoppable occupant (living, not the
+shooter, and — with `projectile_hits_allies` off — not an ally). Aiming is a mouse-click on a
+hostile tile; SHIFT+click fires at any in-range tile (lane denial / deliberate FF). A ranged
+weapon has no melee swing, so a point-blank keyboard-bump is a weaponless KICK (low fixed damage;
+Q6 option A). Taking damage from any range AGGROS the target.
+
+v1 → complete:
+- [x] The bow — traveling shot, mouse + shift aim, point-blank kick, damage-aggro, straight-line
+  flight + per-weapon art orientation (v0.17.0–v0.17.3).
+- [ ] Monster ranged attackers (the model already allows a non-player shooter).
+- [ ] True line-of-sight (arrows use per-tile wall clipping today; diagonal corner-cutting
+  accepted for v1).
+- [ ] More ranged weapon types (crossbow / thrown — each a `.tres`).
+- [ ] Gamepad aiming.
+- [ ] Ranged backstab / facing (the normalized-delta note in combat_referee).
+- [ ] Kick knockback (Q6 option D — re-open shooting range; needs a server-authoritative
+  defender-move system vs the Commitment Rule).
+
+**Complete when** ranged is a first-class build: multiple weapons, enemies that shoot back,
+LoS-correct, feel-locked.
+
+### 2.10 Items & Inventory (v1 SHIPPED — v0.18.0)
+
+**Capability track.** Pick up, carry, and use (later equip) designer-authored items; the
+`.tres`-only content pipeline is the end goal (its gate is milestone **M5**).
+
+v1 model (host-authoritative, event-synced like everything else). Items are `ItemType` resources
+in `GameConfig.item_catalog`, name-resolved like weapons/classes. A world item is a replicated
+`GroundItem` node that claims NO occupancy — you glide onto its tile and pick it up (walk-over,
+adjudicated at the glide's settle). The bag is 5 slots (the HUD hotbar); it dies with the player
+(permadeath — fresh/late spawns start empty, so there is no late-join inventory sync in v1).
+Using an item is a COMMITTED action (§2.1): `use_item {slot}` roots you for `use_beats`, and a
+heal lands at the DRINK'S END — killed mid-drink consumes the potion and heals nothing ("attack
+or drink, not both"). Heals are their own referee pipe (`apply_heal`, clamped to max; god blocks
+damage, never healing) — the damage pipe stays damage-only. The health potion (heal 10 / 2-beat
+drink) is the v1 item; 1–5 keys use a slot; `/item` + `potion=` spawn for testing.
+
+v1 → complete:
+- [x] Item resources + catalog, ground items + walk-over pickup, 5-slot bag, use-as-commit +
+  heal pipe, hotbar + 1–5 keys, dev spawn (v0.18.0).
+- [ ] Drop tables + the designer `.tres`-only authoring gate = **M5** (that milestone owns the
+  bar; this track points at it, does not restate its Done=).
+- [ ] More item categories (buffs, keys, scrolls, throwables).
+- [ ] Equipment / wearables — coordinate with the build-system pass.
+- [ ] Open v1 questions: item stacking, drop/discard, inventory beyond the 5-slot hotbar,
+  numbers/cues (Feel=).
+
+**Complete when** items are a full designer-authored system: drop tables, multiple categories,
+the `.tres`-only gate (M5) met.
+
 ## Part 3 — Appendix: Why (short version)
 
 Why commitment instead of turns? What makes a roguelike turn tactical isn't the pause — it's
@@ -480,6 +542,8 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    the main threat to the "no perpetual kiting" pillar (Appendix: "Why lock movement too?")
    — a ranged build that glides, shoots, glides again needs the same hard-choice pressure
    melee has. Needs its own pass alongside the build system.
+   **→ Ranged is now a CAPABILITY TRACK spec'd in §2.9 (living spec + status checklist); this
+   entry is preserved as the decision-rationale archive.**
    **ANSWERED for ranged v1 (Jon+Jeff, 2026-07-22, Discord). Implemented v0.17.0 — the
    TRAVELING-PROJECTILE model** (chosen over hitscan: "fits the real-time aspect" — Jon).
    The shot is a commitment (the draw wind-up costs full beats on the one timeline, Jeff:

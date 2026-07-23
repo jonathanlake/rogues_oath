@@ -12,6 +12,17 @@ encyclopedia — when a topic needs depth (networking trace, dev workflow, gotch
 own file under `docs/` and this file gains one line saying where to look and when. Split,
 don't bloat.
 
+**Capability tracks:** a feature that matures across many versions and doesn't map to one
+linear ROADMAP milestone (ranged combat §2.9, items/inventory §2.10) gets a **living DESIGN
+§2.x spec section with an embedded `[x]/[ ]` status checklist** — one edit site for both the
+"how it works" and the "path to complete." That section is current-truth and edits freely; the
+DESIGN changelog stays the append-only release history (a spec edit doesn't spawn a changelog
+entry — the shipped behavior already gets its release line). ROADMAP *points* to the section
+rather than duplicating the checklist; milestones still own any gate that is a milestone (e.g.
+M5 owns items' drop-tables/pipeline bar — the §2.10 track references it). A capability earns a
+track only once it's genuinely multi-stage AND partially shipped; one-off work stays a flat
+ROADMAP parking-lot bullet.
+
 In one line: **Rogue's Oath** is a 2–6 player real-time co-op tile-grid roguelike — permadeath,
 short runs, no turns — whose hook is the **Commitment Rule** (DESIGN §2.1): decisions are
 irrevocable the moment you make them. 2D top-down, Godot 4.x, GL Compatibility renderer.
