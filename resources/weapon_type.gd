@@ -113,6 +113,10 @@ extends Resource
 ## "slash" (a big sweep across the target direction). Read only when attack_style == "slash".
 @export var arc_degrees: float = 160.0
 
+## Raised-telegraph angle in DEGREES the rig parks BEHIND the slash's start edge during a
+## windup_beats > 0 telegraph (presentation-only; ignored at windup 0 and for stab/draw styles).
+@export var windup_raise_degrees: float = 60.0
+
 ## Stab reach in PIXELS — how far the weapon thrusts toward the target during the active phase of a
 ## "stab" (and the forward travel of a slash, at half this). Read by the rig.
 @export var reach_px: float = 12.0

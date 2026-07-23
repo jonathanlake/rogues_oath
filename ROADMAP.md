@@ -300,7 +300,10 @@ Not scheduled — pulled in when their moment comes:
   *Telegraph readability: answered NO at both 0.25s attempts; the 0.5s retry was
   dodgeable-every-time (voice verdict 2026-07-19) — windup experiment CLOSED v0.7.0
   (instant strike + recovery, DESIGN §2.3.3); any future windup re-test should run WITH
-  AoO re-enabled (the config where dodging costs). Client "left."-spam + death-"left."
+  AoO re-enabled (the config where dodging costs). **RE-TEST SHIPPED v0.18.1** (Jon,
+  2026-07-23): claw at `windup_beats = 1.0` with the raised-claw telegraph art the v0.7.0
+  attempts lacked — Jeff feel verdict pending (pair with the AoO re-enable per the note
+  above; `/w claw windup_beats` live-tunes). Client "left."-spam + death-"left."
   bug: FIXED v0.6.3 (departures ride transport truth now)*
 - Dedicated audio pass: real SFX to replace the pitch-shifted placeholders, and a
   proper mix (v0.6.2 shipped the placeholder GRAMMAR: silent movement, swing-vs-impact

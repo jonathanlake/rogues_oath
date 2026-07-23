@@ -321,6 +321,16 @@ func play_draw(dir: Vector2i, windup_sec: float, weapon: WeaponType = null) -> v
 	_attack_audio.play()
 
 
+## Melee WINDUP pose (v0.18.x, the goblin's claw), driven by Main off the `windup` event for a melee
+## weapon on EVERY peer — forwards the aim + window to the rig, which parks the weapon raised behind the
+## swing's start edge and holds it over the body's away-coil until the swing resolves. NO SOUND: the
+## monster telegraph is deliberately silent (v0.6.2 grammar — the visual carries the tell), unlike the
+## bow draw above (which pitches the whoosh). This node wires the rig; the rig owns the pose choreography.
+## `dir` is the 8-way step TOWARD the target; the event-resolved weapon lets a late-joiner pose the right art.
+func play_windup_pose(dir: Vector2i, hold_sec: float, weapon: WeaponType = null) -> void:
+	_weapon_rig.play_windup_pose(dir, hold_sec, weapon)
+
+
 ## Bow release (v0.17.0), driven by Main off the matching `projectile_launched`. Snaps the rig's release (bow
 ## + arrow spring forward, then hide) and plays the LOOSE sound — the $Attack whoosh at normal pitch (a
 ## distinct pitch from the draw above, per §2.3.4). The flying arrow itself is a separate Projectile node.

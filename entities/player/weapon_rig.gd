@@ -14,9 +14,11 @@ extends Node2D
 ## _weapon_baseline_rad / _arrow_baseline_rad helpers below. A slash sweeps the rig through arc_degrees across
 ## the target; a stab holds the rig on the target and thrusts the sprite out along its radius.
 ##
-## VISIBILITY: the weapon is shown ONLY during a swing. set_weapon() keeps repainting the region but
+## VISIBILITY: the weapon is shown by exactly THREE showers — a swing (play_swing), a bow draw
+## (play_draw), and a melee windup pose (play_windup_pose). set_weapon() keeps repainting the region but
 ## NEVER shows the sprite; play_swing() shows it on entry and hides it via a final tween_callback, so
-## an idle avatar carries no resting weapon at its side.
+## an idle avatar carries no resting weapon at its side. The windup pose has no self-hide (it holds until
+## play_swing/hide_draw/despawn takes over — see its doc); play_swing is still the SINGLE owner of the hide.
 ##
 ## Component pattern (CLAUDE.md): the rig NEVER reaches up to the Player. The Player wires it —
 ## seeding the weapon at spawn (set_weapon), updating it on a swap event (set_weapon), and driving
@@ -40,6 +42,10 @@ const _SLASH_STARTUP_WINDBACK_RAD := 0.20
 # A stab's coiled-in radius (PIXELS) at the top of the thrust — the sprite pulls in toward centre
 # during startup, then drives out. Presentation feel; tune by eye.
 const _STAB_START_RADIUS_PX := 6.0
+
+# The windup-pose SNAP time (SECONDS): the raised telegraph plants almost instantly then HOLDS, the
+# same snap-and-hold grammar as the body coil (a snap reads as a plant — v0.6.1 verdict, monster.gd:155-157).
+const _POSE_SNAP_SEC := 0.05
 
 # Bow-draw feel (v0.17.0, the "draw" style). All PIXELS/feel, tune by eye. The arrow nocks a touch AHEAD
 # of the bow at draw start, PULLS back over the draw, then SPRINGS forward on release before it hides (the
@@ -143,6 +149,50 @@ func play_swing(dir: Vector2i, duration_sec: float) -> void:
 	# Presentation over: hide the sprite. play_swing is the SINGLE owner of "weapon visible" — every
 	# swing shows on entry and hides here, so an idle avatar shows no weapon between strikes.
 	_swing_tween.chain().tween_callback(func() -> void: _sprite.visible = false)
+
+
+## Pose the weapon RAISED during a melee windup telegraph (v0.18.x, the goblin's claw) toward `dir` —
+## Main drives this off the `windup` event on EVERY peer, so the raised tell reads identically on the wire
+## (no new sync). The weapon snaps to a raised pose BEHIND the swing's start edge and HOLDS there over the
+## body's away-coil, then the normal play_swing (off the attack/whiff event) takes over at resolution —
+## a readable "winding up, about to strike" telegraph. Modeled on play_draw (the bow's telegraph).
+## NO EXPIRY: unlike a swing, the pose has no self-timeout — it holds indefinitely until an existing owner
+## takes it over (play_swing on the attack/whiff event, hide_draw on death, or the node's despawn). hold_sec
+## ONLY gates the no-op guard (a zero window is nothing to pose for); the SNAP time is the fixed const above.
+## Event-resolved weapon WINS (v0.17.1 review #9 pattern): when Main passes the event's weapon, adopt it so
+## a late-joiner whose set_weapon sync hasn't landed poses the RIGHT art (all reads below are from _weapon).
+## Null weapon / non-positive window no-op. Reuses the swing-tween slot (a pose and a swing can't co-occur —
+## the attacker is busy for the whole windup). Slash: the club parks `windup_raise_degrees` BEHIND the
+## swing's start edge (aim − arc/2), the same swing-space convention as _SLASH_STARTUP_WINDBACK_RAD.
+func play_windup_pose(dir: Vector2i, hold_sec: float, weapon: WeaponType = null) -> void:
+	if weapon != null:
+		_weapon = weapon                      # event-resolved weapon WINS (v0.17.1 review #9 pattern)
+	if _weapon == null or hold_sec <= 0.0:
+		return
+	var unit := Vector2(dir.x, dir.y).normalized() if dir != Vector2i.ZERO else Vector2(1.0, 0.0)
+	var aim := unit.angle()
+	var orbit := _weapon.orbit_radius_px
+	if _swing_tween != null and _swing_tween.is_valid():
+		_swing_tween.kill()
+	# Show at the weapon region, out on the orbit radius, at its baseline rotation (mirror play_draw —
+	# repaint the region so an event-resolved weapon overrides a stale cache).
+	_sprite.visible = true
+	_sprite.region_rect = WorldGrid.atlas_region(_weapon.atlas_coords)
+	_sprite.position = Vector2(orbit, 0.0)
+	_sprite.rotation = _weapon_baseline_rad()
+	_swing_tween = create_tween()
+	if _weapon.attack_style == "stab":
+		# Stab: hold the rig ON the target and coil the sprite IN to its short start radius — the readable
+		# "cocked to thrust" pose, mirroring play_swing's stab startup.
+		rotation = aim
+		_swing_tween.tween_property(_sprite, "position:x", _STAB_START_RADIUS_PX, _POSE_SNAP_SEC)
+	else:
+		# Slash: park the rig RAISED behind the swing's start edge — aim − arc/2 (the swing's near edge)
+		# minus windup_raise_degrees more. Snap from a touch further raised down INTO that parked angle so
+		# the plant reads, then hold there until play_swing sweeps through.
+		var raised := aim - deg_to_rad(_weapon.arc_degrees) * 0.5 - deg_to_rad(_weapon.windup_raise_degrees)
+		rotation = raised + deg_to_rad(_weapon.windup_raise_degrees)
+		_swing_tween.tween_property(self, "rotation", raised, _POSE_SNAP_SEC)
 
 
 ## Play the bow-DRAW telegraph toward `dir` over `windup_sec` (v0.17.0, the "draw" style). Driven by Main off

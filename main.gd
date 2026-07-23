@@ -895,8 +895,9 @@ func _handle_attack_event(event: Dictionary) -> void:
 		if not godded and target_id == multiplayer.get_unique_id():
 			_flash_hurt_vignette()
 	# Recovery tell (§2.3.4; DESIGN §2.8): the attacker is SPENT for the recovery window the event
-	# carries in duration_sec — a bump (player) and an instant strike (goblin windup_beats==0) both
-	# stamp it; an AoO free attack and a telegraphed-windup landed hit carry 0 (play_recovery no-ops).
+	# carries in duration_sec — a bump (player), an instant strike (goblin windup_beats==0), AND a
+	# telegraphed-windup landed hit all stamp it now; an AoO free attack remains the only 0-duration
+	# case (play_recovery no-ops on it).
 	# Played on the attacker node on EVERY peer (whiff or landed), so the spent window matches the
 	# host's busy record on the wire — no new sync, same event the whole party already receives.
 	if attacker != null:
@@ -947,6 +948,15 @@ func _handle_windup_event(event: Dictionary) -> void:
 		# retry window paints the RIGHT art for the draw, not whatever the rig last cached.
 		entity.play_draw(_step_sign(target_tile - entity.tile), windup_sec, weapon)
 		return
+	# Melee windup POSE (v0.18.x, the goblin's claw): a non-draw weapon parks the weapon RAISED behind the
+	# swing's start edge — aimed TOWARD the target tile, deliberately opposite the coil's AWAY-direction below,
+	# so the raised weapon and the away-coiled body read as one "winding up" telegraph. ADDITIVE (no return):
+	# the pose shows the weapon, then the monster coil below plays the body's away-coil; play_swing (off the
+	# landed attack/whiff event) hands the weapon back to the normal swing at resolution. The event-resolved
+	# weapon is passed down (v0.17.1 review #9) so a late-joiner poses the RIGHT art. Weaponless windup
+	# attacker (the training dummy): weapon is null, skip the pose and fall straight through to the coil.
+	if weapon != null:
+		entity.play_windup_pose(_step_sign(target_tile - entity.tile), windup_sec, weapon)
 	# Monster claw coil-and-flash (unchanged): the coil pulls AWAY from the target (monster - target sign).
 	var monster := entity as Monster
 	if monster != null:

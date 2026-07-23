@@ -316,17 +316,24 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 	# path (bump uses it too), so the from==to busy logic lives in exactly one place.
 	if not _move_referee.commit_in_place(attacker_id, windup_sec):
 		return -1.0
-	NetEvents.post_event("windup", {
+	# Stamp the weapon on the telegraph event (present-only), mirroring _build_attack_data and the bow
+	# shoot path: a MELEE windup weapon (the goblin's claw) rides its display_name so every peer's rig
+	# can pose the raised telegraph over the coil. A weaponless windup attacker stamps no field.
+	var windup_data := {
 		"entity_id": attacker_id,
 		"name": _name_of(attacker),
 		"target_tile": target_tile,
 		"windup_sec": windup_sec,
-	}, attacker_id)
+	}
+	if attacker is Entity and attacker.equipped_weapon != null:
+		windup_data["weapon"] = attacker.equipped_weapon.display_name
+	NetEvents.post_event("windup", windup_data, attacker_id)
 	# SceneTreeTimer on the host tree (never a Timer child of the monster — survives despawn by
-	# construction, the same mechanism MoveReferee's completion timers use). recovery on this path is
-	# brain pacing (added to the return), NOT a referee record — the telegraph WAS the busy window.
+	# construction, the same mechanism MoveReferee's completion timers use). recovery_sec stamps the
+	# landed event's duration (swing + spent tell, same as the instant path); occupancy stays
+	# windup-only — recovery remains brain pacing (added to the return), not a referee record.
 	get_tree().create_timer(windup_sec).timeout.connect(
-			_resolve_windup.bind(attacker_id, target_tile, "windup", 0.0))
+			_resolve_windup.bind(attacker_id, target_tile, "windup", recovery_sec))
 	return windup_sec + recovery_sec
 
 
@@ -690,10 +697,11 @@ func _build_attack_data(attacker: Node, attacker_id: int, target: Node, target_i
 
 
 ## Resolve an attack against its committed TILE. Shared by both shapes (decision 3; DESIGN §2.8):
-## the telegraphed wind-up (armed on a timer; recovery_sec 0 — recovery is brain pacing there, so
-## the landed hit carries no recovery tell, and the coil already told) AND the instant strike
-## (called synchronously from wind_up with the recovery seconds, so the strike's `attack`/whiff
-## event carries the recovery duration and every peer plays the recovery tell for it). `kind` is
+## BOTH paths now stamp the landed event with the recovery seconds — the telegraphed wind-up (armed
+## on a timer) AND the instant strike (called synchronously from wind_up). So every landed hit's
+## `attack`/whiff event carries the recovery duration and every peer plays the recovery tell for it.
+## Occupancy stays windup-only on the telegraphed path (the telegraph WAS the busy window) — recovery
+## there is brain pacing, not a referee record; recovery_sec only rides the EVENT for the tell. `kind` is
 ## passed EXPLICITLY by the caller — "windup" for the telegraphed path (log/feedback unchanged),
 ## "strike" for the instant path — never inferred from recovery_sec, whose sign says nothing about
 ## which path fired (a zero-recovery instant strike is still a strike).

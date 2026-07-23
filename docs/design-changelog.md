@@ -10,6 +10,25 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.18.1 (2026-07-23) — GOBLIN TELEGRAPH: the windup re-test ships with real art (bug fix +
+  raised-claw pose — Jon).** Jon's claw experiment (`windup_beats` 0 → 1.0) exposed a latent bug:
+  the telegraphed path stamped the landed `attack` event with `duration_sec = 0.0`, so the rig's
+  swing never played — the club was invisible for the whole attack. FIX (one token): the
+  resolution bind now stamps `recovery_sec` (attack_beats × pace beat — the same value the
+  instant path always stamped), so swing + §2.3.4 spent-dim play on every peer; occupancy is
+  UNCHANGED (windup-only commit; recovery stays brain pacing — the baited-swing punish window
+  stands). NEW ART: `weapon_rig.play_windup_pose` — during the windup the weapon shows RAISED
+  `windup_raise_degrees` (new WeaponType export, default 60°) behind the swing's start edge,
+  snap-and-hold (the v0.6.1 coil grammar), over the body's away-coil; melee `windup` events now
+  carry the weapon name (present-only field) so every peer paints it. `claw.tres` ships
+  `windup_beats = 1.0` — the SANCTIONED RE-TEST of the closed v0.7.0 windup experiment, now with
+  the telegraph art it lacked; `/w claw windup_beats <n>` live-tunes it in-session. VERIFIED
+  two-instance: windup→attack event pairs with nonzero stamped durations + weapon fields on both
+  peers; dodge-whiff carries the same (swing-through animates); live flip to 0 reverts to
+  byte-identical instant strikes (0 windup events after); mid-windup screenshots both facings.
+  **Feel (Jeff):** does the raised claw read as "prepare to dodge"? Raise angle is the `.tres`
+  knob; DESIGN notes the re-test should pair with the AoO re-enable (the config where dodging
+  costs).
 - **v0.18.0 (2026-07-23, overnight) — INVENTORY v1 (M5-lite, pulled ahead of M4a/M4b —
   Jon).** The parked "N-beat potion commit" ships. DECISIONS (Jon, this session):
   walk-over auto-pickup; potion heals 10 over a 2-beat drink; the heal lands at the
