@@ -267,6 +267,13 @@ Not scheduled — pulled in when their moment comes:
   whether AoO adjacency should respect walls/corners (M2 wires pure 8-adjacency per §2.2.6 — a
   hostile diagonally around a wall corner still threatens; GLM review flag, 2026-07-17) — revisit
   with the ranged/build-system pass.
+- **Active abilities & status effects** → a CAPABILITY TRACK: design + "complete when" live in **DESIGN §2.11**;
+  stage status here. v0.20.x shipped the STUN status (overhead icon, all validator gates, `/stun` dev cmd) and
+  the 1-5 ability pipe (`use_ability` + `ActiveAbility` + `PlayerClass.active_abilities`) with knight **Shield
+  Bash** + rogue **Kick** (mechanics, verified two-instance). REMAINING: the HUD (hotbar shows ability icons +
+  1-5 keycaps, potion/club move to a left-click **Backpack** panel, the knight's off-hand shield socket) —
+  specced in the v0.20.1 `HANDOFF.md`; then an equippable off-hand shield item, telegraphed/ranged abilities,
+  more status effects (slow/poison/shield).
 - Build system design pass (Rogue Fable-legibility bar, DESIGN §2.7)
 - Dungeon generation depth (beyond M4's basic rooms-and-corridors)
 - Shared-beat coordination mechanic (DESIGN §2.4.2) — only if a concrete need appears

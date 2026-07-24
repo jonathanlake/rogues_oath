@@ -478,6 +478,45 @@ numbers/cues (Feel=).
 **Complete when** items are a full designer-authored system: drop tables, multiple categories,
 the `.tres`-only gate (M5) met. *(Stage progress is tracked in ROADMAP, not here.)*
 
+### 2.11 Active Abilities & Status Effects (v1 in progress — v0.20.x)
+
+**Capability track.** Class-owned ACTIVE abilities on the 1-5 hotbar, and STATUS EFFECTS imposed on
+entities (stun first). Host-authoritative and event-synced like everything else.
+
+**Abilities are committed actions, never cooldowns (Part 4 Q9).** Pressing 1-5 submits a
+`use_ability {index}` intent; the host reads the sender's class `active_abilities[index]` server-side
+and, if a hostile is adjacent, ROOTS the caster for the ability's beat window (`windup_beats` +
+`recovery_beats`) and resolves the effect. The occupied window IS the anti-spam — there is no second
+timer bolted beside it. An `ActiveAbility` is a designer `.tres` (`damage`, `stun_beats`, the beats,
+`range_tiles`, `log_verb`, icon), resolved off the class exactly as a `PassiveAbility` is — add an
+ability by dropping a `.tres` into a class's `active_abilities`. A telegraphed ability (`windup_beats
+> 0`) resolves against the target TILE at windup end, so it is DODGEABLE (the same commit-to-ground
+model as the goblin wind-up and the smite); an instant one (0) strikes now. This is NOT an active
+DODGE/BLOCK (§2.1.3 forbids those): the SHIELD is an offensive committed BASH, never a hold-to-block.
+
+**Stun is an imposed status, Commitment-safe.** A stunned entity cannot START a new committed action —
+every intent validator (glide / shoot / use_item / equip_item / use_ability) rejects "stunned" at ENTRY
+and the monster brain skips its think — but the gate NEVER touches the busy/`_gliding` record, so an
+action already in flight plays to completion (§2.1). Duration is in BEATS (scales with tempo);
+host-authoritative (folded into CombatReferee), broadcast as `status_applied`/`status_expired` events
+with an overhead icon on every peer. A stun imposed ON you is not an escape valve you spend — it is the
+enemy's teeth, resolved server-side; that's why it fits the pillar where an active dodge button would not.
+
+**The 1-5 bar is for abilities; items are left-click.** The number bar (which §2.10 had deliberately
+left unbound) is now the ability hotbar; consumables/weapons live in a left-click Backpack panel.
+
+**Shipped so far (v0.20.x):** the stun status (icon, `/stun` dev cmd, all validator gates); the
+`use_ability` pipe + `ActiveAbility` resource + `PlayerClass.active_abilities`; knight **Shield Bash**
+(2 dmg + 3-beat stun) and rogue **Kick** (1 dmg + 3-beat stun) — both verified two-instance.
+
+**Still envisioned:** the HUD (hotbar shows ability icons + 1-5 keycaps, items to a Backpack panel, an
+off-hand shield socket); an equippable off-hand item (a real shield, not just the class ability);
+telegraphed/ranged/self-buff abilities; more status effects (slow, poison, shield); abilities from
+equipped gear as well as class.
+
+**Complete when** a non-coder can author a class ability + a status effect via `.tres` alone, the hotbar
+reads as the ability bar, and abilities compose with the build system (§2.7). *(Stage in ROADMAP.)*
+
 ## Part 3 — Appendix: Why (short version)
 
 Why commitment instead of turns? What makes a roguelike turn tactical isn't the pause — it's
