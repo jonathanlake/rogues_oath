@@ -1,11 +1,11 @@
 ---
 name: implement
-description: Implement a Rogue's Oath milestone or any approved plan in this repo. Triggers whenever writing Rogue's Oath game code — dispatches implementation to Opus 4.8 subagents per the global model-roles workflow, with this project's invariants block and two-instance verification.
+description: Implement a Rogue's Oath milestone or any approved plan in this repo. Triggers whenever writing Rogue's Oath game code — dispatches implementation to Opus 5 subagents per the global model-roles workflow, with this project's invariants block and two-instance verification.
 ---
 
 # Implement — Rogue's Oath milestone workflow
 
-Follow the global `model-roles` skill: **Fable 5 coordinates, Opus 4.8 subagents write the
+Follow the global `model-roles` skill: **Fable 5 coordinates, Opus 5 subagents write the
 code, GLM-5.2 advises.** This file adds the project specifics.
 
 ## Before dispatching anything
