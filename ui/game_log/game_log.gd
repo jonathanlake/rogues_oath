@@ -148,6 +148,7 @@ func _render_help() -> void:
 	add_line("  /m <monster> <%s> <value|reset>" % "|".join(PackedStringArray(GameManager.DEV_MONSTER_FIELDS)))
 	add_line("  /god  — toggle your own invulnerability")
 	add_line("  /class <%s>" % "|".join(_dev_class_names()))
+	add_line("  /config <%s>  — apply a preset test loadout" % "|".join(PackedStringArray(GameManager.CONFIG_PRESETS.keys())))
 	add_line("  /help  — this list")
 
 

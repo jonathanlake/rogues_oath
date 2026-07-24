@@ -70,6 +70,8 @@ func validate(sender_peer_id: int, data: Dictionary) -> Dictionary:
 			return _dev_cmd_class(sender_peer_id, args, by)
 		"item":
 			return _dev_cmd_item(sender_peer_id, args, by)
+		"config":
+			return _dev_cmd_config(args, by)
 		_:
 			# Bare-weapon alias: "/longsword 5" arrives as cmd "longsword", args ["5"]. Reachable ONLY when
 			# cmd resolves to a real weapon (table precedence is handled by the match above). Re-dispatch as
@@ -277,6 +279,51 @@ func _dev_cmd_item(sender_peer_id: int, args: Array[String], by: String) -> Dict
 	if not _spawn_item.call(tile, item.resource_path):
 		return { "ok": false, "reason": "(%d, %d) already has an item" % [tile.x, tile.y] }
 	return { "ok": true, "data": { "line": "%s spawned a %s at (%d, %d)." % [by, item.display_name, tile.x, tile.y] } }
+
+
+## /config <alias> — apply a named BUNDLE of weapon/monster tunings in one command (v0.19.7 dev tool). The
+## alias indexes GameManager.CONFIG_PRESETS; each row [kind, name, field, value] is applied through the SAME
+## per-field allowlist + clamp pipeline /w and /m use (_dev_tune_resource), so a preset row can't bypass
+## validation. A bad row (unknown resource / field / out-of-range) REJECTS the whole /config naming that row
+## (rows before it were already set host-side — a preset is author-controlled, so this is a defensive path, not
+## a rollback need). On success one host-composed summary line broadcasts to every peer (like /w). Values apply
+## to the SHARED resources adjudication reads live, so the loadout takes effect from the next stamp.
+func _dev_cmd_config(args: Array[String], by: String) -> Dictionary:
+	var known := ", ".join(PackedStringArray(GameManager.CONFIG_PRESETS.keys()))
+	if args.is_empty():
+		return { "ok": false, "reason": "usage: /config <alias> (known: %s)" % known }
+	var alias: String = args[0]
+	if not GameManager.CONFIG_PRESETS.has(alias):
+		return { "ok": false, "reason": "unknown config '%s' (known: %s)" % [alias, known] }
+	var rows: Array = GameManager.CONFIG_PRESETS[alias]
+	for row in rows:
+		var kind: String = str(row[0])
+		var res_name: String = str(row[1])
+		var field: String = str(row[2])
+		var value_token: String = str(row[3])
+		var res: Resource = null
+		var fields: Array
+		var int_fields: Array
+		var clamps: Dictionary
+		if kind == "w":
+			res = _resolve_weapon(res_name)
+			fields = GameManager.DEV_WEAPON_FIELDS
+			int_fields = GameManager.DEV_WEAPON_INT_FIELDS
+			clamps = GameManager.DEV_WEAPON_CLAMPS
+		else:
+			res = _resolve_monster(res_name)
+			fields = GameManager.DEV_MONSTER_FIELDS
+			int_fields = GameManager.DEV_MONSTER_INT_FIELDS
+			clamps = GameManager.DEV_MONSTER_CLAMPS
+		if res == null:
+			return { "ok": false, "reason": "config %s: unknown %s '%s'" % [alias, "weapon" if kind == "w" else "monster", res_name] }
+		# Reuse the ONE tune pipeline per row — same allowlist / clamp / int-or-float / mutate as /w & /m. Its
+		# per-field success line is discarded (we compose a bundle summary); its REJECT reason is surfaced.
+		var tune_args: Array[String] = [field, value_token]
+		var verdict := _dev_tune_resource(res, fields, int_fields, clamps, tune_args, by, str(res.get("display_name")))
+		if not bool(verdict.get("ok", false)):
+			return { "ok": false, "reason": "config %s @ %s.%s: %s" % [alias, res_name, field, str(verdict.get("reason", "failed"))] }
+	return { "ok": true, "data": { "line": "%s applied config %s (%d settings)." % [by, alias, rows.size()] } }
 
 
 ## Resolve a weapon by lowercase name (v0.10.0 /w): GameConfig.weapon_by_name FIRST (catalog display_name),

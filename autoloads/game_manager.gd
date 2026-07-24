@@ -36,6 +36,25 @@ const DEV_MONSTER_CLAMPS := {
 	"bonus_damage": [-999, 999],
 }
 
+## Dev CONFIG PRESETS (v0.19.7): `/config <alias>` applies a whole BUNDLE of /w + /m tunings in one command, so
+## a repeated test loadout is a single keystroke instead of five. Lives HERE (beside the DEV_* allowlists) so
+## both the DevCommands validator (which applies it) and game_log's /help (which lists the aliases) read the ONE
+## source — help can't drift from what the host accepts. Each alias maps to an ORDERED list of [kind, name,
+## field, value] rows: kind "w" = weapon (resolved like /w — catalog name or .tres filename), "m" = monster
+## (resolved like /m — .tres filename). Every row is applied through the SAME per-field allowlist + clamp path
+## /w and /m use, so a preset can never poison a resource past its clamp. ADD A NEW LOADOUT by adding an alias
+## entry — no code change. Values are read live by adjudication at the next stamp (weapons/monster bonuses);
+## a max_hp-style spawn-seeded field would only affect NEW spawns, same caveat as /m.
+const CONFIG_PRESETS := {
+	"1": [
+		["w", "longsword", "windup_beats", 1.0],
+		["w", "longsword", "attack_beats", 3.0],
+		["w", "club", "windup_beats", 1.0],
+		["w", "club", "attack_beats", 3.0],
+		["m", "goblin", "bonus_windup_beats", 1.0],
+	],
+}
+
 ## Designer contract: resources/game_config.tres is where Jeff flips playtest toggles
 ## (bodies_block_corners, origin_frees_at_glide_start, …) WITHOUT touching code. The host
 ## populates this before starting the server; all game systems read from it. Loaded from the .tres

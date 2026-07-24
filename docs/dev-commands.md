@@ -19,6 +19,7 @@ restart restores every authored value (no command saves to disk).
 | `/god` | Toggle **your own** invulnerability. A hit on a godded target resolves as a visible no-op (grey `0` popup + "no effect (god)" log line), never a silent block. Cleared on disconnect / despawn / F5 respawn. |
 | `/class <name>` | Set **your own** class (sprite today, stats later). `name` ∈ `rogue`, `knight`, `wizard`, `barbarian`, `priest`, `ranger`. Broadcasts to every peer; late joiners sync via `sync_player_field`. Reverts to the slot default on F5 respawn. |
 | `/item <name> [x,y]` | Spawn a ground item (v0.18.0). Tile = explicit `x,y`, else the sender's facing-neighbour tile (never the own tile → reject if the sender hasn't faced yet). Distinct rejects: unknown item / broken resource path (catalog drift) / not-walkable / tile already has an item. Multi-word names work (`/item health potion`). |
+| `/config <alias>` | Apply a preset **bundle** of `/w` + `/m` tunings in one command (v0.19.7). Aliases live in `GameManager.CONFIG_PRESETS`; each row runs through the same allowlist + clamp path as `/w`/`/m`, so a bad row rejects the whole `/config` naming that row. Currently `1` = longsword & club `windup_beats 1`/`attack_beats 3`, goblin `bonus_windup_beats 1`. Add a loadout by adding an alias entry — no code change. |
 | `/help` | Print the command list (local only — never crosses the wire). |
 
 ## Resolution notes

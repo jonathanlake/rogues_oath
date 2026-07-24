@@ -10,6 +10,16 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.19.7 (2026-07-24) — DEV TOOL: `/config <alias>` — apply a whole test loadout in one command.**
+  A repeated tuning setup (several `/w` + `/m` edits to try a feel) is now one keystroke. `/config 1` applies the
+  first preset — longsword & club `windup_beats 1` / `attack_beats 3`, goblin `bonus_windup_beats 1` — the exact
+  bundle Jon named. Presets live in `GameManager.CONFIG_PRESETS` (beside the `DEV_*` allowlists) as ordered
+  `[kind, name, field, value]` rows; the DevCommands validator applies each row through the SAME per-field
+  allowlist + clamp path `/w` and `/m` use (`_dev_tune_resource`), so a preset can't poison a resource past its
+  clamp and a bad row rejects the whole `/config` naming that row. Host-adjudicated + broadcast like every dev
+  command (any peer can invoke it; every peer logs the one summary line). `/help` lists the known aliases and
+  `docs/dev-commands.md` documents it — both derive from the one `CONFIG_PRESETS` source, so they can't drift.
+  Add a new loadout by adding an alias entry — no code change. Compile-verified headless (clean parse).
 - **v0.19.6 (2026-07-24) — TUNING: the south-room (D) pack holds until the party is inside (approachable).**
   The v0.19.4 shaman pack sat at row 20 (the hallway mouth) with the goblins' default aggro range 5, so a party
   coming down the hall woke it from the corridor — two goblins chased UP the hall and one peeled east, splitting
