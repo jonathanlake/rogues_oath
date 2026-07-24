@@ -175,19 +175,20 @@ func play_whiff(dir: Vector2i) -> void:
 	_whiff_audio.play()
 
 
-## Heal-cast telegraph (§2.3.4, v0.19.8): a pulsing GREEN sparkle over the healer's head for the whole cast
-## window `hold_sec`, so "I'm channeling a spell" is legible on-screen — HELD (unlike the transient +N popup)
-## and distinct from the WHITE attack wind-up. Driven on every peer from the heal_cast event. Drawn as a
-## Polygon2D star (font-independent — no glyph to miss) above the name label. Cleared on re-cast, at cast end
-## (the timer), and with the node on death (the engine drops the timer's connection to a freed node).
-func play_heal_cast(hold_sec: float) -> void:
+## Spell-cast telegraph (§2.3.4, v0.19.8; generalized v0.19.10): a pulsing sparkle in `symbol_color` over the
+## caster's head for the whole cast window `hold_sec`, so "I'm channeling a spell" is legible on-screen — HELD
+## (unlike the transient +N popup) and distinct from the WHITE attack wind-up. GREEN = heal, orange-red = smite
+## (the caller passes the colour per spell). Driven on every peer from the heal_cast / smite_cast event. Drawn
+## as a Polygon2D star (font-independent — no glyph to miss) above the name label. Cleared on re-cast, at cast
+## end (the timer), and with the node on death (the engine drops the timer's connection to a freed node).
+func play_spell_cast(hold_sec: float, symbol_color: Color) -> void:
 	_clear_cast_fx()
 	var star := Polygon2D.new()
 	# 4-pointed sparkle (outer r≈7, inner r≈1.8) centred on the node origin.
 	star.polygon = PackedVector2Array([
 		Vector2(7, 0), Vector2(1.8, 1.8), Vector2(0, 7), Vector2(-1.8, 1.8),
 		Vector2(-7, 0), Vector2(-1.8, -1.8), Vector2(0, -7), Vector2(1.8, -1.8)])
-	star.color = Color(0.35, 0.95, 0.5)  # heal green (DamagePopup.HEAL_COLOR family)
+	star.color = symbol_color
 	star.position = Vector2(0, -50)  # above the name label (which sits ~ -38..-18)
 	add_child(star)
 	_cast_fx = star

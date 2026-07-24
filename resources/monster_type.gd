@@ -148,3 +148,40 @@ func resolved_tactical_radius() -> int:
 ## predicate the brain and scan paths gate on, so "is a healer" can't drift between the target scan and commit.
 func has_heal_ability() -> bool:
 	return heal_amount > 0 and heal_range_tiles > 0 and heal_cast_beats > 0.0
+
+
+## OFFENSIVE SPELL — SMITE (v0.19.10). A caster with all three SMITE cast fields set can, when it has no ally
+## to heal, cast a telegraphed SMITE at a RANDOM player within smite_range_tiles for smite_damage. Same
+## committed-cast shape as the heal (cast + recovery beats, self-limiting, no cooldown), authored in beats so it
+## scales with tempo. All default 0 = not a smiter. Host-adjudicated: CombatReferee picks the random target
+## (host-only) and commits/resolves the cast; the brain only requests it. Read HOST-side.
+
+## Damage dealt to the chosen player at cast END (apply_damage floors at 0). 0 = no smite.
+@export var smite_damage: int = 0
+
+## Smite reach in CHEBYSHEV (king-move) tiles: the caster only smites a player within this many tiles. 0 = no smite.
+@export var smite_range_tiles: int = 0
+
+## The telegraphed SMITE cast window in BEATS (the offensive twin of heal_cast_beats). 0 = no smite.
+@export var smite_cast_beats: float = 0.0
+
+## The SMITE recovery tail in BEATS after the hit lands — the caster stays spent this long (twin of heal_recovery_beats).
+@export var smite_recovery_beats: float = 0.0
+
+
+## AVOIDANCE (v0.19.10): when true, this monster is a KITER — it never chases into melee or swings a weapon;
+## instead it steps AWAY from the nearest player whenever one is within flee_range_tiles, and otherwise holds
+## position (casting from range). Default false = the normal chaser. A caster (heal/smite) with this on is the
+## goblin shaman's disposition: heal an ally first, else back off if crowded, else smite from range. Read HOST-side.
+@export var flees_players: bool = false
+
+## The "personal space" radius in CHEBYSHEV tiles for a flees_players kiter: when the nearest player is within
+## this many tiles, it steps away before considering a ranged cast. 0 = never flees on proximity (holds while
+## it has a cast to make). Read HOST-side by MonsterBrain. Only meaningful with flees_players.
+@export var flee_range_tiles: int = 0
+
+
+## True when this monster is an authored SMITER (the three SMITE cast fields set; recovery is optional). The ONE
+## predicate the brain gates on, mirroring has_heal_ability.
+func has_smite_ability() -> bool:
+	return smite_damage > 0 and smite_range_tiles > 0 and smite_cast_beats > 0.0

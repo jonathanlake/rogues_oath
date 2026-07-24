@@ -798,6 +798,10 @@ func _on_net_event(event: Dictionary) -> void:
 			# A monster's telegraphed heal CHANNEL starting (v0.19.4, host-authored — the shaman). Every peer
 			# floats a green channel tell over the caster; the LAND is the later `heal` event (log from game_log).
 			_handle_heal_cast_event(event)
+		"smite_cast":
+			# A monster's telegraphed SMITE channel starting (v0.19.10, host-authored). Orange-red tell over the
+			# caster; the LAND is the later `attack` event (kind "smite"). Log line from game_log.
+			_handle_smite_cast_event(event)
 
 
 ## Play back an accepted glide. Resolve the mover by entity id: positive is a player, negative a
@@ -881,7 +885,8 @@ func _handle_attack_event(event: Dictionary) -> void:
 		# Arrow HIT (v0.17.0): SUPPRESS the attacker-side lunge/swing here. The shooter's cue was the draw +
 		# release (windup / projectile_launched) when it loosed — a lunge now, as the remote arrow lands,
 		# would be a wrong double-cue (§2.3.4). Only the TARGET's hurt + popup play (below) for an arrow.
-		if attacker != null and kind != "arrow":
+		if attacker != null and kind != "arrow" and kind != "smite":
+			# SMITE (v0.19.10) suppresses this melee lunge too — its cue was the channel tell, not a swing.
 			# Swing sound RESTORED (v0.6.2, Jon: attack must be audible AND distinct from the hit —
 			# swing = high short whoosh, impact = low thud; pitch-separated in the scenes).
 			attacker.play_attack(dir, true)
@@ -1178,10 +1183,27 @@ func _handle_heal_cast_event(event: Dictionary) -> void:
 		return
 	var target_tile: Vector2i = data.get("target_tile", caster.tile)
 	caster.face_toward(signi(target_tile.x - caster.tile.x))
-	# Overhead cast symbol — Monster surface (only monsters cast heals today; narrow cast like play_whiff).
+	# Overhead cast symbol — Monster surface (only monsters cast spells today; narrow cast like play_whiff).
+	# GREEN sparkle marks a HEAL channel.
 	var caster_monster := caster as Monster
 	if caster_monster != null:
-		caster_monster.play_heal_cast(float(data.get("cast_sec", 0.0)))
+		caster_monster.play_spell_cast(float(data.get("cast_sec", 0.0)), Color(0.35, 0.95, 0.5))
+
+
+## All peers: play back a monster's SMITE-cast telegraph (§2.3.4, v0.19.10). Mirror of the heal-cast handler but
+## an ORANGE-RED overhead sparkle (a distinct offensive channel — never confusable with the green heal or the
+## white attack wind-up). The caster faces its victim; the LAND is the later `attack` event (kind "smite", red
+## -N over the player); the log line comes from game_log. cast_sec rides the event so the symbol holds the window.
+func _handle_smite_cast_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var caster := _node_for_peer(int(data.get("caster_id", 0)))
+	if caster == null:
+		return
+	var target_tile: Vector2i = data.get("target_tile", caster.tile)
+	caster.face_toward(signi(target_tile.x - caster.tile.x))
+	var caster_monster := caster as Monster
+	if caster_monster != null:
+		caster_monster.play_spell_cast(float(data.get("cast_sec", 0.0)), Color(1.0, 0.5, 0.2))
 
 
 ## All peers: adopt a host-stamped tempo change (§2.8.3). Apply it to the LOCAL GameManager beat so the

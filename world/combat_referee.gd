@@ -369,6 +369,10 @@ func pick_heal_target(caster_id: int, caster_tile: Vector2i, range_tiles: int) -
 		var node := _node_of_id(id)
 		if node == null:
 			continue
+		# Only heal COMBATANTS (v0.19.10 fix): skip a brainless prop — the training dummy (has_brain=false) is a
+		# monster sitting below max HP, so it was a heal MAGNET the shaman wasted casts on. A real ally only.
+		if node is Monster and node.monster_type != null and not node.monster_type.has_brain:
+			continue
 		var hp := int(_hp[id])
 		# Already at (or above) max — nothing to heal.
 		if hp >= _max_hp_of(node):
@@ -450,6 +454,72 @@ func _resolve_heal_cast(caster_id: int, target_id: int, amount: int) -> void:
 	if not is_alive(caster_id):
 		return
 	apply_heal(target_id, amount, _name_of(_node_of_id(caster_id)))
+
+
+## Pick the player a smiter should hit: a RANDOM living player within `range_tiles` CHEBYSHEV of `caster_tile`
+## (v0.19.10, "choose a player at random for now"). Host-only — the host owns the RNG, so the pick is
+## authoritative and rides the broadcast cast event (no client predicts it). Players are POSITIVE ids in _hp.
+## Returns the chosen player id, or 0 (never a real id) if none in range.
+func pick_smite_target(caster_id: int, caster_tile: Vector2i, range_tiles: int) -> int:
+	var in_range: Array[int] = []
+	for id in _hp:
+		if id <= 0:  # players are positive; skip monsters (negative) and the 0 sentinel
+			continue
+		if not is_alive(id):
+			continue
+		var tile: Vector2i = _move_referee.tile_of_entity(id)
+		var cheb := maxi(absi(tile.x - caster_tile.x), absi(tile.y - caster_tile.y))
+		if cheb <= range_tiles:
+			in_range.append(id)
+	if in_range.is_empty():
+		return 0
+	return in_range[randi() % in_range.size()]
+
+
+## A smiter MonsterBrain requests a telegraphed SMITE on a chosen player (v0.19.10). Host-only. Same shape as
+## heal_cast: validate caster alive + not busy + target alive, commit cast + recovery as ONE busy record,
+## telegraph the channel (smite_cast event → §2.3.4 cue + log on every peer), resolve the DAMAGE at cast END via
+## the shared apply_damage pipe, and hold the caster spent through the recovery tail. `damage`/`cast_beats`/
+## `recovery_beats` come from the caller's MonsterType. Returns the whole cast + recovery seconds on success, or
+## -1.0 if DECLINED (caster dead/busy / target gone) so the brain distinguishes a cast from a back-off.
+func smite_cast(caster_id: int, target_id: int, damage: int, cast_beats: float, recovery_beats: float) -> float:
+	if not is_alive(caster_id):
+		return -1.0
+	if _move_referee.is_entity_moving(caster_id):
+		return -1.0
+	if not is_alive(target_id):
+		return -1.0
+	var beat := PaceReferee.beat_or_explore(_pace, caster_id)
+	var cast_sec := maxf(0.0, cast_beats) * beat
+	var recovery_sec := maxf(0.0, recovery_beats) * beat
+	if not _move_referee.commit_in_place(caster_id, cast_sec + recovery_sec):
+		return -1.0
+	var caster := _node_of_id(caster_id)
+	var target := _node_of_id(target_id)
+	# Face the victim (server truth; a ZERO dir no-ops).
+	_move_referee.set_facing(caster_id, (_move_referee.tile_of_entity(target_id) - _move_referee.tile_of_entity(caster_id)).sign())
+	# Telegraph on its OWN event — a distinct OFFENSIVE channel (§2.3.4), never confusable with heal or melee.
+	NetEvents.post_event("smite_cast", {
+		"caster_id": caster_id,
+		"caster_name": _name_of(caster),
+		"target_id": target_id,
+		"target_name": _name_of(target),
+		"target_tile": _move_referee.tile_of_entity(target_id),
+		"cast_sec": cast_sec,
+	}, caster_id)
+	get_tree().create_timer(cast_sec).timeout.connect(
+			_resolve_smite.bind(caster_id, target_id, maxi(0, damage)))
+	return cast_sec + recovery_sec
+
+
+## Resolve a committed smite at cast END (host-only, from the cast timer). The caster must still be alive — a
+## smiter killed mid-cast deals NOTHING (the counterplay: rush it during the channel, mirroring heal-at-END). The
+## hit lands via the shared apply_damage pipe (kind "smite" → its own log verb + the target's hurt cues); a
+## target that died / despawned meanwhile no-ops inside apply_damage's liveness guard.
+func _resolve_smite(caster_id: int, target_id: int, damage: int) -> void:
+	if not is_alive(caster_id):
+		return
+	apply_damage(caster_id, target_id, damage, "smite", 0.0)
 
 
 ## Host-side stat accessors, read by MoveReferee for a bump/AoO so combat numbers live in ONE place

@@ -224,6 +224,13 @@ func _think() -> void:
 		_reschedule()
 		return
 
+	# CASTER / KITER (v0.19.10): a flees_players monster (the goblin shaman) NEVER chases into melee. Having
+	# already checked heal above, it now backs off from a too-close player, else smites a random player from
+	# range, else holds. Handled here, BEFORE the chase/attack branch a normal monster runs.
+	if _monster_type != null and _monster_type.flees_players:
+		_act_as_kiter(my_tile, targets)
+		return
+
 	# Adjacent to a hostile player? (M3: every player is hostile to the monster — the faction rule;
 	# when neutral factions exist this filters by is_hostile_to.) Request a wind-up.
 	for t in targets:
@@ -287,6 +294,10 @@ func _think() -> void:
 ## stays zero-gap). Gated on the SAME conga toggle players pipeline under (origin_frees_at_glide_start)
 ## — under hold-origin the slot is off for everyone and the backstop recovers at status-quo timing.
 func _try_pipeline_next_step() -> bool:
+	# A KITER never chases (v0.19.10), so it must never pipeline a chase step — fall to the backstop so the
+	# next boundary re-decides flee/smite/hold via _act_as_kiter.
+	if _monster_type != null and _monster_type.flees_players:
+		return false
 	# Pipelining only exists under conga; the referee refuses a held-origin pipeline anyway, but gate
 	# here too so we fall straight to the backstop rather than eating a guaranteed-refused submit.
 	if not GameManager.config.origin_frees_at_glide_start:
@@ -332,6 +343,69 @@ func _nearest_target(my_tile: Vector2i, targets: Array) -> Vector2i:
 			nearest = d
 			best = t
 	return best
+
+
+## KITER action (v0.19.10, the goblin shaman): heal was already checked in _think. Now, in priority order —
+## (1) if the nearest player is within flee_range_tiles, step AWAY (avoid being cornered); (2) else smite a
+## RANDOM player within smite_range_tiles; (3) else hold on the re-think cadence. A kiter NEVER chases or melees.
+## Called from _think only for a flees_players monster. Submits at most one action (a flee glide OR a smite cast).
+func _act_as_kiter(my_tile: Vector2i, targets: Array) -> void:
+	var nearest := _nearest_target(my_tile, targets)
+	var nearest_dist := maxi(absi(nearest.x - my_tile.x), absi(nearest.y - my_tile.y))
+	# (1) Too close → back off. Priority over smiting so a crowded caster makes space first. If cornered
+	# (no free away-step), fall through to try a smite instead of freezing.
+	if _monster_type.flee_range_tiles > 0 and nearest_dist <= _monster_type.flee_range_tiles:
+		if _flee_step(my_tile, nearest):
+			return
+	# (2) Smite a random player in range (host picks the target).
+	if _monster_type.has_smite_ability():
+		var smite_target: int = _combat.pick_smite_target(_entity_id, my_tile, _monster_type.smite_range_tiles)
+		if smite_target != 0:
+			var wait_sec: float = _combat.smite_cast(_entity_id, smite_target, _monster_type.smite_damage,
+					_monster_type.smite_cast_beats, _monster_type.smite_recovery_beats)
+			if wait_sec >= 0.0:
+				# Cast committed — its busy record ends without waking us (no glide), so schedule our own
+				# re-think just past it (same as heal / wind-up).
+				_reschedule_after(wait_sec + windup_rethink_epsilon_sec)
+				return
+	# (3) Nothing to do this think (no flee needed or cornered, no smite target) — hold on the cadence.
+	_reschedule()
+
+
+## Submit one step DIRECTLY AWAY from `nearest_tile` for a kiter (v0.19.10). Tries the pure-away direction
+## first, then component / diagonal fallbacks (so a wall-blocked straight retreat still finds a sideways-away
+## step). Pre-checks walkable + free, then submits through the referee's validator (which still owns the corner
+## rule). Returns true when a glide was accepted (on_boundary drives the next think), false if every away-step
+## is blocked — the caller then tries a smite / holds. A ZERO away vector (impossible: two bodies never share
+## a tile) yields no candidates.
+func _flee_step(my_tile: Vector2i, nearest_tile: Vector2i) -> bool:
+	var away := (my_tile - nearest_tile).sign()
+	for dir in _flee_candidates(away):
+		var dest: Vector2i = my_tile + dir
+		if WorldGrid.is_walkable(dest) and _referee.is_tile_free(dest):
+			_last_step_was_diagonal = dir.x != 0 and dir.y != 0
+			if _referee.submit_monster_intent(_entity_id, dir):
+				return true
+	return false
+
+
+## Ordered away-step candidates for a kiter, most-retreating first: the pure away vector, then fallbacks that
+## still move away on the free axis (so a blocked diagonal splits into its cardinals, and a blocked cardinal
+## tries the two diagonals that keep the retreat). ZERO away yields an empty list (no direction to flee).
+func _flee_candidates(away: Vector2i) -> Array:
+	if away == Vector2i.ZERO:
+		return []
+	var list: Array[Vector2i] = [away]
+	if away.x != 0 and away.y != 0:
+		list.append(Vector2i(away.x, 0))
+		list.append(Vector2i(0, away.y))
+	elif away.x != 0:
+		list.append(Vector2i(away.x, 1))
+		list.append(Vector2i(away.x, -1))
+	else:
+		list.append(Vector2i(1, away.y))
+		list.append(Vector2i(-1, away.y))
+	return list
 
 
 ## Aggro acquire + leash decision (monster_type.aggro_range_tiles + aggro_persists, DESIGN §2.8),

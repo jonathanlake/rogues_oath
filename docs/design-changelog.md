@@ -10,6 +10,23 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.19.10 (2026-07-24) — SHAMAN = a fleeing CASTER: adds SMITE, stops meleeing; + dummy-heal fix + /m spell tuning.**
+  From the live observe pass (a joined event-log capture). THREE changes. (1) **Dummy-heal FIX:** the shaman was
+  wasting casts healing the Training Dummy — a brainless monster sitting below its 1000 max HP counted as a
+  wounded ally. `CombatReferee.pick_heal_target` now skips brainless props (`has_brain == false`), so it only
+  heals real combatants. (2) **All spell params are live-tunable via `/m`** (Jon's ask — "tune all spell casting,
+  not just the heal"): `heal_amount`/`heal_range_tiles`/`heal_cast_beats`/`heal_recovery_beats`,
+  `smite_damage`/`smite_range_tiles`/`smite_cast_beats`/`smite_recovery_beats`, and `flee_range_tiles` joined the
+  `DEV_MONSTER_FIELDS` allowlist (with clamps); `/help` lists them live. (3) **The shaman is now a fleeing
+  CASTER, not a club-swinger.** It has NO weapon and never chases into melee (new `MonsterType.flees_players` +
+  `flee_range_tiles`): it heals a wounded ally first, else backs AWAY from a too-close player, else casts the new
+  **SMITE** — 5 damage, 12-tile range, same 6-beat cast / 2-beat recovery as the heal, on a RANDOM in-range
+  player (host-picked RNG, authoritative). New `MonsterType` smite fields + `has_smite_ability()`; a new
+  `CombatReferee.pick_smite_target` (random) + `smite_cast`/`_resolve_smite` mirroring the heal path (committed
+  cast, killed-mid-cast wastes it — rush it to interrupt). §2.3.4: a DISTINCT orange-red overhead cast sparkle
+  (the heal's is green; the overhead symbol generalized to `Monster.play_spell_cast(color)`), a "begins to
+  smite X..." channel line, and a "smites X for N" land line (the melee lunge is suppressed — it's a ranged
+  spell). Compile-verified headless (clean parse). Feel: `flee_range_tiles` (3) + smite cadence are `/m` nudges.
 - **v0.19.9 (2026-07-24) — SHAMAN FEEL: heal cast 6 beats + a 2-beat recovery tail + heal particles.**
   Continued feel-tuning. (1) Cast `heal_cast_beats` 8 → 6. (2) NEW `heal_recovery_beats` (2 on the shaman): after
   the heal lands the healer stays BUSY/spent for a recovery tail before it can act again — `CombatReferee.heal_cast`

@@ -307,6 +307,11 @@ func _on_event_received(event: Dictionary) -> void:
 			# of "winds up..."). The LAND is the `heal` line above. Names flow through add_line's sink escape.
 			add_line("%s channels a heal toward %s..." % [
 				str(data.get("caster_name", "Someone")), str(data.get("target_name", "an ally"))])
+		"smite_cast":
+			# A monster's SMITE channel starting (§2.3.4, v0.19.10 — the offensive twin of the heal channel).
+			# The LAND is the "smites" attack line below. Names flow through add_line's sink escape.
+			add_line("%s begins to smite %s..." % [
+				str(data.get("caster_name", "Someone")), str(data.get("target_name", "someone"))])
 
 
 ## Compose the combat-log line for one `attack` event, one distinct phrasing per outcome (§2.3.4):
@@ -349,6 +354,12 @@ func _log_attack(data: Dictionary) -> void:
 		# A point-blank KICK (v0.17.1): a ranged weapon's wielder bumped an adjacent hostile — no melee
 		# swing, so a DISTINCT verb ("kicks") from a shot or a slash (§2.3.4), same running-HP readout.
 		add_line("%s kicks %s for %d (%d/%d)." % [
+			attacker_name, target_name, damage,
+			int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
+		return
+	if str(data.get("kind", "")) == "smite":
+		# A landed SMITE (v0.19.10): a ranged spell hit — a DISTINCT verb ("smites"), same running-HP readout.
+		add_line("%s smites %s for %d (%d/%d)." % [
 			attacker_name, target_name, damage,
 			int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
 		return

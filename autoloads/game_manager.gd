@@ -22,8 +22,12 @@ const DEV_WEAPON_CLAMPS := {
 	"windup_beats": [0.0, 30.0],
 }
 const DEV_MONSTER_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles",
-	"bonus_windup_beats", "bonus_recovery_beats", "bonus_damage"]
-const DEV_MONSTER_INT_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles", "bonus_damage"]
+	"bonus_windup_beats", "bonus_recovery_beats", "bonus_damage",
+	# Spell-casting params (v0.19.10) — ALL live-tunable via /m, not just the heal (Jon's ask).
+	"heal_amount", "heal_range_tiles", "heal_cast_beats", "heal_recovery_beats",
+	"smite_damage", "smite_range_tiles", "smite_cast_beats", "smite_recovery_beats", "flee_range_tiles"]
+const DEV_MONSTER_INT_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles", "bonus_damage",
+	"heal_amount", "heal_range_tiles", "smite_damage", "smite_range_tiles", "flee_range_tiles"]
 const DEV_MONSTER_CLAMPS := {
 	"max_hp": [1, 99999],
 	"aggro_range_tiles": [0, 30],
@@ -34,6 +38,16 @@ const DEV_MONSTER_CLAMPS := {
 	"bonus_windup_beats": [-30.0, 30.0],
 	"bonus_recovery_beats": [-30.0, 30.0],
 	"bonus_damage": [-999, 999],
+	# Spell-casting params (v0.19.10): heal + smite amounts/ranges/cast/recovery + the kiter's flee radius.
+	"heal_amount": [0, 999],
+	"heal_range_tiles": [0, 30],
+	"heal_cast_beats": [0.0, 30.0],
+	"heal_recovery_beats": [0.0, 30.0],
+	"smite_damage": [0, 999],
+	"smite_range_tiles": [0, 30],
+	"smite_cast_beats": [0.0, 30.0],
+	"smite_recovery_beats": [0.0, 30.0],
+	"flee_range_tiles": [0, 30],
 }
 
 ## Dev CONFIG PRESETS (v0.19.7): `/config <alias>` applies a whole BUNDLE of /w + /m tunings in one command, so
