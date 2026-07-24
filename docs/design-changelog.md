@@ -10,6 +10,29 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.19.2 (2026-07-24) — COMBAT-FEEL TEST HOOKS: player windup, swing mirror, arriving gate (Jeff's 3 asks).**
+  Three things Jeff needed to stress-test the beats-and-grid core himself (he tunes the beats via `/w` and `/m`
+  live; these are the parts that needed code). LIGHTER verification by request — a boot smoke + GLM plan review,
+  not the full two-instance gate (feel-testing is Jon/Jeff's now). (1) **Enemy must be VISUALLY in the square
+  before it's attackable.** Under conga a glider claims its destination tile at glide START, so you could bump
+  a goblin a fraction of a beat before its sprite arrived. New `_arriving` set (MoveReferee) tracks the
+  slide-in window — set when a glide's visible slide begins (direct accept + pipelined promotion), cleared at
+  `slide_sec` (VISUAL arrival) by a token-guarded timer, and on death/exit. The bump validator refuses a strike
+  against a still-arriving hostile with a distinct `arriving` reject (cue-suppressed like `occupied_hostile`, so
+  held input re-lands the instant it settles); the settle period (visually on-tile) stays fair game. (2) **Slash
+  mirror.** The shared rig's slash swept `aim − arc/2 → aim + arc/2`, which reads overhead for a rightward aim
+  but "upward from the feet" for a leftward one (a goblin on your right swinging at you). A `sweep` sign
+  (`unit.x < 0`) now mirrors the arc — and the wound-back windup pose — so a leftward swing is a proper mirrored
+  overhead; fixes goblin and player rigs both (8-way discrete aims, so no crossing pop; N/S keep the symmetric
+  vertical sweep). (3) **Player weapon windup (opt-in).** Player melee now routes through the SAME telegraphed
+  `wind_up` path the goblin uses when its resolved MELEE windup > 0 — commits in place, posts a `windup` event
+  (the player rig raises via the shared pose), resolves against the tile after the telegraph (distinct WHIFF if
+  the target flees). **Hard invariant: `windup_beats 0` (every weapon's default) stays the byte-identical
+  instant bump**; a ranged point-blank stays a kick. Dial it with `/w longsword windup_beats 2`. New
+  `equip=`-style `/w windup_beats` is already live; new `MoveReferee` reads `CombatReferee.melee_windup_beats_of`.
+  **Boot-verified:** a `windup_beats 2` player longsword telegraphs from a bump (`windup {HOST, windup_sec 1.0}`)
+  and resolves to a swing, no errors; instant bump unchanged. Swing-mirror correctness + the arriving feel are
+  Jeff's to eyeball.
 - **v0.19.1 (2026-07-24) — LOOT: enemies drop their weapon; left-click inventory to use/equip (Jon/Jeff).**
   The payoff on v0.19.0's base+modifier foundation (Jeff: "every enemy should drop the weapon it was using").
   THREE parts. (1) **Drop-on-death.** A dying MONSTER drops its equipped weapon as a `GroundItem` on its death

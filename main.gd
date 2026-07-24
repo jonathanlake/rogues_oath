@@ -965,12 +965,12 @@ func _handle_windup_event(event: Dictionary) -> void:
 	if monster != null:
 		monster.play_windup(_step_sign(monster.tile - target_tile), windup_sec)
 		return
-	# Player windup fallback (v0.17.1 review #6): a committed PLAYER windup whose weapon is unresolvable or
-	# isn't a "draw" style would otherwise render NO telegraph (the two branches above are the only ones), so
-	# a committed action would be silent — a §2.3.4 violation. Play a default held white flash so every
-	# committed windup has SOME telegraph. Defensive: no shipped content triggers this today (the only player
-	# windup is the bow's draw), so a flash floor suffices; a bespoke A/V telegraph waits for a real weapon.
-	entity.play_windup_fallback(windup_sec)
+	# Player windup pose landed above (v0.19.2): a PLAYER melee windup (opt-in windup_beats > 0) resolves its
+	# weapon and plays play_windup_pose — the rig raise IS its telegraph, so nothing more is needed here. The
+	# fallback below is ONLY for a weaponless / unresolvable player windup (a committed action must never be
+	# silent, §2.3.4) — gate it on weapon == null so a real melee windup doesn't ALSO flash the floor tell.
+	if weapon == null:
+		entity.play_windup_fallback(windup_sec)
 
 
 ## Play back a death (§2.3.4): the death sound on every peer (Main-level — the node itself vanishes
@@ -1571,7 +1571,10 @@ func _on_intent_rejected(action: String, reason: String) -> void:
 	# thud/flash would misread as "your input didn't register" (§2.2.8). The reject must still reach the
 	# sampler's reject-counting (a walk into an enemy still stops), so relay it cue-free. Every other
 	# reason keeps the full bonk (§2.3.4 — a genuine refusal stays distinctly audible + visible).
-	if reason == "occupied_hostile":
+	# "arriving" (v0.19.2): the player tried to strike a hostile that hasn't finished sliding into the square.
+	# Same cue-suppression as occupied_hostile — with input held the bump re-lands the instant the slide settles,
+	# so a thud/flash would misread as "your input didn't register." The reject still reaches reject-counting.
+	if reason == "occupied_hostile" or reason == "arriving":
 		me.note_reject_no_cue()
 	else:
 		me.play_bonk()

@@ -942,6 +942,20 @@ func _bonus_windup_beats_of(node: Node) -> float:
 	return 0.0
 
 
+## Resolved MELEE windup in BEATS for a would-be bump attacker (v0.19.2): the equipped weapon's base windup +
+## the wielder's melee windup bonus, floored at 0 — but ONLY for a MELEE weapon (range_tiles == 0). A ranged
+## weapon's point-blank bump is a KICK, never a telegraph, so it returns 0. MoveReferee reads this to decide
+## whether a player's bump routes through the telegraphed wind_up path (> 0) or stays the instant strike (0 =
+## today's default for every weapon). Read HOST-side; the wire is never trusted.
+func melee_windup_beats_of(node: Node) -> float:
+	if not (node is Entity) or node.equipped_weapon == null:
+		return 0.0
+	var w: WeaponType = node.equipped_weapon
+	if w.range_tiles > 0:
+		return 0.0
+	return maxf(0.0, w.windup_beats + _bonus_windup_beats_of(node))
+
+
 ## Wielder MELEE recovery bonus in BEATS (v0.19.0): monsters only (MonsterType.bonus_recovery_beats). Melee-
 ## gated by the caller. Missing type / non-monster → 0.
 func _bonus_recovery_beats_of(node: Node) -> float:

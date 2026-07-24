@@ -116,6 +116,13 @@ func play_swing(dir: Vector2i, duration_sec: float) -> void:
 	_windup_posed = false
 	var unit := Vector2(dir.x, dir.y).normalized() if dir != Vector2i.ZERO else Vector2(1.0, 0.0)
 	var aim := unit.angle()
+	# Overhead-mirror (v0.19.2): the slash sweeps from `aim - arc/2` (up side) through `aim + arc/2` (down
+	# side) — which reads as a proper overhead arc for a RIGHTWARD aim, but for a LEFTWARD aim the same
+	# formula sweeps low→high (an "upward from the feet" swing, Jeff's report). Flip the sweep for left-facing
+	# aims so it always reads overhead; every arc/windback term below is multiplied by `sweep`. Aims are 8-way
+	# (dir is a sign vector), so this is a discrete flip with no continuous crossing to pop; N/S (unit.x == 0)
+	# keep the symmetric vertical sweep.
+	var sweep := -1.0 if unit.x < 0.0 else 1.0
 	# Normalize the phase fractions (defensive: a .tres could author any values). A degenerate
 	# non-positive sum falls back to an even split rather than dividing by zero.
 	var s := _weapon.startup_frac
@@ -147,11 +154,12 @@ func play_swing(dir: Vector2i, duration_sec: float) -> void:
 		# play_windup_pose. Do NOT reset the sprite to orbit (that would jump the club in) and do NOT snap the
 		# rig to the near edge (that would jump it forward) — snap the rig to the wound-back angle `back` and
 		# let the slash arm whip forward FROM here. This is the SINGLE authoritative snap to `back`.
-		rotation = aim - arc * 0.5 - deg_to_rad(_weapon.windup_raise_degrees)
+		rotation = aim - sweep * (arc * 0.5 + deg_to_rad(_weapon.windup_raise_degrees))
 	else:
-		# Instant path (and every stab): byte-identical to the pre-v0.18.2 entry snap.
+		# Instant path (and every stab): byte-identical to the pre-v0.18.2 entry snap (sweep = +1 for a
+		# rightward aim, so this is unchanged there; a leftward aim now snaps to the mirrored near edge).
 		_sprite.position = Vector2(orbit, 0.0)
-		rotation = aim if is_stab else aim - arc * 0.5
+		rotation = aim if is_stab else aim - sweep * arc * 0.5
 
 	_swing_tween = create_tween()
 	if is_stab:
@@ -166,15 +174,15 @@ func play_swing(dir: Vector2i, duration_sec: float) -> void:
 		# entry above) through the target to the far edge, radius held OUT through the sweep then retracted on
 		# recover. No hard snap (that would jump the club forward from behind). Endpoint aim+arc/2 = same
 		# terminus as the instant swing. The first tweener starts from the current rotation, which IS `back`.
-		_swing_tween.tween_property(self, "rotation", aim + arc * 0.5, t_start + t_active)
+		_swing_tween.tween_property(self, "rotation", aim + sweep * arc * 0.5, t_start + t_active)
 		_swing_tween.chain().tween_property(_sprite, "position:x", orbit, t_recover)
 	else:
 		# Slash: a genuine sweeping arc across the target. Wind back a touch past the near edge during
 		# startup, then sweep the rig from -arc/2 through +arc/2 during active while the sprite pushes
 		# out half-reach, then settle the radius back during recovery.
-		_swing_tween.tween_property(self, "rotation", aim - arc * 0.5 - _SLASH_STARTUP_WINDBACK_RAD, t_start)
+		_swing_tween.tween_property(self, "rotation", aim - sweep * (arc * 0.5 + _SLASH_STARTUP_WINDBACK_RAD), t_start)
 		_swing_tween.chain().set_parallel(true)
-		_swing_tween.tween_property(self, "rotation", aim + arc * 0.5, t_active)
+		_swing_tween.tween_property(self, "rotation", aim + sweep * arc * 0.5, t_active)
 		_swing_tween.tween_property(_sprite, "position:x", orbit + reach * 0.5, t_active)
 		_swing_tween.chain().tween_property(_sprite, "position:x", orbit, t_recover)
 	# Presentation over: hide the sprite. play_swing is the SINGLE owner of "weapon visible" — every
@@ -226,9 +234,12 @@ func play_windup_pose(dir: Vector2i, hold_sec: float, weapon: WeaponType = null)
 		# the near edge (which would jump the club forward). Set at the START so a launch during ANY phase
 		# (fast tempo) still takes the posed branch. No expiry: the sequence ends parked and HOLDS.
 		_windup_posed = true
-		var back := aim - deg_to_rad(_weapon.arc_degrees) * 0.5 - deg_to_rad(_weapon.windup_raise_degrees)
+		# Overhead-mirror (v0.19.2), same sweep sign as play_swing so the wound-back pose parks on the side the
+		# slash launches from (mirrored for a leftward aim, else unchanged).
+		var pose_sweep := -1.0 if unit.x < 0.0 else 1.0
+		var back := aim - pose_sweep * (deg_to_rad(_weapon.arc_degrees) * 0.5 + deg_to_rad(_weapon.windup_raise_degrees))
 		var ext := orbit + _weapon.windup_reach_px
-		rotation = aim - deg_to_rad(_weapon.arc_degrees) * 0.5   # start at the near edge, rest radius
+		rotation = aim - pose_sweep * deg_to_rad(_weapon.arc_degrees) * 0.5   # start at the (mirrored) near edge, rest radius
 		_sprite.position = Vector2(orbit, 0.0)
 		# Phase A — WIND BACK + OUT (parallel), a fraction of the window.
 		var windback_sec := hold_sec * _POSE_WINDBACK_FRAC

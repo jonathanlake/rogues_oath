@@ -102,6 +102,14 @@ var _pending: Dictionary = {}
 # DESIGN: a never-moved entity has no back to stab; its first accepted action sets a real facing.
 # Cleared wholesale on death (clear_entity) and on container exit, like every other per-entity record.
 var _facing: Dictionary = {}
+# ARRIVING window (v0.19.2): entity_id -> the tile it is currently sliding INTO. Under conga a glider
+# claims its destination in _occupied at glide START, but the sprite tweens in over slide_sec — so an
+# entity is "logically there" a fraction of a beat before it is "visually there." This tracks that gap:
+# set when a glide's VISIBLE slide begins (direct accept + pipelined promotion), CLEARED at slide_sec (a
+# token-guarded timer, so a superseded glide's stale timer can't clear a newer arrival) — i.e. at VISUAL
+# arrival, NOT at the later action-window end. The bump validator refuses a strike against a still-arriving
+# hostile so you can't hit a goblin before it's in the square (Jeff's report). Cleared on death/exit too.
+var _arriving: Dictionary = {}
 # Monotonic per-glide id, stamped into each _gliding record so a completion timer can tell "my"
 # glide from a later one for the same peer (disconnect+rejoin, or any superseding glide).
 var _next_token: int = 0
@@ -294,6 +302,7 @@ func clear_entity(entity_id: int) -> void:
 	_gliding.erase(entity_id)
 	_pending.erase(entity_id)
 	_facing.erase(entity_id)
+	_arriving.erase(entity_id)
 	_erase_by_value(_occupied, entity_id)
 	_erase_by_value(_reserved, entity_id)
 
@@ -401,6 +410,21 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 		# brain's adjacency branch fires before any step toward a player could be chosen — this is
 		# the structural backstop that keeps a monster intent from ever dealing bump damage).
 		if not is_pipelined and sender_peer_id > 0 and blocker_is_hostile:
+			# Arriving gate (v0.19.2): the hostile claims `to` at glide START (conga) but may still be sliding
+			# in — don't let the player strike it before it's VISUALLY in the square (Jeff's report). Refuse
+			# "arriving", cue-suppressed in main._on_intent_rejected like occupied_hostile, so held input re-lands
+			# the moment the slide settles. Cleared at slide_sec, so the settle period (visually on-tile) is fair game.
+			if _arriving.has(occupant_id):
+				return { "ok": false, "reason": "arriving" }
+			# Player melee WINDUP (v0.19.2, opt-in): a MELEE weapon whose RESOLVED windup > 0 telegraphs like the
+			# goblin — route the bump through the shared wind_up path (commits in place, posts the windup event,
+			# resolves against `to` after the telegraph, distinct WHIFF if the target flees). windup 0 (every
+			# weapon's default) or a ranged weapon (kick) falls straight through to the byte-identical instant bump.
+			if _combat != null and _combat.melee_windup_beats_of(mover) > 0.0:
+				var wait: float = _combat.wind_up(sender_peer_id, to)
+				if wait >= 0.0:
+					return { "ok": true, "deferred": true }  # the windup + attack/whiff events ARE the outcome
+				return { "ok": false, "reason": "busy" }      # declined (defensive — from-idle isn't busy)
 			return _begin_bump(sender_peer_id, mover, occupant_id, occupant, dir)
 		if blocker_is_hostile:
 			return { "ok": false, "reason": "occupied_hostile" }
@@ -469,8 +493,24 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# then sit SETTLED on the destination tile until the next step's broadcast arrives at the
 	# action-window boundary — the settle is the grid tell (v0.8.0) and exists even at rest 0.
 	get_tree().create_timer(busy_sec).timeout.connect(_finish_glide.bind(sender_peer_id, token))
+	# Arriving window (v0.19.2): the mover is now sliding INTO `to` (occupancy already claimed it above under
+	# conga). Mark it arriving and clear at slide_sec = VISUAL arrival (token-guarded), so a bump against it is
+	# refused until the sprite lands. A commit_in_place (from==to) never reaches here, so no bump/wind-up is
+	# wrongly gated. hold-origin (reserved, no early claim) has no early-attack gap — but marking is harmless.
+	_arriving[sender_peer_id] = to
+	get_tree().create_timer(slide_sec).timeout.connect(_clear_arriving.bind(sender_peer_id, token))
 
 	return { "ok": true, "data": { "from": from, "to": to, "duration_sec": slide_sec } }
+
+
+## Clear an entity's ARRIVING mark at VISUAL arrival (slide_sec), token-guarded like _finish_glide: only clear
+## if the entity's CURRENT glide is still this same one. A superseded glide overwrote _arriving with its own
+## (newer) destination and armed its own clear; this stale timer must NOT wipe that newer arrival, so a token
+## mismatch no-ops. Death/exit erase _arriving directly, so a gone entity's stale timer also no-ops here.
+func _clear_arriving(entity_id: int, token: int) -> void:
+	var rec = _gliding.get(entity_id)
+	if rec != null and int(rec.get("token", -1)) == token:
+		_arriving.erase(entity_id)
 
 
 ## Compute a step's GLIDE term seconds — NOT the visible tween (that is slide_fraction of this, see
@@ -691,6 +731,10 @@ func _finish_glide(peer_id: int, token: int) -> void:
 		# The promoted step's own action window (glide + rest) — the NEXT window is honoured too, so
 		# a held run keeps its cadence step after step. Broadcast carries slide_sec (the visible slide).
 		get_tree().create_timer(busy_sec).timeout.connect(_finish_glide.bind(peer_id, next_token))
+		# Arriving window for the promoted step (v0.19.2): its VISIBLE slide starts NOW (at this promotion, not
+		# at the earlier pipelined accept), so mark + clear at slide_sec exactly like the direct-accept path.
+		_arriving[peer_id] = to
+		get_tree().create_timer(slide_sec).timeout.connect(_clear_arriving.bind(peer_id, next_token))
 		NetEvents.post_event("glide_to", { "from": from, "to": to, "duration_sec": slide_sec }, peer_id)
 		return
 	_gliding.erase(peer_id)
@@ -730,6 +774,7 @@ func _on_entity_exiting(node: Node) -> void:
 	# destination — a pipelined mover's single _occupied entry IS that dest (swapped at accept).
 	_pending.erase(entity_id)
 	_facing.erase(entity_id)
+	_arriving.erase(entity_id)
 	_erase_by_value(_occupied, entity_id)
 	_erase_by_value(_reserved, entity_id)
 
