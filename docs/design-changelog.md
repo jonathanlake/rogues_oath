@@ -10,6 +10,31 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.19.0 (2026-07-23) — WEAPONS: base stats + wielder modifiers, claw→club, the double-hit fix
+  (Jon/Jeff).** Foundation for lootable weapons (Jeff: "every enemy should drop the weapon it was
+  using"). THREE coupled changes. (1) **Base + wielder-modifier stat model (§2.3.7).** A weapon now
+  supplies BASE damage/windup/recovery; the wielder adds a SIGNED modifier on top, floored at 0 —
+  `MonsterType.bonus_damage`/`bonus_windup_beats`/`bonus_recovery_beats` and `Player.bonus_damage` (the
+  future strength hook). Replaces the old weapon-WINS-over-fallback override. This is HOW enemies are
+  slower than players with the SAME weapon: the goblin's club has base windup 0 (instant as a player
+  bump) and the goblin adds +1 windup to telegraph + 1 recovery to slow its rate. Beat-bonuses are
+  MELEE-ONLY (a ranged weapon's windup is its draw — never retuned by a wielder bonus, so the bow is
+  permanently unaffected); `bonus_damage` applies to all; the passive `modify_damage` chain layers on
+  top (weapon base → flat wielder bonus → passives). Bonuses read from the SOURCE (MonsterType / Player
+  export) so `/m` live-tuning still works (`DEV_MONSTER_FIELDS` now carries the three bonus fields).
+  (2) **claw → club.** The goblin's weapon is now a real `club.tres` (damage 2, base windup 0, recovery
+  2); the misnamed `claw.tres` is deleted (a truly unarmed enemy gets a natural weapon later, not the
+  claw). Resolved goblin = windup 1 / recovery 3 / damage 2. (3) **Double-hit fix.** The telegraphed
+  wind-up now commits the FULL window (windup + recovery) as ONE referee-busy record, not the wind-up
+  alone — so `notify_attacked` (v0.17.2 "damage wakes the brain") during recovery correctly sees the
+  goblin busy instead of buying it a bonus attack. `notify_attacked` also skips its reschedule when the
+  monster is already committed (belt: covers future DoT/trap callers). **VERIFIED two-instance:** goblin
+  attacks the club with `windup_sec 0.5` (1 beat) + recovery `duration_sec 1.5` (3 beats), damage 2; a
+  host wielding the same club bumps INSTANTLY (recovery 2 beats, no windup). Double-hit: with the host
+  landing 7 bumps on the goblin, its attack count is **9 — identical to the idle baseline (9)**; the
+  pre-fix code produces **22** from the same 7 bumps (Jeff's "double-hitting after you hit him,"
+  reproduced and closed). **UX unchanged this version.** NEXT (v0.19.x): enemies drop the weapon on
+  death; loot into the inventory; left-click to equip (swap).
 - **v0.18.2 (2026-07-23) — GOBLIN WINDUP POSE v2 + the telegraph-never-showed bug (Jon).** Jon's
   feel verdict on v0.18.1: the club didn't show during the wind-up. VERIFICATION CAUGHT THE REAL
   BUG (probe, not the eye): the melee windup POSE resolves its weapon via

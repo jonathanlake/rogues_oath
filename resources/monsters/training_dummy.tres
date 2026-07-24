@@ -8,7 +8,6 @@
 script = ExtResource("3_type")
 display_name = "Training Dummy"
 max_hp = 1000
-windup_beats = 0.0
 glide_speed = ExtResource("2_speed")
 atlas_texture = ExtResource("1_atlas")
 atlas_region = Rect2(66, 0, 32, 32)

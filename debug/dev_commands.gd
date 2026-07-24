@@ -279,9 +279,9 @@ func _dev_cmd_item(sender_peer_id: int, args: Array[String], by: String) -> Dict
 	return { "ok": true, "data": { "line": "%s spawned a %s at (%d, %d)." % [by, item.display_name, tile.x, tile.y] } }
 
 
-## Resolve a weapon by lowercase name (v0.10.0 /w): GameConfig.weapon_by_name FIRST (roster display_name),
-## else a filename load guarded by ResourceLoader.exists — so the claw (not in the roster) is reachable by
-## its filename (= its display_name). Null if neither resolves. Host-side only.
+## Resolve a weapon by lowercase name (v0.10.0 /w): GameConfig.weapon_by_name FIRST (catalog display_name),
+## else a filename load guarded by ResourceLoader.exists — so a weapon not in the player roster (e.g. the
+## goblin's club) is still reachable by its filename (= its display_name). Null if neither resolves. Host-side.
 func _resolve_weapon(name: String) -> WeaponType:
 	var w := GameManager.config.weapon_by_name(name)
 	if w != null:

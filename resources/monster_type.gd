@@ -13,12 +13,6 @@ extends Resource
 ## defaults below are therefore part of the authored surface: changing one retunes every monster
 ## that doesn't override it. Change them as deliberately as you would a .tres value.
 
-## The single authoring site for the wind-up default (BEATS): the windup_beats export below seeds
-## from it, and CombatReferee's total-accessor fallback returns it for a non-monster / missing-type
-## node — so the "slow telegraph" default has ONE home, not a shadow copy in the referee. Non-zero
-## so a fresh monster telegraphs by default (the windup is a per-monster dial the goblin sets to 0).
-const DEFAULT_WINDUP_BEATS := 2.0
-
 ## Log / nameplate name for this monster ("Goblin").
 @export var display_name: String = ""
 
@@ -43,41 +37,36 @@ const DEFAULT_WINDUP_BEATS := 2.0
 ## spawn; the combat referee owns the live value and applies damage against it.
 @export var max_hp: int = 10
 
-## The monster's held weapon (v0.9.3 — monster attacks joined the WeaponType + WeaponRig system,
-## the same object a player equips). null (default) = WEAPONLESS: no rig sprite, no swing, no weapon
-## field on its attack events (the training dummy). When set, the weapon WINS over the legacy
-## attack fields below at all three CombatReferee read sites (damage / windup / recovery) — those
-## fields remain the null-weapon fallbacks. Seeded onto the Monster's equipped_weapon in _ready;
-## monsters don't swap, so it is read once at spawn. Authored as a .tres path (never streamed).
+## The monster's held weapon (v0.9.3 — monster attacks joined the WeaponType + WeaponRig system, the
+## same object a player equips). null (default) = WEAPONLESS: no rig sprite, no swing, no weapon field
+## on its attack events, and it deals NOTHING (the training dummy; unarmed-with-a-natural-weapon is a
+## future concept, not a fallback). When set, the weapon supplies the BASE damage / windup / recovery,
+## and the bonus_* modifiers below are ADDED on top (v0.19.0 base+wielder-modifier model, DESIGN §2.3.7).
+## Seeded onto the Monster's equipped_weapon in _ready; monsters don't swap, so it is read once at spawn.
+## Authored as a .tres path (never streamed).
 @export var weapon: WeaponType = null
 
-## Hit points removed per landed attack (deterministic — no to-hit roll, DESIGN §2.3 amendment).
-## NULL-WEAPON FALLBACK (v0.9.3): read by CombatReferee.damage_of ONLY when `weapon` is null — an
-## equipped weapon's `damage` wins.
-@export var attack_damage: int = 3
+## DAMAGE MODIFIER (v0.19.0): a flat bonus ADDED to the equipped weapon's base damage when this monster
+## attacks (base + wielder-modifier model, DESIGN §2.3.7 — the same shape a future player strength stat
+## uses). Signed: a designer can make a monster hit harder (+) or softer (−) with the SAME weapon; the
+## referee floors the sum at 0. 0 = the weapon's raw damage. Read HOST-side by CombatReferee.damage_of.
+@export var bonus_damage: int = 0
 
-## Telegraph duration in BEATS between a monster committing its attack and the damage resolving
-## against the target TILE (DESIGN §2.1 "slow telegraphs, hard commits"; §2.8 beats). The windup
-## EXPERIMENT failed in both directions (0.25s unreadable, 0.5s dodgeable-every-time), so this is
-## now a per-monster DIAL set to 0 on the goblin: at 0 the attack is an instant deterministic
-## strike (no telegraph, no whiff window) followed by recovery_beats. At > 0 the full telegraph/
-## whiff machinery runs unchanged (CombatReferee.wind_up) — preserved behind the dial, not deleted.
-## NULL-WEAPON FALLBACK (v0.9.3): read by CombatReferee._windup_duration_of ONLY when `weapon` is
-## null — an equipped weapon's `windup_beats` wins (the goblin's 0 now lives on the claw).
-@export var windup_beats: float = DEFAULT_WINDUP_BEATS
+## WINDUP MODIFIER in BEATS (v0.19.0): ADDED to the equipped MELEE weapon's base windup — the telegraph
+## between committing the attack and the strike resolving (DESIGN §2.1 "slow telegraph, hard commit").
+## This is HOW a monster is slower than a player wielding the same weapon: the club's base windup is 0
+## (instant in a player's hands via the bump), and the goblin adds +1 here to telegraph. Signed; the
+## referee floors the sum at 0. IGNORED for a RANGED weapon (the bow's windup is its draw — wielder
+## beat-bonuses are melee-only, so a future player bonus never retunes the bow). Read HOST-side by
+## CombatReferee._windup_duration_of.
+@export var bonus_windup_beats: float = 0.0
 
-## Recovery in BEATS the monster is BUSY after an instant strike (windup_beats == 0) resolves — the
-## symmetric attack shape (DESIGN §2.8): instant strike + N-beat recovery during which it cannot
-## act. Unlike the old brain-pacing idle, this is a real referee busy record (Commitment Rule
-## enforced) for the windup==0 path. For the windup > 0 path it is added as brain pacing after the
-## telegraph resolves (that path is otherwise unchanged). Goblin = 2.0 → attack rate = movement
-## rate. Read HOST-side by CombatReferee (stamped to seconds) and MonsterBrain (post-attack pacing).
-## Non-zero DEFAULT (like the windup's) so a fresh windup-0 monster never gets a zero-length busy
-## by omission — attacking every brain poll must be an explicit authoring choice, never a default.
-## NULL-WEAPON FALLBACK (v0.9.3): CombatReferee._recovery_duration_of reads this ONLY when `weapon`
-## is null — an equipped weapon's `attack_beats` (its whole occupied window) wins (the goblin's 2.0
-## now lives on the claw's attack_beats). The brain's post-attack pacing still reads wind_up's return.
-@export var recovery_beats: float = 2.0
+## RECOVERY MODIFIER in BEATS (v0.19.0): ADDED to the equipped MELEE weapon's base recovery (its whole
+## occupied window after the strike, during which the monster is BUSY — Commitment Rule). The goblin adds
+## +1 here so its attack rate sits below a player's with the same weapon. Signed; floored at 0 by the
+## referee; IGNORED for a ranged weapon (melee-only, same reason as bonus_windup_beats). Read HOST-side by
+## CombatReferee._recovery_duration_of and by MonsterBrain's post-attack pacing (via wind_up's return).
+@export var bonus_recovery_beats: float = 0.0
 
 ## Movement speed tier — a shared GlideSpeed resource, same mechanism players use. The referee
 ## reads glide_beats from here when it stamps each monster step's duration.

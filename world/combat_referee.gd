@@ -312,12 +312,17 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 		_resolve_windup(attacker_id, target_tile, "strike", recovery_sec)
 		return recovery_sec
 
-	# Telegraphed wind-up path (dial > 0) — unchanged. Record the busy commit through the ONE shared
-	# path (bump uses it too), so the from==to busy logic lives in exactly one place.
-	if not _move_referee.commit_in_place(attacker_id, windup_sec):
+	# Telegraphed wind-up path (dial > 0). Commit the FULL window — windup + recovery — as ONE referee-busy
+	# record (v0.19.0 double-hit fix), not the windup alone. The strike still resolves at windup_sec (the
+	# timer below), but the monster stays referee-busy through its recovery, so an EXTERNAL wake during
+	# recovery (notify_attacked when the monster is hit) correctly sees it busy instead of firing a bonus
+	# attack. This matches the instant-strike path, which already commits its full recovery. No cancel path
+	# is lost — the Commitment Rule already forbids interrupting a committed action; the busy record just now
+	# spans the true "cannot act" window. Shared commit_in_place (bump uses it too): from==to busy in one place.
+	if not _move_referee.commit_in_place(attacker_id, windup_sec + recovery_sec):
 		return -1.0
 	# Stamp the weapon on the telegraph event (present-only), mirroring _build_attack_data and the bow
-	# shoot path: a MELEE windup weapon (the goblin's claw) rides its display_name so every peer's rig
+	# shoot path: a MELEE windup weapon (the goblin's club) rides its display_name so every peer's rig
 	# can pose the raised telegraph over the coil. A weaponless windup attacker stamps no field.
 	var windup_data := {
 		"entity_id": attacker_id,
@@ -338,20 +343,18 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 
 
 ## Host-side stat accessors, read by MoveReferee for a bump/AoO so combat numbers live in ONE place
-## (this referee). Damage is per-entity (player melee_damage / monster attack_damage); the bump's
-## recovery tail is the attacker's recovery beats. Duck-typed across the two entity kinds; an
-## unknown node reads harmless defaults. DELIBERATELY not collapsed to one Entity read: Player's
-## export keeps its tuned name melee_damage (pinned in player.tscn), so the two stats keep their
-## own names and this accessor stays the one translation point.
+## (this referee). BASE + WIELDER MODIFIER (v0.19.0, DESIGN §2.3.7): the equipped weapon supplies the
+## base damage and the wielder adds a signed bonus on top (floored at 0), so the SAME weapon hits for
+## different amounts in different hands. A weaponless Player still reads melee_damage (vestigial fallback
+## — a player always has a weapon); a weaponless Monster deals 0 (unarmed is a future natural-weapon, not
+## a fallback). Duck-typed across the two entity kinds.
 func damage_of(node: Node) -> int:
-	# Weapon-first (v0.9.3): ANY Entity's equipped_weapon.damage wins for both kinds; the per-kind
-	# legacy field is the null-weapon fallback, then a hard 0. Explicit order: weapon → legacy → DEFAULT.
+	# Weapon base + wielder bonus (v0.19.0), floored at 0. The passive modify_damage chain still runs
+	# AFTER this in apply_damage (layering: weapon base → flat wielder bonus → conditional passive layer).
 	if node is Entity and node.equipped_weapon != null:
-		return node.equipped_weapon.damage
+		return maxi(0, node.equipped_weapon.damage + _bonus_damage_of(node))
 	if node is Player:
 		return node.melee_damage
-	if node is Monster and node.monster_type != null:
-		return node.monster_type.attack_damage
 	return 0
 
 
@@ -850,20 +853,17 @@ func _max_hp_of(node: Node) -> int:
 	return 0
 
 
-## The wind-up telegraph duration for a node (seconds) — its MonsterType.windup_beats stamped at the
-## ATTACKER's resolved pace (PaceReferee, §2.8.7: an engaged monster telegraphs at the tactical beat). A
-## non-monster / missing type falls back to MonsterType.DEFAULT_WINDUP_BEATS — the value's single
-## authoring site — so the accessor is total without a shadow copy of the number here.
+## The wind-up telegraph duration for a node (seconds): the equipped weapon's BASE windup plus the
+## wielder's MELEE windup bonus (v0.19.0), stamped at the ATTACKER's resolved pace (PaceReferee §2.8.7 —
+## an engaged monster telegraphs at the tactical beat). The bonus is melee-only (skipped for a ranged
+## weapon, whose windup_beats is its DRAW — wielder beat-bonuses must never retune the bow), floored at 0.
+## A weaponless node has no windup (0) — unarmed is a future natural-weapon, not a fallback.
 func _windup_duration_of(node: Node) -> float:
-	# Weapon-first (v0.9.3): ANY Entity's equipped_weapon.windup_beats wins (the goblin's 0 lives on
-	# its claw now). Else the per-type monster windup, else DEFAULT_WINDUP_BEATS (the single authoring
-	# site for the telegraph default). Order: weapon → per-kind legacy → DEFAULT.
 	if node is Entity and node.equipped_weapon != null:
-		return node.equipped_weapon.windup_beats * _pace_beat_sec(node)
-	var beats := MonsterType.DEFAULT_WINDUP_BEATS
-	if node is Monster and node.monster_type != null:
-		beats = node.monster_type.windup_beats
-	return beats * _pace_beat_sec(node)
+		var w: WeaponType = node.equipped_weapon
+		var bonus := 0.0 if w.range_tiles > 0 else _bonus_windup_beats_of(node)
+		return maxf(0.0, w.windup_beats + bonus) * _pace_beat_sec(node)
+	return 0.0
 
 
 ## The attacker node's resolved beat (seconds) at stamp time — tactical or explore per PaceReferee
@@ -876,18 +876,44 @@ func _pace_beat_sec(node: Node) -> float:
 	return GameManager.explore_beat_sec
 
 
-## The attacker's recovery tail (seconds) — its authored recovery beats stamped at the ATTACKER's
-## resolved pace (PaceReferee, §2.8.7: an engaged attacker recovers at the tactical beat; a player's bump
-## tail stamps tactical because _begin_bump armed the forcing window first). Player: attack_recovery_beats;
-## monster: recovery_beats. The one conversion for a bump tail (bump_duration_of) and an instant strike's
-## busy (wind_up). Unknown / missing-type node reads 0 (no recovery).
+## The attacker's recovery tail (seconds): the equipped weapon's BASE recovery (attack_beats — its whole
+## occupied window, Part 4 Q9) plus the wielder's MELEE recovery bonus (v0.19.0), stamped at the ATTACKER's
+## resolved pace (§2.8.7: an engaged attacker recovers at the tactical beat; a player's bump tail stamps
+## tactical because _begin_bump armed the forcing window first). Bonus is melee-only + floored at 0. A
+## weaponless Player keeps attack_recovery_beats (vestigial fallback); a weaponless Monster has 0. The one
+## conversion for a bump tail (bump_duration_of) and an instant strike's busy (wind_up).
 func _recovery_duration_of(node: Node) -> float:
-	# Weapon-first (v0.9.3): ANY Entity's equipped_weapon.attack_beats IS its whole occupied window
-	# (no separate cooldown, Part 4 Q9). Order: weapon → per-kind legacy recovery field → hard 0.
 	if node is Entity and node.equipped_weapon != null:
-		return node.equipped_weapon.attack_beats * _pace_beat_sec(node)
+		var w: WeaponType = node.equipped_weapon
+		var bonus := 0.0 if w.range_tiles > 0 else _bonus_recovery_beats_of(node)
+		return maxf(0.0, w.attack_beats + bonus) * _pace_beat_sec(node)
 	if node is Player:
 		return node.attack_recovery_beats * _pace_beat_sec(node)
+	return 0.0
+
+
+## Wielder DAMAGE bonus (v0.19.0 base+modifier): a Player's own bonus_damage (the future strength-stat
+## hook, 0 today) or a Monster's authored MonsterType.bonus_damage. Read from the SOURCE (not a cached
+## node field) so the /m and /class live-tuning knobs keep working. Anything else / missing type reads 0.
+func _bonus_damage_of(node: Node) -> int:
+	if node is Player:
+		return node.bonus_damage
 	if node is Monster and node.monster_type != null:
-		return node.monster_type.recovery_beats * _pace_beat_sec(node)
+		return node.monster_type.bonus_damage
+	return 0
+
+
+## Wielder MELEE windup bonus in BEATS (v0.19.0): monsters only (MonsterType.bonus_windup_beats) — a player
+## never slows its own weapon. Callers gate this to melee (range_tiles == 0). Missing type / non-monster → 0.
+func _bonus_windup_beats_of(node: Node) -> float:
+	if node is Monster and node.monster_type != null:
+		return node.monster_type.bonus_windup_beats
+	return 0.0
+
+
+## Wielder MELEE recovery bonus in BEATS (v0.19.0): monsters only (MonsterType.bonus_recovery_beats). Melee-
+## gated by the caller. Missing type / non-monster → 0.
+func _bonus_recovery_beats_of(node: Node) -> float:
+	if node is Monster and node.monster_type != null:
+		return node.monster_type.bonus_recovery_beats
 	return 0.0

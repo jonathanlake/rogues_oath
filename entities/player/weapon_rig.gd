@@ -182,7 +182,7 @@ func play_swing(dir: Vector2i, duration_sec: float) -> void:
 	_swing_tween.chain().tween_callback(func() -> void: _sprite.visible = false)
 
 
-## Pose the weapon RAISED during a melee windup telegraph (v0.18.x, the goblin's claw) toward `dir` —
+## Pose the weapon RAISED during a melee windup telegraph (v0.18.x, the goblin's club) toward `dir` —
 ## Main drives this off the `windup` event on EVERY peer, so the raised tell reads identically on the wire
 ## (no new sync). The weapon snaps to a raised pose BEHIND the swing's start edge and HOLDS there over the
 ## body's away-coil, then the normal play_swing (off the attack/whiff event) takes over at resolution —
@@ -218,7 +218,7 @@ func play_windup_pose(dir: Vector2i, hold_sec: float, weapon: WeaponType = null)
 		rotation = aim
 		_swing_tween.tween_property(_sprite, "position:x", _STAB_START_RADIUS_PX, _POSE_SNAP_SEC)
 	else:
-		# Slash (the claw): a real anticipation wind-up. The club cocks BACK behind the goblin (past the
+		# Slash (the club): a real anticipation wind-up. The club cocks BACK behind the goblin (past the
 		# swing's near edge by windup_raise_degrees) AND pushes OUT to windup_reach_px past orbit so it
 		# clears the body silhouette (orbit 12px alone buried it inside the 32px sprite). It LINGERS wound
 		# back, then a quick SHAKE builds tension; play_swing (off the attack event) launches it forward.

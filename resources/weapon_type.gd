@@ -82,7 +82,7 @@ extends Resource
 ## authored in items.png. The DEFAULT -90 restores the pre-v0.17.2 melee presentation (the original PI/2
 ## baseline): the melee art NOMINALLY points NE on the sheet, but the -90 mapping is the look Jon confirmed
 ## reads correctly IN MOTION (v0.17.2 veto of the -45 sheet-geometry value) — this field is PRESENTATION
-## TRUTH, not sheet geometry. So dagger / longsword / claw need no .tres edit; the bow art fires SW = 135
+## TRUTH, not sheet geometry. So dagger / longsword / club need no .tres edit; the bow art fires SW = 135
 ## (bow.tres overrides explicitly). Presentation-only: the rig rotates its sprite by -deg_to_rad(this) to
 ## map the art's native direction onto the rig's local +x. One per-weapon field because the sheet is NOT
 ## uniformly oriented, so no single baseline constant can be right.

@@ -178,9 +178,12 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    before the hit (invites the degenerate dodge-dance) to after it (readable state: "the
    goblin is spent — now's my window"). Player and goblin recovery both authored 2 beats,
    so attack rate = movement rate ("equal in terms of time and ability" — Jon's note).
-   The telegraph/whiff machinery is PRESERVED behind `windup_beats` (goblin 0.0) — a
-   future heavy monster may windup, ideally re-tested WITH AoO enabled, the configuration
-   where dodging finally costs something (parked beside the §2.2.6 AoO toggle).
+   The telegraph/whiff machinery is PRESERVED behind `windup_beats` — a future heavy monster
+   may windup, ideally re-tested WITH AoO enabled, the configuration where dodging finally
+   costs something (parked beside the §2.2.6 AoO toggle). *(Superseded v0.18.x/v0.19.0: the
+   goblin now DOES telegraph — its club has base windup 0 and the goblin adds a **+1 windup
+   wielder-modifier** (§2.3.7 base+modifier), so the telegraph lives on the slow WIELDER, not
+   the weapon; a player wielding the same club still bumps instantly.)*
    **Aggro persistence (same session):** `aggro_range_tiles` becomes the ACQUIRE gate
    only — once aggroed, a monster stays aggroed (`aggro_persists`, MonsterType, default
    true; Jon: "he shouldn't turn off aggro"). The v0.6.0 range-as-leash behavior (chase
@@ -211,6 +214,17 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
      (bump-with-windup through the proven monster machinery) ships with the first windup
      weapon, a deliberate M3.7 scope cut. The legacy player exports
      (`melee_damage`/`attack_recovery_beats`) are the no-weapon fallback only.
+   - **Base + wielder modifier (v0.19.0).** A weapon's `damage`/`windup_beats`/`attack_beats`
+     are the BASE; the wielder adds a SIGNED modifier on top, floored at 0 by the referee —
+     `MonsterType.bonus_damage`/`bonus_windup_beats`/`bonus_recovery_beats` and `Player.bonus_damage`
+     (the future strength-stat hook). This is how the SAME weapon is slower in a monster's hands than
+     a player's: the goblin's **club** has base `windup_beats` 0 (instant as a player bump) and the
+     goblin adds **+1 windup** to telegraph it (§2.1) plus **+1 recovery** so its attack rate sits
+     below the player's. The beat-bonuses are **melee-only** (a ranged weapon's `windup_beats` is its
+     draw — a wielder bonus must never retune the bow); `bonus_damage` applies to all. The passive
+     `modify_damage` chain layers on top of the flat bonus (weapon base → wielder bonus → passives).
+     This split IS the loot spine: enemies drop their equipped weapon on death (v0.19.x) and the player
+     equips the very same object, resolving its stats through their own (0-today) modifiers.
    - **Animation** (presentation-only; gameplay NEVER reads these): `atlas_coords` into
      items.png, `attack_style` (stab | slash, v1), the phase fractions
      `startup_frac`/`active_frac`/`recovery_frac`, and the small tween knobs

@@ -112,6 +112,16 @@ func notify_attacked() -> void:
 	if not _active:
 		return
 	_aggroed = true
+	# Already committed to an action (glide or attack)? Latch aggro ONLY — do NOT schedule an early think.
+	# The referee holds this monster busy for its whole action window (v0.19.0: a telegraphed attack now
+	# commits windup+recovery), and the end-of-window think already re-decides targeting. Rescheduling here
+	# would fire a think MID-window that runs the busy-gate's glide-settle math in a non-glide (commit-in-place)
+	# context — harmless but sloppy, and pre-v0.19.0 it was the extra-STRIKE vector (a hit during recovery
+	# bought the goblin a bonus attack). Gating on busy makes this "the early think was wrong while committed,"
+	# and it covers any future damage source (DoT/trap) that calls notify_attacked. Commitment Rule intact:
+	# this never interrupts the in-flight action — the next boundary/window-end think handles retargeting.
+	if _referee.is_entity_moving(_entity_id):
+		return
 	_reschedule()
 
 

@@ -932,7 +932,7 @@ func _handle_windup_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
 	# Extended to ANY Entity (v0.17.0): the bow DRAW telegraph is a PLAYER windup too, so resolve the entity
 	# (player OR monster) and DISPATCH on the event's weapon. A "draw"-style weapon (the bow) plays the draw
-	# telegraph on the rig; anything else (a monster's claw — no/melee weapon field) keeps the coil-and-flash.
+	# telegraph on the rig; anything else (a monster's club — no/melee weapon field) keeps the coil-and-flash.
 	var entity := _node_for_peer(int(data.get("entity_id", 0)))
 	if entity == null:
 		return
@@ -948,7 +948,7 @@ func _handle_windup_event(event: Dictionary) -> void:
 		# retry window paints the RIGHT art for the draw, not whatever the rig last cached.
 		entity.play_draw(_step_sign(target_tile - entity.tile), windup_sec, weapon)
 		return
-	# Melee windup POSE (v0.18.x, the goblin's claw): a non-draw weapon parks the weapon RAISED behind the
+	# Melee windup POSE (v0.18.x, the goblin's club): a non-draw weapon parks the weapon RAISED behind the
 	# swing's start edge — aimed TOWARD the target tile, deliberately opposite the coil's AWAY-direction below,
 	# so the raised weapon and the away-coiled body read as one "winding up" telegraph. ADDITIVE (no return):
 	# the pose shows the weapon, then the monster coil below plays the body's away-coil; play_swing (off the
@@ -957,7 +957,7 @@ func _handle_windup_event(event: Dictionary) -> void:
 	# attacker (the training dummy): weapon is null, skip the pose and fall straight through to the coil.
 	if weapon != null:
 		entity.play_windup_pose(_step_sign(target_tile - entity.tile), windup_sec, weapon)
-	# Monster claw coil-and-flash (unchanged): the coil pulls AWAY from the target (monster - target sign).
+	# Monster club coil-and-flash (unchanged): the coil pulls AWAY from the target (monster - target sign).
 	var monster := entity as Monster
 	if monster != null:
 		monster.play_windup(_step_sign(monster.tile - target_tile), windup_sec)

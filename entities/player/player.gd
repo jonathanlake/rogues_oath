@@ -31,6 +31,13 @@ extends Entity
 ## node keeps only the player-specific swap flow (the swap intent/validator/event and late-join sync).
 @export var attack_recovery_beats: float = 2.0
 
+## DAMAGE MODIFIER (v0.19.0 base+wielder-modifier model, DESIGN §2.3.7): a flat bonus ADDED to the equipped
+## weapon's base damage, the same shape MonsterType.bonus_damage uses. 0 today — this is the hook a future
+## strength stat / PlayerClass writes so a stronger player hits harder with the SAME weapon. Read HOST-side
+## by CombatReferee.damage_of (floored at 0 there); never trusted from the wire. Melee windup/recovery have
+## no player bonus (players don't slow their own weapon — those bonuses are monster-only, and melee-gated).
+@export var bonus_damage: int = 0
+
 @onready var _move_input := $MoveInput
 @onready var _path_marker: Node2D = $PathMarker
 @onready var _commit_audio: AudioStreamPlayer = $CommitSent

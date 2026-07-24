@@ -21,13 +21,19 @@ const DEV_WEAPON_CLAMPS := {
 	"attack_beats": [0.05, 30.0],
 	"windup_beats": [0.0, 30.0],
 }
-const DEV_MONSTER_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles", "recovery_beats"]
-const DEV_MONSTER_INT_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles"]
+const DEV_MONSTER_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles",
+	"bonus_windup_beats", "bonus_recovery_beats", "bonus_damage"]
+const DEV_MONSTER_INT_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles", "bonus_damage"]
 const DEV_MONSTER_CLAMPS := {
 	"max_hp": [1, 99999],
 	"aggro_range_tiles": [0, 30],
 	"tactical_radius_tiles": [0, 30],
-	"recovery_beats": [0.0, 30.0],
+	# Wielder MELEE modifiers (v0.19.0). Signed — a designer can add or subtract beats/damage on top of the
+	# weapon base; the combat referee floors the effective windup/recovery/damage at 0. /m mutates the shared
+	# MonsterType, which the referee reads live, so these tune in-session like the old recovery_beats did.
+	"bonus_windup_beats": [-30.0, 30.0],
+	"bonus_recovery_beats": [-30.0, 30.0],
+	"bonus_damage": [-999, 999],
 }
 
 ## Designer contract: resources/game_config.tres is where Jeff flips playtest toggles

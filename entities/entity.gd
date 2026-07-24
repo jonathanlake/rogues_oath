@@ -11,7 +11,7 @@ extends Node2D
 ## committed-movement playback shared verbatim by both kinds — glide_to and its tween guards,
 ## the flash/shake cue primitives, attacker/target combat feedback, and the HP readout.
 ##
-## Authority note: max_hp / attack_damage on subclasses are AUTHORED-CONFIG reads, host-side
+## Authority note: max_hp / weapon+bonus stats on subclasses are AUTHORED-CONFIG reads, host-side
 ## (the referee seeds HP once at spawn; display seeds labels). CombatReferee's _hp is the sole
 ## live-value authority — nothing on an Entity node is ever adjudication truth.
 ##
@@ -76,8 +76,8 @@ signal glide_finished
 ## it is set differs by kind: a PLAYER authors it in player.tscn (longsword) and the host reassigns
 ## it authoritatively via the swap validator (every peer adopts it through set_weapon on the swap
 ## event); a MONSTER seeds it in _ready from MonsterType.weapon (null = weaponless, e.g. the training
-## dummy). Null falls back to the subclass's legacy attack fields (Player.melee_damage /
-## MonsterType.attack_damage etc.). A client never adjudicates from a self-set value — the host reads it.
+## dummy = deals nothing). When set, the weapon supplies the BASE damage / windup / recovery and the
+## wielder's bonus_* modifiers are ADDED (v0.19.0). A client never adjudicates from a self-set value — the host reads it.
 @export var equipped_weapon: WeaponType = null
 
 # ── Public state ──────────────────────────────────────────────────────────────
@@ -321,7 +321,7 @@ func play_draw(dir: Vector2i, windup_sec: float, weapon: WeaponType = null) -> v
 	_attack_audio.play()
 
 
-## Melee WINDUP pose (v0.18.x, the goblin's claw), driven by Main off the `windup` event for a melee
+## Melee WINDUP pose (v0.18.x, the goblin's club), driven by Main off the `windup` event for a melee
 ## weapon on EVERY peer — forwards the aim + window to the rig, which parks the weapon raised behind the
 ## swing's start edge and holds it over the body's away-coil until the swing resolves. NO SOUND: the
 ## monster telegraph is deliberately silent (v0.6.2 grammar — the visual carries the tell), unlike the
