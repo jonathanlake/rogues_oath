@@ -10,6 +10,14 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.19.5 (2026-07-24) — MAP: the A↔D hallway (to the south room) widened 1→2 tiles (anti-tunneling).**
+  The vertical corridor connecting the starting room (A) to the south room (D) — `WorldGrid.ROOM_LAYOUT` col 7,
+  rows 9–18 — was a single-file 1-wide chute, which read as a "tunneling" bottleneck (party + the shaman pack
+  forced into single file). Carved col 8 to floor across those rows, so the corridor is now cols 7–8 (2 wide)
+  with solid walls still on both sides (col 6 and col 9) and 10+ tiles of wall still separating it from room C.
+  Rooms/border unchanged; the A* grid rebuilds from the edited layout at boot. Disposable M3.5 fixture (real
+  gen lands at M4a), so this is a hand-tune of the prototype map, not a systemic change. Ships with the v0.19.4
+  Goblin Shaman for Jon+Jeff's session (supersedes the v0.19.4 build).
 - **v0.19.4 (2026-07-24) — NEW ENEMY: Goblin Shaman (heals its pack) + the first monster SUPPORT ability.**
   A `goblin_shaman.tres` (goblin-mage sprite, `max_hp` 8, armed with the club so it still fights) that, before
   it decides to chase/attack, scans allied monsters and heals the LOWEST-HP one within 14 Chebyshev tiles. The
