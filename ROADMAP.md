@@ -270,9 +270,10 @@ Not scheduled — pulled in when their moment comes:
 - **Active abilities & status effects** → a CAPABILITY TRACK: design + "complete when" live in **DESIGN §2.11**;
   stage status here. v0.20.x shipped the STUN status (overhead icon, all validator gates, `/stun` dev cmd) and
   the 1-5 ability pipe (`use_ability` + `ActiveAbility` + `PlayerClass.active_abilities`) with knight **Shield
-  Bash** + rogue **Kick** (mechanics, verified two-instance). REMAINING: the HUD (hotbar shows ability icons +
-  1-5 keycaps, potion/club move to a left-click **Backpack** panel, the knight's off-hand shield socket) —
-  specced in the v0.20.1 `HANDOFF.md`; then an equippable off-hand shield item, telegraphed/ranged abilities,
+  Bash** + rogue **Kick** (verified two-instance). Stun INTERRUPTS in-flight attacks/casts + a dizzy visual
+  (v0.20.2). The 1-5 hotbar HUD shows the class ability icons + keycaps, items dropped to the row below, + a
+  GitHub-build menu prefill (v0.20.3). REMAINING: items to their own left-click **Backpack** panel, an
+  equippable off-hand shield item (the `[Off]` socket), clickable ability slots, telegraphed/ranged abilities,
   more status effects (slow/poison/shield).
 - Build system design pass (Rogue Fable-legibility bar, DESIGN §2.7)
 - Dungeon generation depth (beyond M4's basic rooms-and-corridors)

@@ -147,6 +147,11 @@ var _own_weapon_atlas := AtlasTexture.new()
 # the local player's inventory mirror. Parallel arrays kept in slot order; the keycap labels stay on the sockets.
 var _hotbar_icons: Array[TextureRect] = []
 var _hotbar_atlases: Array[AtlasTexture] = []
+# ABILITY hotbar icons (v0.20.3): the TOP inventory row (the accented 1-5 boxes) now shows the local player's
+# class active_abilities; carried items moved to the row below. Parallel arrays in slot order, captured in
+# _build_inventory, painted by _refresh_abilities from the class. The 1-5 KEYS fire them (main._unhandled_input).
+var _ability_icons: Array[TextureRect] = []
+var _ability_atlases: Array[AtlasTexture] = []
 
 
 func _ready() -> void:
@@ -256,6 +261,9 @@ func refresh_self() -> void:
 	if me.player_class != null:
 		_own_class_label.text = me.player_class.display_name
 		_refresh_passives(me.player_class)
+	# Ability hotbar (v0.20.3): repaint the 1-5 boxes from the class's active_abilities. Handles a null class
+	# (hides all). A /class change re-enters here (on_class_changed → refresh_self), so the bar swaps with the class.
+	_refresh_abilities(me.player_class)
 	_set_weapon_icon(me.equipped_weapon)
 	# Hotbar (v0.18.0 chunk B): repaint the top inventory row from the player's inventory mirror. Called here so
 	# the (re)spawn seed (_seed_self → refresh_self) shows an EMPTY bar on a fresh spawn — a freed+re-made player
@@ -630,36 +638,56 @@ func _build_inventory() -> void:
 	grid.add_theme_constant_override("v_separation", 2)
 	_inventory.add_child(grid)
 	for i in INV_COLS * INV_ROWS:
-		var hotbar := i < INV_COLS
-		var slot := _make_socket(hotbar, "")
+		var is_ability_row := i < INV_COLS                       # row 0 = the 1-5 ABILITY hotbar (v0.20.3)
+		var is_item_row := i >= INV_COLS and i < INV_COLS * 2     # row 1 = carried ITEMS (moved down off the hotbar)
+		var slot := _make_socket(is_ability_row or is_item_row, "")
 		grid.add_child(slot)
-		if hotbar:
-			# Item icon (v0.18.0 chunk B): a full-rect AtlasTexture over ITEMS_TEX, the exact _set_weapon_icon
-			# pattern, hidden until _refresh_hotbar points its region at a carried item. Added BEFORE the keycap
-			# so the faint numeral draws ON TOP of the icon (later children paint over earlier ones in Godot).
-			var icon := TextureRect.new()
-			icon.set_anchors_preset(Control.PRESET_FULL_RECT)
-			icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			var atlas := AtlasTexture.new()
-			atlas.atlas = ITEMS_TEX
-			# Seed a valid single-tile region (a zero-size region draws the WHOLE sheet — the same guard the
-			# weapon socket uses); the icon stays hidden until _refresh_hotbar applies a real item region.
-			atlas.region = WorldGrid.atlas_region(Vector2i.ZERO)
-			icon.texture = atlas
-			icon.visible = false
-			slot.add_child(icon)
-			_hotbar_icons.append(icon)
-			_hotbar_atlases.append(atlas)
-			# LEFT-CLICK to use/equip (v0.19.x loot): make this bag slot mouse-interactive. Sockets are IGNORE
-			# by default so world clicks pass THROUGH the HUD to move/shoot — only these 5 consume, so a click
-			# anywhere else still reaches the world. gui_input reports the press; the bound index rides to
-			# slot_activated, which main.gd routes to use_item (consumable) or equip_item (weapon) by content type.
-			# NO number-key action bar anymore (Jon: nothing auto-binds to a hotbar — you left-click the item).
+		if is_ability_row:
+			# ABILITY icon (v0.20.3): the class active_abilities[i] icon, painted by _refresh_abilities. The 1-5
+			# KEYS fire the ability (main._unhandled_input); the slot itself stays non-interactive (mouse IGNORE)
+			# for now — it just SHOWS the ability (Jon: "put the abilities in the yellow boxes, they should show").
+			var a_icon := _make_slot_icon()
+			slot.add_child(a_icon["rect"])
+			_ability_icons.append(a_icon["rect"])
+			_ability_atlases.append(a_icon["atlas"])
+			# Keycap "1".."5" drawn OVER the icon (added LAST so it paints on top).
+			var cap := Label.new()
+			cap.text = str(i + 1)
+			cap.add_theme_font_size_override("font_size", 6)
+			cap.add_theme_color_override("font_color", Color(1, 1, 1, 0.85))
+			cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			cap.position = Vector2(1.0, -1.0)
+			slot.add_child(cap)
+		elif is_item_row:
+			# Item icon (v0.18.0 pattern), now on row 1. LEFT-CLICK to use/equip — bind the INVENTORY index
+			# (0-4), NOT the grid cell, so slot_activated carries the bag index main.gd already expects (the row
+			# moved, the index didn't). Sockets are IGNORE by default so world clicks pass THROUGH; only these
+			# consume. main.gd routes to use_item (consumable) or equip_item (weapon) by the slot's content type.
+			var it_icon := _make_slot_icon()
+			slot.add_child(it_icon["rect"])
+			_hotbar_icons.append(it_icon["rect"])
+			_hotbar_atlases.append(it_icon["atlas"])
 			slot.mouse_filter = Control.MOUSE_FILTER_STOP
-			slot.gui_input.connect(_on_slot_gui_input.bind(i))
+			slot.gui_input.connect(_on_slot_gui_input.bind(i - INV_COLS))
+
+
+## Build a hidden full-rect items.png icon (TextureRect + AtlasTexture) for an inventory slot (v0.20.3 extract) —
+## the shared setup for ability icons and item icons. Returns both so the caller keeps the atlas to re-point later.
+## A zero-size region would draw the WHOLE sheet, so it seeds a valid single-tile region; the icon stays hidden
+## until a refresh applies a real region.
+func _make_slot_icon() -> Dictionary:
+	var icon := TextureRect.new()
+	icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+	icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var atlas := AtlasTexture.new()
+	atlas.atlas = ITEMS_TEX
+	atlas.region = WorldGrid.atlas_region(Vector2i.ZERO)
+	icon.texture = atlas
+	icon.visible = false
+	return { "rect": icon, "atlas": atlas }
 
 
 ## Rebuild the own-player passive list from its class (one label per passive that has a display name).
@@ -690,6 +718,20 @@ func _set_weapon_icon(weapon: WeaponType) -> void:
 ## region out of ITEMS_TEX (the _set_weapon_icon pattern) — resolved via item_by_name (a consumable) OR
 ## weapon_by_name (a looted weapon), both exposing atlas_coords; an empty or unresolvable name hides the icon
 ## back to a bare socket. Reads the local player through $Players like refresh_self; no-op when we have no player.
+## Paint the ABILITY row (v0.20.3) from the LOCAL player's class active_abilities — each filled slot windows the
+## ability's items.png icon (the item-icon pattern); an empty/unauthored slot hides its icon. A null class hides
+## all. Called from refresh_self (spawn + class change), so switching class repaints the bar with its abilities.
+func _refresh_abilities(player_class: PlayerClass) -> void:
+	var abilities: Array = player_class.active_abilities if player_class != null else []
+	for i in _ability_icons.size():
+		var ability: ActiveAbility = abilities[i] if i < abilities.size() else null
+		if ability != null:
+			_ability_atlases[i].region = WorldGrid.atlas_region(ability.atlas_coords)
+			_ability_icons[i].visible = true
+		else:
+			_ability_icons[i].visible = false
+
+
 func _refresh_hotbar() -> void:
 	var me := _players.get_node_or_null(str(_own_id)) as Player if _players != null else null
 	var bag: Array = me.inventory if me != null else []

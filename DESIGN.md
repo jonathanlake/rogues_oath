@@ -512,14 +512,16 @@ active dodge button would not.
 **The 1-5 bar is for abilities; items are left-click.** The number bar (which §2.10 had deliberately
 left unbound) is now the ability hotbar; consumables/weapons live in a left-click Backpack panel.
 
-**Shipped so far (v0.20.x):** the stun status (icon, `/stun` dev cmd, all validator gates); the
-`use_ability` pipe + `ActiveAbility` resource + `PlayerClass.active_abilities`; knight **Shield Bash**
-(2 dmg + 3-beat stun) and rogue **Kick** (1 dmg + 3-beat stun) — both verified two-instance.
+**Shipped so far (v0.20.x):** the stun status (icon + dizzy wobble, INTERRUPTS an in-flight attack/cast,
+`/stun` dev cmd, all validator gates); the `use_ability` pipe + `ActiveAbility` resource +
+`PlayerClass.active_abilities`; knight **Shield Bash** (2 dmg + 3-beat stun) and rogue **Kick** (1 dmg +
+3-beat stun) — both verified two-instance; the 1-5 HOTBAR HUD shows the class ability icons + keycaps, with
+carried items dropped to the row below (v0.20.3).
 
-**Still envisioned:** the HUD (hotbar shows ability icons + 1-5 keycaps, items to a Backpack panel, an
-off-hand shield socket); an equippable off-hand item (a real shield, not just the class ability);
-telegraphed/ranged/self-buff abilities; more status effects (slow, poison, shield); abilities from
-equipped gear as well as class.
+**Still envisioned:** items to their own left-click Backpack panel (they share the inventory grid for now);
+an equippable off-hand item (a real shield in the `[Off]` socket, not just the class ability); clickable
+ability slots (the keys drive them today); telegraphed/ranged/self-buff abilities; more status effects
+(slow, poison, shield); abilities from equipped gear as well as class.
 
 **Complete when** a non-coder can author a class ability + a status effect via `.tres` alone, the hotbar
 reads as the ability bar, and abilities compose with the build system (§2.7). *(Stage in ROADMAP.)*

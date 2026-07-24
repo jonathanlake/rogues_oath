@@ -42,7 +42,18 @@ func _ready() -> void:
 	name_input.text_changed.connect(_on_name_changed)
 	NetworkManager.connection_succeeded.connect(_on_connection_succeeded)
 	NetworkManager.connection_failed.connect(_on_connection_failed)
-	name_input.text = GameManager.player_name  # returning player keeps their name
+	# EXPORTED-BUILD PREFILL (v0.20.3, Jon's ask): the GitHub .exe that reaches Jeff opens with his name + the
+	# tunnel address already filled, so he just clicks Join. Gated on has_feature("editor") == false, i.e. an
+	# EXPORTED template build — the editor / local dev build (Jon's machine, hosts locally) is left untouched.
+	# Name prefill only when unset (a returning player's own name persists in GameManager); address prefill each
+	# load since it isn't persisted. If you later run a LOCAL exported exe for dev, tell me and I'll switch this
+	# to a dedicated export FEATURE TAG so only the GitHub build prefills.
+	if not OS.has_feature("editor"):
+		if GameManager.player_name.strip_edges().is_empty():
+			GameManager.player_name = "Jeff"
+		if ip_input.text.strip_edges().is_empty():
+			ip_input.text = "147.185.221.211:22619"
+	name_input.text = GameManager.player_name  # returning player keeps their name (or the export prefill above)
 	_update_button_gate()                      # re-run: the prefill may enable the buttons
 	# A prior session's teardown reason (host left, kicked, handshake timeout), shown once. Set
 	# AFTER the gate so it wins over NAME_HINT; the gate only clears the label when it equals

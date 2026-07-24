@@ -10,6 +10,17 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.20.3 (2026-07-24) — HUD: abilities show in the 1-5 hotbar; items drop a row + GitHub-build menu prefill.**
+  Two Jon asks. (1) The TOP inventory row (the accented yellow 1-5 boxes) now shows the local player's class
+  `active_abilities` with icons + "1".."5" keycaps (knight → kite-shield icon for Shield Bash, rogue → boots for
+  Kick; real 32rogues `items.png` cells). The 1-5 KEYS still fire them (the slots are display-only for now,
+  Jon: "put them in the yellow boxes, they should show"). Carried ITEMS moved down to row 1 (still left-click to
+  use/equip — the click binds the bag index, so main.gd is unchanged). `hud.gd`: `_refresh_abilities` paints the
+  ability row off the class (repaints on spawn + `/class`), `_make_slot_icon` dedups the icon setup. VERIFIED with
+  a windowed screenshot: a knight shows the shield in box 1. (2) The EXPORTED (GitHub) build now opens with Jeff's
+  name + Jon's tunnel address (`147.185.221.211:22619`) prefilled so he just clicks Join — gated on
+  `not OS.has_feature("editor")`, so the editor/local dev build (Jon hosts locally) is untouched. Items-to-a-
+  separate-Backpack-panel + an equippable off-hand shield remain envisioned (DESIGN §2.11).
 - **v0.20.2 (2026-07-24) — STUN now INTERRUPTS + a dizzy visual (Jon feel-test fix).** Jon's test: the bash showed
   the stun icon + damage, but the goblin's attack still LANDED and it barely paused — because v0.20.0 stun was
   Commitment-SAFE (blocked the next action, let the in-flight one complete). Jon's call: stun should INTERRUPT.
