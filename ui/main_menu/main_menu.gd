@@ -51,8 +51,11 @@ func _ready() -> void:
 	if not OS.has_feature("editor"):
 		if GameManager.player_name.strip_edges().is_empty():
 			GameManager.player_name = "Jeff"
-		if ip_input.text.strip_edges().is_empty():
-			ip_input.text = "147.185.221.211:22619"
+		# UNCONDITIONAL (v0.20.4 fix): the address field carries a scene default of "127.0.0.1", so an
+		# empty-check never fired — the GitHub build always joins Jon's tunnel, so just set it. (The field
+		# stays editable; it isn't persisted, so a fresh menu load re-fills it. The editor/local build keeps
+		# the "127.0.0.1" default, untouched by this branch.)
+		ip_input.text = "147.185.221.211:22619"
 	name_input.text = GameManager.player_name  # returning player keeps their name (or the export prefill above)
 	_update_button_gate()                      # re-run: the prefill may enable the buttons
 	# A prior session's teardown reason (host left, kicked, handshake timeout), shown once. Set

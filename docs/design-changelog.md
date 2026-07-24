@@ -10,6 +10,11 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.20.4 (2026-07-24) — FIX: the exported-build address prefill (Jon report).** v0.20.3's prefill set Jeff's
+  NAME correctly (confirming the `has_feature("editor")` export gate works) but left the address on "127.0.0.1" —
+  the field carries that as a SCENE DEFAULT, so the "only if empty" guard never fired. Now the exported (GitHub)
+  build sets the address UNCONDITIONALLY to Jon's tunnel (`147.185.221.211:22619`); the editor/local build is
+  still untouched (Jon hosts locally). One-line fix.
 - **v0.20.3 (2026-07-24) — HUD: abilities show in the 1-5 hotbar; items drop a row + GitHub-build menu prefill.**
   Two Jon asks. (1) The TOP inventory row (the accented yellow 1-5 boxes) now shows the local player's class
   `active_abilities` with icons + "1".."5" keycaps (knight → kite-shield icon for Shield Bash, rogue → boots for
