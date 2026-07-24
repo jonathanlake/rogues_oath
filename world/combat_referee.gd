@@ -384,14 +384,15 @@ func pick_heal_target(caster_id: int, caster_tile: Vector2i, range_tiles: int) -
 
 
 ## A healer MonsterBrain requests a telegraphed HEAL CAST on a chosen ally (v0.19.4). Host-only. Mirrors
-## wind_up's shape: validate caster alive + not already busy + target still valid, commit the FULL cast window
-## as ONE beat-stamped busy record (Commitment Rule — the healer cannot move or re-cast while channeling; the
+## wind_up's shape: validate caster alive + not already busy + target still valid, commit the FULL cast +
+## recovery window as ONE beat-stamped busy record (Commitment Rule — the healer cannot move or re-cast; the
 ## busy record IS the pacing, so there is no separate cooldown), telegraph the channel (heal_cast event →
-## §2.3.4 cue + log on every peer), and resolve the heal at cast END through the shared apply_heal pipe.
-## `amount`/`cast_beats` come from the caller's MonsterType (the brain owns its type), captured now. Returns
-## the seconds the brain should wait before its next think (the whole cast window) on success, or -1.0 if
-## DECLINED (caster not alive / already busy / target gone) so the brain distinguishes a cast from a back-off.
-func heal_cast(caster_id: int, target_id: int, amount: int, cast_beats: float) -> float:
+## §2.3.4 cue + log on every peer), resolve the heal at cast END through the shared apply_heal pipe, and hold
+## the caster spent through the recovery tail (v0.19.9 — like an attack's recovery). `amount`/`cast_beats`/
+## `recovery_beats` come from the caller's MonsterType (the brain owns its type), captured now. Returns the
+## seconds the brain should wait before its next think (the whole cast + recovery window) on success, or -1.0
+## if DECLINED (caster not alive / already busy / target gone) so the brain distinguishes a cast from a back-off.
+func heal_cast(caster_id: int, target_id: int, amount: int, cast_beats: float, recovery_beats: float) -> float:
 	if not is_alive(caster_id):
 		return -1.0
 	# The caster must be free — never overlap a cast with a glide/another commit (Commitment Rule backstop,
@@ -406,12 +407,16 @@ func heal_cast(caster_id: int, target_id: int, amount: int, cast_beats: float) -
 	var target := _node_of_id(target_id)
 	if target == null or int(_hp[target_id]) >= _max_hp_of(target):
 		return -1.0
-	# Stamp the cast window at the CASTER's resolved pace (§2.8.7 — an engaged shaman channels at the tactical
-	# beat), authored in beats so it rescales with the live tempo knob like every other duration.
-	var cast_sec := maxf(0.0, cast_beats) * PaceReferee.beat_or_explore(_pace, caster_id)
-	# Commit the whole channel as a from==to busy record (shared with bump/windup). A miss means the caster
-	# went busy between the brain's gate and now (host single-threaded; defensive).
-	if not _move_referee.commit_in_place(caster_id, cast_sec):
+	# Stamp the cast + recovery windows at the CASTER's resolved pace (§2.8.7 — an engaged shaman channels at the
+	# tactical beat), authored in beats so both rescale with the live tempo knob. The heal LANDS at cast end; the
+	# shaman then stays busy (spent) for the recovery tail — the same shape a telegraphed attack uses (windup +
+	# recovery as one busy record, Part 4 Q9 unified occupancy), so a healer can't chain-heal instantly.
+	var beat := PaceReferee.beat_or_explore(_pace, caster_id)
+	var cast_sec := maxf(0.0, cast_beats) * beat
+	var recovery_sec := maxf(0.0, recovery_beats) * beat
+	# Commit the WHOLE window (cast + recovery) as one from==to busy record (shared with bump/windup). A miss
+	# means the caster went busy between the brain's gate and now (host single-threaded; defensive).
+	if not _move_referee.commit_in_place(caster_id, cast_sec + recovery_sec):
 		return -1.0
 	var caster := _node_of_id(caster_id)
 	# Face the ally being tended (server truth; a ZERO dir no-ops). Purely so the tell points the right way.
@@ -432,7 +437,7 @@ func heal_cast(caster_id: int, target_id: int, amount: int, cast_beats: float) -
 	# (the resolve re-checks liveness). amount is baked at cast start (a live /m change mid-cast won't retune).
 	get_tree().create_timer(cast_sec).timeout.connect(
 			_resolve_heal_cast.bind(caster_id, target_id, maxi(0, amount)))
-	return cast_sec
+	return cast_sec + recovery_sec
 
 
 ## Resolve a committed heal cast at its END (host-only, from the cast timer). The caster must still be alive —

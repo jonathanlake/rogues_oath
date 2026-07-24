@@ -137,8 +137,14 @@ func resolved_tactical_radius() -> int:
 ## with tempo like every other duration. 0 = no heal (a heal must be telegraphed — there is no instant heal).
 @export var heal_cast_beats: float = 0.0
 
+## The RECOVERY tail in BEATS after the heal lands: the healer stays BUSY (spent — cannot move or re-cast) for
+## this long AFTER the cast resolves, the same shape a telegraphed attack's recovery tail uses (so a healer
+## can't chain-heal instantly). Stamped at the caster's resolved pace; scales with tempo. 0 (default) = the
+## healer is free the instant the heal lands. Independent of has_heal_ability (a healer with 0 recovery is valid).
+@export var heal_recovery_beats: float = 0.0
 
-## True when this monster is an authored HEALER (all three heal fields set). The ONE predicate both the brain
-## and the spawn/scan paths gate on, so "is a healer" can't drift between the target scan and the cast commit.
+
+## True when this monster is an authored HEALER (the three CAST fields set; recovery is optional). The ONE
+## predicate the brain and scan paths gate on, so "is a healer" can't drift between the target scan and commit.
 func has_heal_ability() -> bool:
 	return heal_amount > 0 and heal_range_tiles > 0 and heal_cast_beats > 0.0

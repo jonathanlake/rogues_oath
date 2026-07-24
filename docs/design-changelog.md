@@ -10,6 +10,17 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.19.9 (2026-07-24) — SHAMAN FEEL: heal cast 6 beats + a 2-beat recovery tail + heal particles.**
+  Continued feel-tuning. (1) Cast `heal_cast_beats` 8 → 6. (2) NEW `heal_recovery_beats` (2 on the shaman): after
+  the heal lands the healer stays BUSY/spent for a recovery tail before it can act again — `CombatReferee.heal_cast`
+  now commits `cast + recovery` as ONE busy record and resolves the heal at cast END (the recovery is the tail),
+  the exact shape a telegraphed attack's windup+recovery uses (Part 4 Q9 unified occupancy), so a shaman can't
+  chain-heal instantly. New `MonsterType.heal_recovery_beats` field (default 0 = free the instant the heal lands;
+  independent of `has_heal_ability`). (3) A GREEN PARTICLE BURST on a landed heal — `FxLayer.heal_burst` spawns a
+  one-shot rising-green `CPUParticles2D` (GL-Compatibility-safe, fades via a color ramp, self-frees) over the
+  recovering entity, fired per-peer off the existing `heal` event — so it juices EVERY heal (shaman cast + potion
+  drink). The overhead cast symbol still holds for the CAST window only (clears when the heal lands, right as the
+  particles fire). Compile-verified headless (clean parse). Feel: cast/recovery lengths are `.tres` nudges.
 - **v0.19.8 (2026-07-24) — SHAMAN FEEL: longer heal cast + an overhead "casting" symbol.**
   Two tweaks from the first live look. (1) The shaman's heal channel is LONGER — `heal_cast_beats` 4 → 8 (a
   `.tres` value), so there's a real window to react and kill it (or its target) before the heal lands. (2) A

@@ -193,7 +193,8 @@ func _think() -> void:
 		var heal_target: int = _combat.pick_heal_target(_entity_id, my_tile, _monster_type.heal_range_tiles)
 		if heal_target != 0:
 			var heal_wait: float = _combat.heal_cast(
-					_entity_id, heal_target, _monster_type.heal_amount, _monster_type.heal_cast_beats)
+					_entity_id, heal_target, _monster_type.heal_amount,
+					_monster_type.heal_cast_beats, _monster_type.heal_recovery_beats)
 			if heal_wait >= 0.0:
 				# The cast's busy record ends WITHOUT waking us (no glide_finished on a commit_in_place) —
 				# schedule our OWN re-think just past it, exactly like a wind-up (think-at-own-boundary).

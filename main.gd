@@ -1156,6 +1156,9 @@ func _handle_heal_event(event: Dictionary) -> void:
 		# Green "+N" popup over the healed tile (the DamagePopup pattern, HEAL_COLOR — distinct from the red/white
 		# hit popups, §2.3.4). Parented by the FX layer so it survives the node (symmetry with the damage popup).
 		_fx.damage_popup("+%d" % amount, DamagePopup.HEAL_COLOR, target.tile)
+		# Green particle burst on the recovering entity (v0.19.9) — the juice on a landed heal, every peer,
+		# off this same broadcast event. Fired for any heal (shaman cast or potion drink).
+		_fx.heal_burst(target.tile)
 	# Party-frame / char-info HP mirror (v0.12.0): fan the running HP to the HUD. note_attack is a PURE HP mirror
 	# (it just calls _set_own_hp for our own id — no attack-specific logic), so it is REUSED here for the heal
 	# twin rather than adding a note_heal: a healed own-player's bar climbs with no new HUD surface. A non-own id
