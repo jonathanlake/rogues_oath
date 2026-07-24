@@ -44,6 +44,18 @@ var _hp: Dictionary = {}
 # with the entity's HP on container exit (disconnect / despawn / F5 reset), so a fresh spawn is mortal.
 var _godded: Dictionary = {}
 
+# STUN (v0.20.0 status effects). entity id -> true while stunned. Host-only authority (folded into the combat
+# referee because every intent validator + the monster brain already holds a _combat reference, so the gate
+# needs no new injection). A stunned entity cannot START a new committed action — the validators early-reject
+# "stunned" BEFORE the busy check, and the monster brain skips its think — but a stun NEVER touches the
+# _gliding/commit_in_place record, so an action already in flight plays out (the Commitment Rule, §2.1). Erased
+# with the entity's HP on death / container exit so a fresh spawn is unstunned.
+var _stunned: Dictionary = {}
+# Per-entity stun GENERATION (v0.20.0), bumped on every apply_stun. The expiry timer for stun N only clears the
+# stun if its captured generation is still current — so a RE-STUN (bumps the gen, re-arms, re-broadcasts the
+# icon window) is not cut short by the earlier stun's timer. Same idiom as the round/cast generation tokens.
+var _stun_gen: Dictionary = {}
+
 # The Players / Monsters containers, handed in by Main via activate() on the HOST only. Read for
 # node resolution + HP seeding; never reached up from. Null on clients (activate never runs there).
 var _players: Node2D = null
@@ -136,6 +148,51 @@ func toggle_godded(entity_id: int) -> bool:
 		return false
 	_godded[entity_id] = true
 	return true
+
+
+## Is this entity currently STUNNED (v0.20.0)? The ONE predicate every intent validator + the monster brain
+## reads at ENTRY to reject/skip starting a NEW committed action. An untracked id reads false. Host-only truth;
+## never trusted from the wire (only apply_stun, host-side, writes it). Reading it never touches the busy record.
+func is_stunned(entity_id: int) -> bool:
+	return _stunned.get(entity_id, false)
+
+
+## Apply a STUN to a target for `stun_beats`, host-authoritative (v0.20.0). Stamps the duration at the TARGET's
+## resolved pace (so it scales with tempo), latches _stunned, bumps the generation, broadcasts `status_applied`
+## (every peer shows the overhead stun icon for the same window), and arms the expiry. Killed/despawned clears
+## it (see _kill_entity / _on_entity_exiting). Does NOT interrupt anything — the target's in-flight committed
+## action still plays out; the stun only blocks the NEXT one (§2.1). A 0/negative beats is a no-op.
+func apply_stun(target_id: int, stun_beats: float) -> void:
+	if not is_alive(target_id):
+		return
+	if stun_beats <= 0.0:
+		return
+	var stun_sec := stun_beats * PaceReferee.beat_or_explore(_pace, target_id)
+	_stunned[target_id] = true
+	var gen: int = int(_stun_gen.get(target_id, 0)) + 1
+	_stun_gen[target_id] = gen
+	# Broadcast the icon window (host-authored, peer 0 — an outcome, like `died`). duration_sec holds the
+	# overhead icon exactly the stun window on every peer.
+	NetEvents.post_event("status_applied", {
+		"entity_id": target_id,
+		"status": "stun",
+		"duration_sec": stun_sec,
+	})
+	# Host SceneTreeTimer (survives despawn by construction). Generation-guarded so a re-stun's later expiry wins.
+	get_tree().create_timer(stun_sec).timeout.connect(_expire_stun.bind(target_id, gen))
+
+
+## Resolve the FIRST live monster whose display_name matches `name` (case-insensitive) → its entity id, or 0 if
+## none (v0.20.0, for the /stun dev command). Host-only, scans the Monsters container. Targets a LIVE instance by
+## name (unlike /m, which tunes the shared MonsterType).
+func find_monster_by_name(name: String) -> int:
+	if _monsters == null:
+		return 0
+	var lname := name.to_lower()
+	for child in _monsters.get_children():
+		if child is Monster and is_alive(child.entity_id) and child.display_name.to_lower() == lname:
+			return child.entity_id
+	return 0
 
 
 ## Apply deterministic melee damage from attacker to target and broadcast the outcome. Host-only.
@@ -520,6 +577,18 @@ func smite_cast(caster_id: int, target_tile: Vector2i, damage: int, cast_beats: 
 ## the caster must still be alive (killed mid-cast = nothing, the rush-it counterplay); then whoever HOSTILE and
 ## LIVING occupies the tile NOW eats `damage` (a player who stepped on eats it; the original target who stepped off
 ## dodges). No hostile occupant → a WHIFF event (kind "smite", whiff true) so the dodge is a distinct §2.3.4 outcome.
+## Clear a STUN at its window's end (host-only, from the expiry timer), GENERATION-guarded (v0.20.0): only the
+## current stun's timer clears — a re-stun bumped the gen and re-armed, so an earlier timer no-ops. Erases the
+## latch and broadcasts status_expired so every peer drops the overhead icon in lockstep. A dead/despawned entity
+## (gen already erased) also no-ops.
+func _expire_stun(entity_id: int, gen: int) -> void:
+	if int(_stun_gen.get(entity_id, -1)) != gen:
+		return
+	_stunned.erase(entity_id)
+	_stun_gen.erase(entity_id)
+	NetEvents.post_event("status_expired", { "entity_id": entity_id, "status": "stun" })
+
+
 func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int, recovery_sec: float) -> void:
 	if not is_alive(caster_id):
 		return
@@ -648,6 +717,10 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# Liveness (log-suppressed like a dead glide — the died event already told the player).
 	if not is_alive(sender_peer_id):
 		return { "ok": false, "reason": "dead" }
+	# STUNNED (v0.20.0): can't START a new action while stunned — reject BEFORE the busy check (never touches
+	# the busy record, so an in-flight action still completes; §2.1). Distinct reason → the §2.2.8 bonk.
+	if is_stunned(sender_peer_id):
+		return { "ok": false, "reason": "stunned" }
 	# BUSY — the SAME commit-window predicate melee/swap read (is_entity_moving covers a glide AND a
 	# commit_in_place record), so a shot can never interrupt or overlap a committed action (Commitment Rule).
 	if _move_referee.is_entity_moving(sender_peer_id):
@@ -968,6 +1041,9 @@ func _kill_entity(entity_id: int, ent_name: String) -> void:
 	var death_tile: Vector2i = _move_referee.tile_of_entity(entity_id)
 	var node := _node_of_id(entity_id)
 	_hp.erase(entity_id)
+	# Clear any stun (v0.20.0) so a same-id respawn isn't born stunned; the node frees, taking its icon.
+	_stunned.erase(entity_id)
+	_stun_gen.erase(entity_id)
 	_move_referee.clear_entity(entity_id)
 	NetEvents.post_event("died", { "entity_id": entity_id, "name": ent_name })
 	if node != null:
@@ -1014,6 +1090,9 @@ func _on_entity_exiting(node: Node) -> void:
 	if node is Entity:
 		_hp.erase(node.entity_id)
 		_godded.erase(node.entity_id)
+		# Stun cleanup (v0.20.0), same as HP/god — a disconnect / despawn / F5 respawn starts unstunned.
+		_stunned.erase(node.entity_id)
+		_stun_gen.erase(node.entity_id)
 
 
 ## Null-safe passive accessor (v0.11.0): the ATTACKER's PassiveAbility list, or [] for anything without

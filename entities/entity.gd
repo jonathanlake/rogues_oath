@@ -128,6 +128,18 @@ var _shake_tween: Tween = null
 # so overlapping cues don't stack.
 var _flash_tween: Tween = null
 
+# Overhead SPELL-CAST sparkle (v0.19.8, lifted from Monster to Entity in v0.20.0 so players + monsters share
+# it): a pulsing coloured star over the head for a cast window, driven per-peer from a cast event. GEN-tokened
+# (v0.20.0, review #3) so a back-to-back re-cast's symbol isn't cleared early by the previous cast's timer.
+var _cast_fx: Node2D = null
+var _cast_fx_tween: Tween = null
+var _cast_fx_gen: int = 0
+# Overhead STUN icon (v0.20.0), on its OWN fx slot so it never collides with a cast symbol: a spinning yellow
+# starburst held for the stun window, driven per-peer from status_applied / status_expired.
+var _stun_fx: Node2D = null
+var _stun_fx_tween: Tween = null
+var _stun_fx_gen: int = 0
+
 
 func _ready() -> void:
 	# Contract guard: the shared presentation requires these exact child names. An @onready miss
@@ -347,6 +359,84 @@ func play_loose(dir: Vector2i, weapon: WeaponType = null) -> void:
 ## mirroring how a monster's windup coil vanishes with its node). A no-op for a rig already hidden.
 func hide_weapon_rig() -> void:
 	_weapon_rig.hide_draw()
+
+
+## Overhead SPELL-CAST sparkle (lifted from Monster in v0.20.0 so players + monsters share it): a pulsing star
+## in `symbol_color` over the head for `hold_sec` — the "channeling" tell (§2.3.4), distinct from the wind-up.
+## GEN-tokened so a re-cast's symbol survives the previous cast's expiry timer (review #3). Drawn as a Polygon2D
+## (font-independent) above the name label; cleared on re-cast, at hold end, and with the node on death.
+func play_spell_cast(hold_sec: float, symbol_color: Color) -> void:
+	_clear_cast_fx()
+	_cast_fx_gen += 1
+	var gen := _cast_fx_gen
+	var star := Polygon2D.new()
+	# 4-pointed sparkle (outer r≈7, inner r≈1.8) centred on the node origin.
+	star.polygon = PackedVector2Array([
+		Vector2(7, 0), Vector2(1.8, 1.8), Vector2(0, 7), Vector2(-1.8, 1.8),
+		Vector2(-7, 0), Vector2(-1.8, -1.8), Vector2(0, -7), Vector2(1.8, -1.8)])
+	star.color = symbol_color
+	star.position = Vector2(0, -50)  # above the name label
+	add_child(star)
+	_cast_fx = star
+	_cast_fx_tween = create_tween().set_loops()
+	_cast_fx_tween.tween_property(star, "scale", Vector2(1.3, 1.3), 0.35).from(Vector2(0.85, 0.85))
+	_cast_fx_tween.parallel().tween_property(star, "modulate:a", 0.55, 0.35).from(1.0)
+	_cast_fx_tween.tween_property(star, "scale", Vector2(0.85, 0.85), 0.35)
+	_cast_fx_tween.parallel().tween_property(star, "modulate:a", 1.0, 0.35)
+	if hold_sec > 0.0:
+		get_tree().create_timer(hold_sec).timeout.connect(_clear_cast_fx.bind(gen))
+
+
+## Clear the cast sparkle. No-arg (gen -1) = unconditional (re-cast pre-clear / death); a bound generation (from
+## the expiry timer) no-ops if a newer cast has started (gen mismatch, review #3). Idempotent — safe any time.
+func _clear_cast_fx(gen: int = -1) -> void:
+	if gen != -1 and gen != _cast_fx_gen:
+		return
+	if _cast_fx_tween != null and _cast_fx_tween.is_valid():
+		_cast_fx_tween.kill()
+	_cast_fx_tween = null
+	if _cast_fx != null and is_instance_valid(_cast_fx):
+		_cast_fx.queue_free()
+	_cast_fx = null
+
+
+## Overhead STUN icon (v0.20.0, §2.3.4): a spinning yellow starburst over the head held for `hold_sec`, so a
+## stunned entity reads at a glance. On its OWN fx slot (never collides with a cast symbol). Driven per-peer from
+## status_applied (hold_sec = the stun window); status_expired (hide_stun) clears it, a local timer backs that up.
+func play_stunned(hold_sec: float) -> void:
+	hide_stun()
+	_stun_fx_gen += 1
+	var gen := _stun_fx_gen
+	var burst := Polygon2D.new()
+	# A 6-point starburst (12 verts, alternating outer/inner) — visually distinct from the 4-point cast sparkle.
+	var pts := PackedVector2Array()
+	for i in 12:
+		var ang := TAU * i / 12.0
+		var r := 7.0 if i % 2 == 0 else 3.0
+		pts.append(Vector2(cos(ang) * r, sin(ang) * r))
+	burst.polygon = pts
+	burst.color = Color(1.0, 0.9, 0.2)  # stun yellow
+	burst.position = Vector2(0, -50)
+	add_child(burst)
+	_stun_fx = burst
+	# Slow spin reads as "dizzy" for the whole window.
+	_stun_fx_tween = create_tween().set_loops()
+	_stun_fx_tween.tween_property(burst, "rotation", TAU, 0.9).from(0.0)
+	if hold_sec > 0.0:
+		get_tree().create_timer(hold_sec).timeout.connect(hide_stun.bind(gen))
+
+
+## Clear the stun icon. No-arg (gen -1) = unconditional (status_expired / re-stun pre-clear / death); a bound
+## generation (from the local backup timer) no-ops if a newer stun is active. Idempotent — safe any time.
+func hide_stun(gen: int = -1) -> void:
+	if gen != -1 and gen != _stun_fx_gen:
+		return
+	if _stun_fx_tween != null and _stun_fx_tween.is_valid():
+		_stun_fx_tween.kill()
+	_stun_fx_tween = null
+	if _stun_fx != null and is_instance_valid(_stun_fx):
+		_stun_fx.queue_free()
+	_stun_fx = null
 
 
 # ── Private methods ───────────────────────────────────────────────────────────

@@ -149,6 +149,7 @@ func _render_help() -> void:
 	add_line("  /god  — toggle your own invulnerability")
 	add_line("  /class <%s>" % "|".join(_dev_class_names()))
 	add_line("  /config <%s>  — apply a preset test loadout" % "|".join(PackedStringArray(GameManager.CONFIG_PRESETS.keys())))
+	add_line("  /stun [me|<monster>] [beats]  — apply a stun (default 3 beats)")
 	add_line("  /help  — this list")
 
 

@@ -802,6 +802,13 @@ func _on_net_event(event: Dictionary) -> void:
 			# A monster's telegraphed SMITE channel starting (v0.19.10, host-authored). Orange-red tell over the
 			# caster; the LAND is the later `attack` event (kind "smite"). Log line from game_log.
 			_handle_smite_cast_event(event)
+		"status_applied":
+			# A host-applied status effect started (v0.20.0 — stun). Every peer shows the overhead icon for the
+			# broadcast window on the affected entity (player or monster).
+			_handle_status_applied_event(event)
+		"status_expired":
+			# A host status effect ended (v0.20.0). Every peer clears the overhead icon.
+			_handle_status_expired_event(event)
 
 
 ## Play back an accepted glide. Resolve the mover by entity id: positive is a player, negative a
@@ -1212,6 +1219,27 @@ func _handle_smite_cast_event(event: Dictionary) -> void:
 	var caster_monster := caster as Monster
 	if caster_monster != null:
 		caster_monster.play_spell_cast(cast_sec, Color(1.0, 0.5, 0.2))
+
+
+## All peers: show the overhead STUN icon when the host applies a stun (v0.20.0). entity_id may be a player
+## (positive) or a monster (negative) — _node_for_peer resolves either; duration_sec holds the icon the window.
+func _handle_status_applied_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	if str(data.get("status", "")) != "stun":
+		return
+	var ent := _node_for_peer(int(data.get("entity_id", 0))) as Entity
+	if ent != null:
+		ent.play_stunned(float(data.get("duration_sec", 0.0)))
+
+
+## All peers: clear the overhead STUN icon when the host's stun expires (v0.20.0).
+func _handle_status_expired_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	if str(data.get("status", "")) != "stun":
+		return
+	var ent := _node_for_peer(int(data.get("entity_id", 0))) as Entity
+	if ent != null:
+		ent.hide_stun()
 
 
 ## All peers: adopt a host-stamped tempo change (§2.8.3). Apply it to the LOCAL GameManager beat so the

@@ -338,6 +338,12 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# "already moving" (the died event already told the player everything).
 	if _combat != null and not _combat.is_alive(sender_peer_id):
 		return { "ok": false, "reason": "dead" }
+	# STUNNED (v0.20.0): can't START a new glide while stunned. Rejected BEFORE the already-moving/pipeline
+	# gate below, and it never touches the busy/pending records — so an in-flight glide (and an already-committed
+	# pending step) still play out (§2.1). Covers players AND monsters (both ride this validator). Distinct
+	# "stunned" reason → the §2.2.8 bonk for a player; a monster's brain also self-skips while stunned.
+	if _combat != null and _combat.is_stunned(sender_peer_id):
+		return { "ok": false, "reason": "stunned" }
 
 	# The Commitment Rule backstop and the pipeline gate. A mover already gliding may commit ONE
 	# next step into the pending slot (§2.2.5 amendment) — but only under the conga toggle, and

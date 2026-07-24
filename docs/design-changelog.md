@@ -10,6 +10,24 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.20.0 (2026-07-24) — STATUS EFFECTS: the STUN mechanic (Commitment-safe) + overhead icon + /stun (overnight).**
+  First slice of the active-ability push (Jon's overnight brief): the STATUS-EFFECT foundation, starting with STUN.
+  Host-authoritative, folded into CombatReferee (every intent validator + the monster brain already holds a
+  `_combat` ref, so the gate needs no new injection): `is_stunned` / `apply_stun` / `_expire_stun`, generation-
+  tokened so a re-stun isn't cut short. A stunned entity CANNOT start a new committed action — the glide / shoot /
+  use_item / equip_item validators early-reject "stunned" (→ the §2.2.8 bonk for a player) and the monster brain
+  skips its think — but the gate is at validator ENTRY and NEVER touches the `_gliding`/`commit_in_place` record,
+  so an in-flight action still plays to completion (the Commitment Rule, §2.1). Duration in BEATS (scales with
+  tempo), broadcast as `status_applied`/`status_expired` events; a spinning yellow overhead STUN icon on every
+  peer (the Monster cast-symbol system was lifted to `Entity` so players + monsters share it, and gained a
+  generation token that also fixes review #3's early-clear). New `/stun [me|<monster>] [beats]` dev command to
+  trigger it, and an `eventlog=<path>` debug knob that dumps the broadcast NetEvents stream to a file (the
+  deterministic assertion source for headless two-instance runs; also the joined-observer tool). New empty
+  `ActiveAbility` resource + `PlayerClass.active_abilities` land next.
+  **Verified two-instance:** a client `/stun`s itself, then `move=`s across and past the window — the event log
+  shows ZERO accepted glides during the 1.5s (3-beat) stun, `status_applied`→`status_expired` at the right times,
+  and glides landing again immediately after. Monster-stun + mid-action-completion are logic-verified (the same
+  entry gate; the gate never touches the busy record).
 - **v0.19.12 (2026-07-24) — REVIEW FIXES: dodged-smite sound + smite recovery tell + heal-target hardening.**
   A fresh-eyes code review of the v0.19.4–.11 quick builds (found no crash / desync / Commitment-Rule bypass —
   the spell code faithfully mirrors the proven wind-up pattern). Three fixes landed: (1) §2.3.4 — a DODGED smite

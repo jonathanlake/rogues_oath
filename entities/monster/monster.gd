@@ -42,12 +42,6 @@ var monster_type: MonsterType = null
 # Drives the Sprite2D ShaderMaterial's flash_amount (see _set_flash).
 var _flash_shader_tween: Tween = null
 
-# Heal-cast overhead symbol (v0.19.8): a pulsing green sparkle shown above a HEALER's head for the whole
-# channel window, driven per-peer from the heal_cast event. Held on its own node + tween slot so a re-cast or a
-# mid-cast death clears it cleanly (the node frees with the monster; the end timer's connection drops then).
-var _cast_fx: Node2D = null
-var _cast_fx_tween: Tween = null
-
 
 func _ready() -> void:
 	super()
@@ -182,45 +176,8 @@ func play_cast_fizzle() -> void:
 	_whiff_audio.play()
 
 
-## Spell-cast telegraph (§2.3.4, v0.19.8; generalized v0.19.10): a pulsing sparkle in `symbol_color` over the
-## caster's head for the whole cast window `hold_sec`, so "I'm channeling a spell" is legible on-screen — HELD
-## (unlike the transient +N popup) and distinct from the WHITE attack wind-up. GREEN = heal, orange-red = smite
-## (the caller passes the colour per spell). Driven on every peer from the heal_cast / smite_cast event. Drawn
-## as a Polygon2D star (font-independent — no glyph to miss) above the name label. Cleared on re-cast, at cast
-## end (the timer), and with the node on death (the engine drops the timer's connection to a freed node).
-func play_spell_cast(hold_sec: float, symbol_color: Color) -> void:
-	_clear_cast_fx()
-	var star := Polygon2D.new()
-	# 4-pointed sparkle (outer r≈7, inner r≈1.8) centred on the node origin.
-	star.polygon = PackedVector2Array([
-		Vector2(7, 0), Vector2(1.8, 1.8), Vector2(0, 7), Vector2(-1.8, 1.8),
-		Vector2(-7, 0), Vector2(-1.8, -1.8), Vector2(0, -7), Vector2(1.8, -1.8)])
-	star.color = symbol_color
-	star.position = Vector2(0, -50)  # above the name label (which sits ~ -38..-18)
-	add_child(star)
-	_cast_fx = star
-	# Pulse (scale + a soft alpha throb) for the whole channel; _clear_cast_fx removes it at hold_sec.
-	_cast_fx_tween = create_tween().set_loops()
-	_cast_fx_tween.tween_property(star, "scale", Vector2(1.3, 1.3), 0.35).from(Vector2(0.85, 0.85))
-	_cast_fx_tween.parallel().tween_property(star, "modulate:a", 0.55, 0.35).from(1.0)
-	_cast_fx_tween.tween_property(star, "scale", Vector2(0.85, 0.85), 0.35)
-	_cast_fx_tween.parallel().tween_property(star, "modulate:a", 1.0, 0.35)
-	if hold_sec > 0.0:
-		get_tree().create_timer(hold_sec).timeout.connect(_clear_cast_fx)
-
-
 # ── Private methods ───────────────────────────────────────────────────────────
 
-
-## Remove the heal-cast overhead symbol + its pulse tween (v0.19.8). Idempotent — safe on re-cast, at cast end
-## (the timer), or defensively; a null/freed mark or tween is a no-op.
-func _clear_cast_fx() -> void:
-	if _cast_fx_tween != null and _cast_fx_tween.is_valid():
-		_cast_fx_tween.kill()
-	_cast_fx_tween = null
-	if _cast_fx != null and is_instance_valid(_cast_fx):
-		_cast_fx.queue_free()
-	_cast_fx = null
 
 ## Release override for the coiled tell (v0.6.1). Both strike paths route here — play_attack (a
 ## landed windup) and play_whiff (a resolved windup against empty ground) — so this is the SINGLE

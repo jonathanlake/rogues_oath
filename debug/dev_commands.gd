@@ -72,6 +72,8 @@ func validate(sender_peer_id: int, data: Dictionary) -> Dictionary:
 			return _dev_cmd_item(sender_peer_id, args, by)
 		"config":
 			return _dev_cmd_config(args, by)
+		"stun":
+			return _dev_cmd_stun(sender_peer_id, args, by)
 		_:
 			# Bare-weapon alias: "/longsword 5" arrives as cmd "longsword", args ["5"]. Reachable ONLY when
 			# cmd resolves to a real weapon (table precedence is handled by the match above). Re-dispatch as
@@ -324,6 +326,30 @@ func _dev_cmd_config(args: Array[String], by: String) -> Dictionary:
 		if not bool(verdict.get("ok", false)):
 			return { "ok": false, "reason": "config %s @ %s.%s: %s" % [alias, res_name, field, str(verdict.get("reason", "failed"))] }
 	return { "ok": true, "data": { "line": "%s applied config %s (%d settings)." % [by, alias, rows.size()] } }
+
+
+## /stun [me|<monster>] [beats] — apply a STUN (v0.20.0 dev tool, for testing the status effect before abilities
+## exist). No arg / "me" / "self" stuns the SENDER (test the player can't-act bonk + overhead icon); a monster
+## display_name stuns the first LIVE monster of that name (test a frozen goblin + icon). A numeric token = beats
+## (default 3). Host-adjudicated + broadcast (the icon shows on every peer). Rejects an unknown monster name.
+func _dev_cmd_stun(sender_peer_id: int, args: Array[String], by: String) -> Dictionary:
+	var beats := 3.0
+	var name_arg := ""
+	for a in args:
+		if a.is_valid_float():
+			beats = a.to_float()
+		elif not (a in ["me", "self"]):
+			name_arg = a
+	var target_id := sender_peer_id
+	var target_name := by
+	if name_arg != "":
+		var mid: int = _combat.find_monster_by_name(name_arg)
+		if mid == 0:
+			return { "ok": false, "reason": "no live monster named '%s'" % name_arg }
+		target_id = mid
+		target_name = name_arg
+	_combat.apply_stun(target_id, beats)
+	return { "ok": true, "data": { "line": "%s stunned %s for %.0f beats." % [by, target_name, beats] } }
 
 
 ## Resolve a weapon by lowercase name (v0.10.0 /w): GameConfig.weapon_by_name FIRST (catalog display_name),

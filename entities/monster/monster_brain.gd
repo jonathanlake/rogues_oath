@@ -132,6 +132,12 @@ func notify_attacked() -> void:
 func _think() -> void:
 	if not _active:
 		return
+	# STUNNED (v0.20.0): a stunned monster cannot act — skip this think and re-poll on the cadence until the
+	# stun expires. BEFORE the busy gate, so a stunned monster never pipelines a step either. This never
+	# interrupts an in-flight glide (the Commitment Rule) — that completes and wakes us here, where we wait.
+	if _combat != null and _combat.is_stunned(_entity_id):
+		_reschedule()
+		return
 	# Busy gate: the referee holds this monster committed for the whole ACTION window (glide term +
 	# rest), but the node's glide_finished (which woke us via on_boundary) fires at the SLIDE boundary
 	# — so a post-slide think lands mid-SETTLE and sees busy. This is the chase-parity hot loop.

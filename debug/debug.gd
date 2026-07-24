@@ -55,6 +55,14 @@ var _move_delay_sec: float = 0.8
 # to the say anchor default for that role (host say_delay_sec, client client_say_settle_sec).
 var _move_wait_sec: float = -1.0
 
+# eventlog=<path> (v0.20.0 dev OBSERVE facility; inert without the arg): dump the broadcast NetEvents stream to a
+# file, one line per combat/status/movement event, FLUSHED per line. Because events replicate to every peer, a
+# joined/scripted observer captures the whole session (a fight, a stun, a chase) wherever it happens — the
+# deterministic assertion source for headless two-instance runs (grep the file), and the same tool that let a
+# joined client watch a live fight. Started on this instance's connect (client) or scene-change (host).
+var _event_log_path := ""
+var _event_log_file: FileAccess = null
+
 # Held-key harness (hold=/holdsec=): synthesizes a HELD move key via Input.action_press/release,
 # driving the GENUINE MoveInput sampler — key-held cadence, host/client symmetric — unlike move=,
 # which bypasses MoveInput by design and so can't catch input-layer bugs (e.g. a latch that only
@@ -294,6 +302,8 @@ func _ready() -> void:
 			_move_delay_sec = arg.trim_prefix("movedelay=").to_float()
 		elif arg.begins_with("movewait="):
 			_move_wait_sec = arg.trim_prefix("movewait=").to_float()
+		elif arg.begins_with("eventlog="):
+			_event_log_path = arg.trim_prefix("eventlog=")
 		elif arg.begins_with("beatsec="):
 			beat_override = arg.trim_prefix("beatsec=").to_float()
 		elif arg.begins_with("glidesec="):
@@ -502,6 +512,10 @@ func _on_autostart_connected() -> void:
 ## move/tap/click honour movewait= (falling back to the anchor); hold honours its own holdwait=
 ## (falling back to movewait=, then the anchor) so click-then-key runs can stagger the two sources.
 func _schedule_input_knobs(default_anchor_sec: float) -> void:
+	# eventlog= (v0.20.0): tap the broadcast NetEvents stream to a file once the session is live (idempotent —
+	# started once per instance). Placed here because both roles reach this after their scene is up.
+	if not _event_log_path.is_empty() and _event_log_file == null:
+		_start_event_log()
 	if _has_say:
 		_schedule_say(_say_text, default_anchor_sec)
 	# cmd= mirrors say= timing (fires at the role anchor) so a dev command lands after both peers have
@@ -852,3 +866,29 @@ func _schedule_screenshot(path: String) -> void:
 	var err := image.save_png(path)
 	print("[Debug] viewport screenshot -> %s (%s)" % [path, error_string(err)])
 	get_tree().quit()
+
+
+## eventlog= (v0.20.0 dev observe): open the log file and subscribe to the broadcast NetEvents stream. Flushed
+## per line so a force-kill still leaves a complete file (block-buffered stdout would not).
+func _start_event_log() -> void:
+	_event_log_file = FileAccess.open(_event_log_path, FileAccess.WRITE)
+	if _event_log_file == null:
+		push_error("[Debug] eventlog: cannot open %s" % _event_log_path)
+		return
+	NetEvents.event_received.connect(_log_net_event)
+	_event_log_file.store_line("# rogues_oath event log")
+	_event_log_file.flush()
+
+
+## Write one movement/combat/status NetEvent to the log file with its server_time + as_peer + data. The set is
+## the events that tell a fight or a status change; grep the file for deterministic two-instance assertions.
+func _log_net_event(event: Dictionary) -> void:
+	if _event_log_file == null:
+		return
+	var action := str(event.get("action", ""))
+	if not (action in ["glide_to", "windup", "heal_cast", "smite_cast", "heal", "attack", "died",
+			"status_applied", "status_expired"]):
+		return
+	_event_log_file.store_line("%9.2f  p%-5d  %-15s  %s" % [
+		float(event.get("server_time", 0.0)), int(event.get("peer", 0)), action, str(event.get("data", {}))])
+	_event_log_file.flush()

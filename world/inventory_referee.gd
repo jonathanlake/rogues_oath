@@ -164,6 +164,10 @@ func _validate_use_item(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# so a second "you're dead" line would be noise). A monster (negative id) never submits a use.
 	if not _combat.is_alive(sender_peer_id):
 		return { "ok": false, "reason": "dead" }
+	# STUNNED (v0.20.0): can't start a drink while stunned — reject before the busy check, never touching the
+	# busy record (an in-flight action still finishes; §2.1). Distinct reason → the §2.2.8 bonk.
+	if _combat.is_stunned(sender_peer_id):
+		return { "ok": false, "reason": "stunned" }
 	# BUSY — the Commitment Rule gate. is_entity_moving covers a glide AND a commit_in_place record (the SAME
 	# predicate melee/swap/shoot read), so a drink can never interrupt or overlap a committed action.
 	if _move_referee.is_entity_moving(sender_peer_id):
@@ -253,6 +257,10 @@ func _validate_equip_item(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# Liveness — log-suppressed like the use/glide dead reject (the `died` event already told the player).
 	if not _combat.is_alive(sender_peer_id):
 		return { "ok": false, "reason": "dead" }
+	# STUNNED (v0.20.0): can't start an equip while stunned — reject before the busy check, never touching the
+	# busy record (§2.1). Distinct reason → the §2.2.8 bonk.
+	if _combat.is_stunned(sender_peer_id):
+		return { "ok": false, "reason": "stunned" }
 	# BUSY — the Commitment Rule gate. is_entity_moving covers a glide AND a commit_in_place record (the SAME
 	# predicate melee/swap/shoot/use read), so an equip can never interrupt a committed action. This gate is
 	# ALSO what makes the INSTANT swap below safe: you can never equip mid-attack, so no in-flight _resolve_windup
