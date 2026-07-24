@@ -16,4 +16,4 @@ glide_speed = ExtResource("1_dekqg")
 aggro_range_tiles = 3
 heal_amount = 4
 heal_range_tiles = 14
-heal_cast_beats = 4.0
+heal_cast_beats = 8.0

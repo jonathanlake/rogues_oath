@@ -10,6 +10,16 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.19.8 (2026-07-24) — SHAMAN FEEL: longer heal cast + an overhead "casting" symbol.**
+  Two tweaks from the first live look. (1) The shaman's heal channel is LONGER — `heal_cast_beats` 4 → 8 (a
+  `.tres` value), so there's a real window to react and kill it (or its target) before the heal lands. (2) A
+  HELD overhead tell: while channeling, a pulsing GREEN sparkle floats above the healer's head for the whole
+  cast window, so "it's casting a spell" is legible on-screen — distinct from the WHITE attack wind-up, and
+  held (unlike the transient +N popup it replaces). Drawn as a `Polygon2D` star (font-independent — no glyph
+  to miss on the default font), driven per-peer from the `heal_cast` event (which already carries `cast_sec`,
+  so the symbol holds exactly the channel window everywhere) and cleared on re-cast / at cast end / with the
+  node on a mid-cast death. Compile-verified headless (clean parse). Feel: cast length + symbol read are
+  Jon/Jeff's to judge — `heal_cast_beats` is a one-value `.tres` nudge (not yet in the `/m` allowlist).
 - **v0.19.7 (2026-07-24) — DEV TOOL: `/config <alias>` — apply a whole test loadout in one command.**
   A repeated tuning setup (several `/w` + `/m` edits to try a feel) is now one keystroke. `/config 1` applies the
   first preset — longsword & club `windup_beats 1` / `attack_beats 3`, goblin `bonus_windup_beats 1` — the exact

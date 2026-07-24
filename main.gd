@@ -1163,11 +1163,11 @@ func _handle_heal_event(event: Dictionary) -> void:
 	_hud.note_attack(entity_id, hp_after, target_max)
 
 
-## All peers: play back a monster's heal-CAST telegraph (§2.3.4, v0.19.4 — the shaman's channel). Rendered from
-## the authoritative event on every peer: the caster turns to face its ally and a GREEN "+" floats over it,
-## marking the channel window — deliberately DISTINCT from the WHITE attack wind-up so a heal is never confusable
-## with a strike. The LAND is the later `heal` event (green +N over the ally); the log line comes from game_log.
-## A first-pass tell (facing + popup); a richer held channel visual can follow if it feel-tests as too subtle.
+## All peers: play back a monster's heal-CAST telegraph (§2.3.4, v0.19.4). Rendered from the authoritative event
+## on every peer: the caster turns to face its ally and shows a HELD pulsing green sparkle over its head for the
+## whole cast window (v0.19.8 — a "casting a spell" symbol, distinct from the WHITE attack wind-up so a heal is
+## never confusable with a strike). The LAND is the later `heal` event (green +N over the ally); the log line
+## comes from game_log. cast_sec rides the event, so the symbol holds exactly the channel window on every peer.
 func _handle_heal_cast_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
 	var caster := _node_for_peer(int(data.get("caster_id", 0)))
@@ -1175,7 +1175,10 @@ func _handle_heal_cast_event(event: Dictionary) -> void:
 		return
 	var target_tile: Vector2i = data.get("target_tile", caster.tile)
 	caster.face_toward(signi(target_tile.x - caster.tile.x))
-	_fx.damage_popup("+", DamagePopup.HEAL_COLOR, caster.tile)
+	# Overhead cast symbol — Monster surface (only monsters cast heals today; narrow cast like play_whiff).
+	var caster_monster := caster as Monster
+	if caster_monster != null:
+		caster_monster.play_heal_cast(float(data.get("cast_sec", 0.0)))
 
 
 ## All peers: adopt a host-stamped tempo change (§2.8.3). Apply it to the LOCAL GameManager beat so the
