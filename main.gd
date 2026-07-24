@@ -856,9 +856,11 @@ func _handle_attack_event(event: Dictionary) -> void:
 	if whiff:
 		# Whiff cues are Monster surface (only a wind-up whiffs in M3) — deliberate narrow cast.
 		var whiffer := attacker as Monster
-		if whiffer != null and kind != "smite":
-			# SMITE whiff (v0.19.10) skips the melee lunge — a dodged ground-spell has no swing; the grey
-			# "miss" popup over the vacated tile below is its cue.
+		if whiffer != null and kind == "smite":
+			# SMITE whiff (v0.19.10): no melee lunge (a dodged ground-spell has no swing), but a distinct
+			# FIZZLE SOUND (v0.19.12 review #1) so the dodge is audible, not just the grey "miss" popup below.
+			whiffer.play_cast_fizzle()
+		elif whiffer != null:
 			whiffer.play_whiff(dir)
 		elif whiffer == null:
 			# Whiffs are structurally monster-only today (only _resolve_windup emits them, only

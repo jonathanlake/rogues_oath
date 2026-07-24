@@ -175,6 +175,13 @@ func play_whiff(dir: Vector2i) -> void:
 	_whiff_audio.play()
 
 
+## Fizzle cue for a DODGED ranged spell (v0.19.12, review #1): the swing-into-nothing SOUND only — NO melee
+## lunge (a ground-target smite has no swing). Gives a dodged smite a distinct audible outcome (§2.3.4) so it
+## isn't silent-but-for-a-popup. Played on the caster on every peer from the whiffed "smite" attack event.
+func play_cast_fizzle() -> void:
+	_whiff_audio.play()
+
+
 ## Spell-cast telegraph (§2.3.4, v0.19.8; generalized v0.19.10): a pulsing sparkle in `symbol_color` over the
 ## caster's head for the whole cast window `hold_sec`, so "I'm channeling a spell" is legible on-screen — HELD
 ## (unlike the transient +N popup) and distinct from the WHITE attack wind-up. GREEN = heal, orange-red = smite

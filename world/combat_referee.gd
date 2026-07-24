@@ -371,7 +371,8 @@ func pick_heal_target(caster_id: int, caster_tile: Vector2i, range_tiles: int) -
 			continue
 		# Only heal COMBATANTS (v0.19.10 fix): skip a brainless prop — the training dummy (has_brain=false) is a
 		# monster sitting below max HP, so it was a heal MAGNET the shaman wasted casts on. A real ally only.
-		if node is Monster and node.monster_type != null and not node.monster_type.has_brain:
+		# A null-monster_type node (a spawn-config bug) is also skipped — it's not a valid ally (review #6).
+		if node is Monster and (node.monster_type == null or not node.monster_type.has_brain):
 			continue
 		var hp := int(_hp[id])
 		# Already at (or above) max — nothing to heal.
@@ -511,7 +512,7 @@ func smite_cast(caster_id: int, target_tile: Vector2i, damage: int, cast_beats: 
 		"cast_sec": cast_sec,
 	}, caster_id)
 	get_tree().create_timer(cast_sec).timeout.connect(
-			_resolve_smite.bind(caster_id, target_tile, maxi(0, damage)))
+			_resolve_smite.bind(caster_id, target_tile, maxi(0, damage), recovery_sec))
 	return cast_sec + recovery_sec
 
 
@@ -519,7 +520,7 @@ func smite_cast(caster_id: int, target_tile: Vector2i, damage: int, cast_beats: 
 ## the caster must still be alive (killed mid-cast = nothing, the rush-it counterplay); then whoever HOSTILE and
 ## LIVING occupies the tile NOW eats `damage` (a player who stepped on eats it; the original target who stepped off
 ## dodges). No hostile occupant → a WHIFF event (kind "smite", whiff true) so the dodge is a distinct §2.3.4 outcome.
-func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int) -> void:
+func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int, recovery_sec: float) -> void:
 	if not is_alive(caster_id):
 		return
 	var caster := _node_of_id(caster_id)
@@ -527,10 +528,13 @@ func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int) -> void:
 	if occ_id != _NO_ENTITY:
 		var occ := _node_of_id(occ_id)
 		if occ != null and is_alive(occ_id) and caster != null and caster.is_hostile_to(occ):
-			apply_damage(caster_id, occ_id, damage, "smite", 0.0)
+			# recovery_sec rides the hit so the caster plays its "spent" recovery tell (review #2) — without it
+			# the shaman froze ~2 beats after every smite with no on-screen explanation.
+			apply_damage(caster_id, occ_id, damage, "smite", recovery_sec)
 			return
 	# Dodged / empty ground — a distinct WHIFF (the target moved off in time). target_tile rides so the miss
 	# cue lands on the committed tile; kind "smite" so the log reads "fizzles — dodged!" not a melee miss.
+	# recovery_sec rides so the caster shows its spent tell on a dodge too (review #2).
 	NetEvents.post_event("attack", {
 		"attacker_id": caster_id,
 		"attacker_name": _name_of(caster),
@@ -542,7 +546,7 @@ func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int) -> void:
 		"target_max": 0,
 		"kind": "smite",
 		"whiff": true,
-		"duration_sec": 0.0,
+		"duration_sec": recovery_sec,
 	}, caster_id)
 
 

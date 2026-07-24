@@ -10,6 +10,17 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.19.12 (2026-07-24) — REVIEW FIXES: dodged-smite sound + smite recovery tell + heal-target hardening.**
+  A fresh-eyes code review of the v0.19.4–.11 quick builds (found no crash / desync / Commitment-Rule bypass —
+  the spell code faithfully mirrors the proven wind-up pattern). Three fixes landed: (1) §2.3.4 — a DODGED smite
+  was silent (only a grey "miss" popup); it now plays a distinct FIZZLE sound (`Monster.play_cast_fizzle`, the
+  swing-into-nothing SFX with no melee lunge). (2) FEEL — the smite passed `duration_sec: 0.0` to its resolve, so
+  the shaman froze ~2 beats of recovery with NO "spent" tell; `_resolve_smite` now carries `recovery_sec` into
+  both the hit and the whiff event, so `play_recovery` shows the spent window. (3) ROBUSTNESS — `pick_heal_target`
+  now also skips a null-`monster_type` node (defensive; a real ally always has a type). Deferred/parked (morning
+  report): the overlap-token for back-to-back cast symbols (can't trigger at current tuning) is folded into the
+  ability-system's Entity overhead-icon lift; a heal-branch pace-report staleness (pace-only, low) and the
+  aggro-3-vs-smite-range-12 tuning tension are notes for Jon, no code change. Logic/parse-verified.
 - **v0.19.11 (2026-07-24) — SMITE = a DODGEABLE ground-target (red tile telegraph); shaman won't cast pre-aggro.**
   Two fixes from the feel-test. (1) **Smite is now Rogue-Fable telegraphed ground**, not a homing hit: the shaman
   picks a random in-range player's TILE, every peer paints that tile RED for the whole cast, and the hit resolves
