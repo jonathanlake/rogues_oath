@@ -289,6 +289,11 @@ func _on_event_received(event: Dictionary) -> void:
 			# a distinct outcome, distinct line). The "..." mirrors the windup "draws the..." telegraph shape.
 			# Name + item flow through add_line's sink escape like every line.
 			add_line("%s drinks the %s..." % [str(data.get("name", "Someone")), str(data.get("item", "item"))])
+		"equip_item":
+			# A committed weapon equip from the bag (v0.19.x loot, §2.3.4 — a distinct line). Party-wide: everyone
+			# sees who armed themselves with what. Names flow through add_line's sink escape. The swapped-out
+			# weapon is not named (it went back into the bag, not lost — keep the line terse).
+			add_line("%s equips the %s." % [str(data.get("name", "Someone")), str(data.get("equipped", "weapon"))])
 		"heal":
 			# A resolved heal (v0.18.0 chunk C, §2.3.4 — a distinct recovery line with the running HP readout,
 			# the twin of an `attack` line's "for N (hp/max)"). Party-wide so recovery is legible in the log.

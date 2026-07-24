@@ -215,6 +215,22 @@ func validate_catalog_covers_rosters() -> void:
 func validate_catalogs() -> void:
 	_warn_duplicate_names(weapon_catalog, "weapon_catalog")
 	_warn_duplicate_names(item_catalog, "item_catalog")
+	_warn_cross_catalog_collisions()
+
+
+## Cross-catalog uniqueness guard (v0.19.x loot, GLM review). A bag entry is a display_name STRING resolved
+## against BOTH catalogs — weapon_by_name for a left-click equip, item_by_name for a left-click use (a looted
+## weapon and a consumable now share the inventory). A name present in BOTH catalogs is ambiguous: the HUD icon
+## and the click-routing would silently pick one, so the WRONG thing gets equipped/drunk with no error. Warn
+## ONCE at startup (called host-side from CombatReferee.activate beside the other catalog guards). Pure diagnostic.
+func _warn_cross_catalog_collisions() -> void:
+	var weapon_names: Dictionary = {}
+	for w in weapon_catalog:
+		if w != null:
+			weapon_names[w.display_name] = true
+	for it in item_catalog:
+		if it != null and weapon_names.has(it.display_name):
+			push_warning("[GameConfig] display_name '%s' is in BOTH weapon_catalog and item_catalog — a looted bag entry with this name is AMBIGUOUS (equip vs use). Rename one." % it.display_name)
 
 
 ## Shared duplicate-display_name scan for one catalog (v0.18.0). `entries` is an Array of Resources each with

@@ -100,6 +100,11 @@ const _BACKDROP := Color(0.10, 0.10, 0.13, 1.0)
 ## (DebugOverlay F3 label + the hurt-vignette scoping) and reads world_frame_rect() once so they never sit stale.
 signal world_frame_changed(rect: Rect2)
 
+## Emitted when the local player LEFT-CLICKS an inventory slot (v0.19.x loot). `slot` is the 0-based bag index.
+## The HUD stays presentation-only (it never climbs the tree): main.gd wires this, resolves the slot's content
+## TYPE against the catalogs, and submits the right intent — use_item for a consumable, equip_item for a weapon.
+signal slot_activated(slot: int)
+
 @onready var _root: Control = $Root
 @onready var _right_column: Panel = $Root/RightColumn
 @onready var _world_frame: Control = $Root/WorldFrame
@@ -613,8 +618,9 @@ func _build_equipment() -> void:
 
 
 ## Inventory panel — a 5×4 grid of 32px reserved slots, pinned at the column BOTTOM (the char-info expand
-## pushes it down). The TOP ROW is styled distinct (accent border + faint 1-5 keycaps) as the future hotbar
-## — styling only; no key wiring, no item system this chunk. 2px gaps.
+## pushes it down). The FIRST ROW (the bag's 5 slots) holds carried items — a potion or a looted weapon —
+## each LEFT-CLICKABLE to use/equip (v0.19.x). No number-key action bar (Jon: nothing auto-binds to a hotbar).
+## 2px gaps.
 func _build_inventory() -> void:
 	_inventory.add_theme_stylebox_override("panel", _clear_style())
 	var grid := GridContainer.new()
@@ -647,16 +653,13 @@ func _build_inventory() -> void:
 			slot.add_child(icon)
 			_hotbar_icons.append(icon)
 			_hotbar_atlases.append(atlas)
-			# Faint keycap numeral, top-left of the hotbar slot — a style tell, not a key binding. Font
-			# stepped up (5 → 8) for the bigger 32px boxes.
-			var key := Label.new()
-			key.text = str(i + 1)
-			key.add_theme_font_size_override("font_size", 8)
-			key.add_theme_color_override("font_color", Color(0.85, 0.72, 0.32, 0.8))
-			key.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			key.set_anchors_preset(Control.PRESET_TOP_LEFT)
-			key.position = Vector2(2, 0)
-			slot.add_child(key)
+			# LEFT-CLICK to use/equip (v0.19.x loot): make this bag slot mouse-interactive. Sockets are IGNORE
+			# by default so world clicks pass THROUGH the HUD to move/shoot — only these 5 consume, so a click
+			# anywhere else still reaches the world. gui_input reports the press; the bound index rides to
+			# slot_activated, which main.gd routes to use_item (consumable) or equip_item (weapon) by content type.
+			# NO number-key action bar anymore (Jon: nothing auto-binds to a hotbar — you left-click the item).
+			slot.mouse_filter = Control.MOUSE_FILTER_STOP
+			slot.gui_input.connect(_on_slot_gui_input.bind(i))
 
 
 ## Rebuild the own-player passive list from its class (one label per passive that has a display name).
@@ -682,23 +685,45 @@ func _set_weapon_icon(weapon: WeaponType) -> void:
 	_own_weapon_icon.visible = true
 
 
-## Paint the hotbar row (v0.18.0 chunk B) from the LOCAL player's inventory mirror (Array[String] of item
-## display_names, in slot order). For each slot: a filled slot windows the item's items.png region out of
-## ITEMS_TEX (the _set_weapon_icon pattern, resolved via GameManager.config.item_by_name — same name-resolution
-## every peer uses); an empty slot (or one whose name can't resolve) hides the icon back to a bare socket. Reads
-## the local player through $Players like refresh_self; a no-op-to-empty when our player doesn't exist yet.
+## Paint the bag row (v0.18.0 chunk B; v0.19.x adds weapons) from the LOCAL player's inventory mirror
+## (Array[String] of display_names, in slot order). For each slot: a filled slot windows the item's items.png
+## region out of ITEMS_TEX (the _set_weapon_icon pattern) — resolved via item_by_name (a consumable) OR
+## weapon_by_name (a looted weapon), both exposing atlas_coords; an empty or unresolvable name hides the icon
+## back to a bare socket. Reads the local player through $Players like refresh_self; no-op when we have no player.
 func _refresh_hotbar() -> void:
 	var me := _players.get_node_or_null(str(_own_id)) as Player if _players != null else null
 	var bag: Array = me.inventory if me != null else []
 	for i in _hotbar_icons.size():
-		var item_type: ItemType = GameManager.config.item_by_name(str(bag[i])) if i < bag.size() else null
-		if item_type != null:
-			_hotbar_atlases[i].region = WorldGrid.atlas_region(item_type.atlas_coords)
+		var coords := _bag_icon_coords(str(bag[i])) if i < bag.size() else Vector2i(-1, -1)
+		if coords.x >= 0:
+			_hotbar_atlases[i].region = WorldGrid.atlas_region(coords)
 			_hotbar_icons[i].visible = true
 		else:
-			# Empty slot OR an unresolvable name (a name absent from item_catalog) — clear back to a bare socket
-			# rather than leave a stale icon; the config-validation guard warns on a genuinely missing catalog entry.
+			# Empty slot OR an unresolvable name (absent from both catalogs) — clear back to a bare socket rather
+			# than leave a stale icon; the config-validation guards warn on a genuinely missing/ambiguous name.
 			_hotbar_icons[i].visible = false
+
+
+## The items.png cell for a bag entry NAME, resolving a consumable (item_catalog) first, then a looted weapon
+## (weapon_catalog) — both expose atlas_coords. Returns (-1, -1) for an empty/unresolvable name (hide the icon).
+## The cross-catalog uniqueness guard (GameConfig) keeps the two disjoint, so the item-first order is unambiguous.
+func _bag_icon_coords(name: String) -> Vector2i:
+	var it := GameManager.config.item_by_name(name)
+	if it != null:
+		return it.atlas_coords
+	var w := GameManager.config.weapon_by_name(name)
+	if w != null:
+		return w.atlas_coords
+	return Vector2i(-1, -1)
+
+
+## A left-click on bag slot `slot` (v0.19.x): forward it to main.gd via slot_activated. Only a LEFT press
+## fires (right/other buttons ignored). The HUD stays presentation-only — it neither reads the bag's type nor
+## submits an intent; main.gd resolves the slot's content and routes to use_item / equip_item. The STOP filter
+## on the slot already keeps the click off the world (no accidental move/shoot).
+func _on_slot_gui_input(event: InputEvent, slot: int) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		slot_activated.emit(slot)
 
 
 ## A 32px reserved socket Panel. `accent` = the brighter hotbar/hands border; a non-empty `label_text`

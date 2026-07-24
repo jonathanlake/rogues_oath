@@ -79,6 +79,9 @@ func activate(players: Node2D, items: Node2D, move_referee: Node, combat: Node, 
 	# Register the "use_item" intent validator on the shared pipe (the way CombatReferee registers "shoot").
 	# Host-only — activate never runs on a client, so a client's inventory referee never adjudicates a use.
 	NetEvents.register_handler("use_item", _validate_use_item)
+	# Register the "equip_item" validator (v0.19.x loot): left-click a looted weapon in the bag to equip it,
+	# swapping the currently-held weapon back into the freed slot. Host-only, same as use_item.
+	NetEvents.register_handler("equip_item", _validate_equip_item)
 
 
 ## Host-only walk-over pickup adjudication, called by MoveReferee at a glide's finalized arrival. Scans the
@@ -239,6 +242,63 @@ func _resolve_use(round_gen: int, user_id: int, heal_amount: int, item_name: Str
 	# renders the bar + popup — never a client compute). god mode does NOT block a heal (see apply_heal): god
 	# blocks damage, not recovery.
 	_combat.apply_heal(user_id, heal_amount, item_name)
+
+
+## The "equip_item" intent validator (host-only, v0.19.x loot). A player left-clicks a looted WEAPON in their bag;
+## the host adjudicates from ITS OWN authoritative bag + the shared weapon catalog (never a client value, §2.5),
+## SWAPS the currently-held weapon back into the freed slot, and posts an item-equip event. Reject reasons are
+## DISTINCT per §2.2.8. Returns a DEFERRED accept — the equip_item event IS the outcome (mirror of the use/shoot
+## validators), so no generic event is broadcast.
+func _validate_equip_item(sender_peer_id: int, data: Dictionary) -> Dictionary:
+	# Liveness — log-suppressed like the use/glide dead reject (the `died` event already told the player).
+	if not _combat.is_alive(sender_peer_id):
+		return { "ok": false, "reason": "dead" }
+	# BUSY — the Commitment Rule gate. is_entity_moving covers a glide AND a commit_in_place record (the SAME
+	# predicate melee/swap/shoot/use read), so an equip can never interrupt a committed action. This gate is
+	# ALSO what makes the INSTANT swap below safe: you can never equip mid-attack, so no in-flight _resolve_windup
+	# reads a half-changed weapon.
+	if _move_referee.is_entity_moving(sender_peer_id):
+		return { "ok": false, "reason": "busy" }
+	# Slot shape + emptiness: never trust the wire. Read the sender's AUTHORITATIVE bag (an untracked player has
+	# no entry = an empty bag by construction, so every slot rejects).
+	var slot := int(data.get("slot", -1))
+	var bag: Array[String] = _inventories.get(sender_peer_id, [] as Array[String])
+	if slot < 0 or slot >= bag.size():
+		return { "ok": false, "reason": "nothing in that slot" }
+	# Resolve the bag entry as a WEAPON via the shared catalog (server-authoritative). A consumable / unknown name
+	# is not equippable — reject distinctly. The client only routes a use_item for a consumable, so this is the
+	# authoritative backstop against a spoofed equip of a potion.
+	var item_name: String = bag[slot]
+	var weapon: WeaponType = GameManager.config.weapon_by_name(item_name)
+	if weapon == null:
+		return { "ok": false, "reason": "can't equip that" }
+	var player := _players.get_node_or_null(str(sender_peer_id)) as Player
+	if player == null:
+		return { "ok": false, "reason": "not in session" }
+
+	# ── Accept ──
+	# INSTANT swap, matching the Tab swap_weapon precedent (main.gd _validate_swap_weapon also does NOT
+	# commit_in_place a window — it gates on busy, applies, and broadcasts). The busy gate above already forbids
+	# equipping mid-action, so equipping is atomic BETWEEN actions — no free cancel of a committed action
+	# (Commitment Rule intact). Swap IN PLACE so nothing is lost: the freed slot takes the previously-equipped
+	# weapon (a bare-handed player — impossible today, scene default longsword — vacates the slot instead).
+	var old_weapon: WeaponType = player.equipped_weapon
+	var returned_name: String = old_weapon.display_name if old_weapon != null else ""
+	player.set_weapon(weapon)                      # host-authoritative apply FIRST, then broadcast (like the swap validator)
+	if returned_name.is_empty():
+		bag.remove_at(slot)
+	else:
+		bag[slot] = returned_name
+	# Telegraph the equip to EVERY peer (the §2.3.4 feedback — log line + rig repaint + HUD re-pack all ride this
+	# ONE event). name is server-resolved off the node; as_peer = the equipper (mirrors an attack's as_peer).
+	NetEvents.post_event("equip_item", {
+		"entity_id": sender_peer_id,
+		"name": player.display_name,
+		"slot": slot,
+		"equipped": weapon.display_name,
+		"returned": returned_name,
+	}, sender_peer_id)
+	return { "ok": true, "deferred": true }
 
 
 # ── Private methods ───────────────────────────────────────────────────────────

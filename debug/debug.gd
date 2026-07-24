@@ -141,6 +141,16 @@ var _use_slot: int = 0
 var _has_use: bool = false
 var _use_wait_sec: float = -1.0
 
+# Weapon-equip harness (equip=/equipwait=, v0.19.x loot): fire ONE equip_item intent through the REAL pipe from
+# EITHER role, testing the EQUIP flow end-to-end — the host validates (dead / busy / empty-slot / not-a-weapon
+# reject) and, on accept, swaps the bag weapon for the held one. Exact mirror of use=/usewait=; bypasses the
+# inventory LEFT-CLICK (dead under --headless anyway) like use= bypasses the number key, so it exercises the
+# SERVER path. equip=<slot> is 1-BASED; the submitted intent carries the 0-based bag index (slot-1). Fires
+# mid-sequence by default (move anchor + 2s); equipwait= pins it (e.g. after a scripted pickup). 0 slot = absent.
+var _equip_slot: int = 0
+var _has_equip: bool = false
+var _equip_wait_sec: float = -1.0
+
 # Tap harness (tap=/tapsec=): synthesizes press/release EVENTS via Input.parse_input_event(),
 # which routes through the REAL InputMap bindings — one layer deeper than hold=, which presses
 # actions directly and therefore cannot test the bindings themselves (numpad dual-bound
@@ -358,6 +368,11 @@ func _ready() -> void:
 		elif arg.begins_with("use="):
 			_use_slot = arg.trim_prefix("use=").to_int()
 			_has_use = _use_slot > 0
+		elif arg.begins_with("equipwait="):
+			_equip_wait_sec = arg.trim_prefix("equipwait=").to_float()
+		elif arg.begins_with("equip="):
+			_equip_slot = arg.trim_prefix("equip=").to_int()
+			_has_equip = _equip_slot > 0
 
 	if not (is_host or is_client):
 		return
@@ -526,6 +541,10 @@ func _schedule_input_knobs(default_anchor_sec: float) -> void:
 	# use-while-busy reject or a heal landing after a scripted pickup; usewait= pins it (e.g. mid-busy to test the reject).
 	if _has_use:
 		_schedule_use(_use_wait_sec if _use_wait_sec >= 0.0 else move_anchor + 2.0)
+	# equip= fires mid-sequence by default (move anchor + 2s), like use= — so a scripted pickup-then-equip run can
+	# arm the equip after the walk-over pickup lands; equipwait= pins it (e.g. mid-busy to test the reject).
+	if _has_equip:
+		_schedule_equip(_equip_wait_sec if _equip_wait_sec >= 0.0 else move_anchor + 2.0)
 
 
 ## Fire one chat intent through the real pipe after a settle delay. Works identically on host
@@ -581,6 +600,16 @@ func _schedule_use(delay_sec: float) -> void:
 	await get_tree().create_timer(delay_sec).timeout
 	print("[Debug] use: submitting use_item slot=%d (0-based %d)" % [_use_slot, _use_slot - 1])
 	NetEvents.submit_intent("use_item", { "slot": _use_slot - 1 })
+
+
+## Fire one equip_item intent through the real pipe after a delay (v0.19.x loot). Works identically on host and
+## client — submit_intent is the single public entry point, no role branch. equip= is 1-BASED; the wire payload
+## carries the 0-based bag index (slot-1). The host validates (dead/busy/empty/not-a-weapon) and, on accept, swaps
+## the bag weapon for the held one. Mirror of _schedule_use — bypasses the inventory left-click (server-path test).
+func _schedule_equip(delay_sec: float) -> void:
+	await get_tree().create_timer(delay_sec).timeout
+	print("[Debug] equip: submitting equip_item slot=%d (0-based %d)" % [_equip_slot, _equip_slot - 1])
+	NetEvents.submit_intent("equip_item", { "slot": _equip_slot - 1 })
 
 
 ## Fire one set_tempo intent through the real pipe after a delay. Works identically on host and

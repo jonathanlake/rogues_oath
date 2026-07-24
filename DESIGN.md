@@ -452,10 +452,22 @@ Using an item is a COMMITTED action (§2.1): `use_item {slot}` roots you for `us
 heal lands at the DRINK'S END — killed mid-drink consumes the potion and heals nothing ("attack
 or drink, not both"). Heals are their own referee pipe (`apply_heal`, clamped to max; god blocks
 damage, never healing) — the damage pipe stays damage-only. The health potion (heal 10 / 2-beat
-drink) is the v1 item; 1–5 keys use a slot; `/item` + `potion=` spawn for testing.
+drink) is the v1 item; `/item` + `potion=` spawn for testing.
+
+**Loot (v0.19.x).** Enemies DROP their equipped weapon on death — a `GroundItem` carrying the
+`WeaponType` on the death tile (nearest walkable neighbour if occupied) — so the bag now holds
+weapons alongside consumables. **Interaction is LEFT-CLICK on the inventory slot** (Jon: nothing
+auto-binds to a number-key action bar): a consumable drinks (`use_item`), a weapon equips
+(`equip_item`) — routed by the slot's content type. An equip is an INSTANT swap (the Tab-swap
+precedent — busy-gated, no committed window): the looted weapon comes off the bag and the
+previously-held weapon goes back into the freed slot, nothing lost. A looted weapon resolves its
+stats through the equipper's own modifiers (§2.3.7 base+modifier), so the goblin's slow club
+becomes a fast weapon in the player's hands. A startup guard warns if any `display_name` is in
+both catalogs (a bag name resolves against both — ambiguity would equip/drink the wrong thing).
 
 **Shipped so far:** item resources + catalog, ground items + walk-over pickup, 5-slot bag,
-use-as-commit + heal pipe, hotbar + 1–5 keys, dev spawn (v0.18.0).
+use-as-commit + heal pipe, dev spawn (v0.18.0); weapon drop-on-death + loot-to-bag + left-click
+use/equip-with-swap (v0.19.x).
 
 **Still envisioned:** drop tables + the designer `.tres`-only authoring gate (= milestone **M5**,
 which owns that bar — this track points at it, doesn't restate its Done=); more item categories

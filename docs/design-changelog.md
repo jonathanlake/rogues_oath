@@ -10,6 +10,29 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.19.1 (2026-07-24) — LOOT: enemies drop their weapon; left-click inventory to use/equip (Jon/Jeff).**
+  The payoff on v0.19.0's base+modifier foundation (Jeff: "every enemy should drop the weapon it was using").
+  THREE parts. (1) **Drop-on-death.** A dying MONSTER drops its equipped weapon as a `GroundItem` on its death
+  tile (nearest walkable neighbour if the tile already holds loot) — CombatReferee gets the drop as an injected
+  Callable bound to Main's guarded `_spawn_item_at` (no reach-up), captured BEFORE `clear_entity` erases
+  occupancy. The `ItemSpawner` now resolves a ground item's name+icon from EITHER an `ItemType` or a
+  `WeaponType` (explicit type branch). A weaponless monster (the dummy) drops nothing. (2) **Loot into the
+  bag.** Walk-over pickup already stored the display_name, so a dropped `club` enters the 5-slot bag; the HUD
+  now renders a bag slot's icon via item_by_name OR weapon_by_name (so a looted weapon shows). (3) **Left-click
+  to use/equip — no number-key action bar** (Jon: nothing auto-binds to a hotbar). Inventory slots are now
+  mouse-interactive (STOP filter — a click elsewhere still reaches the world to move/shoot); a left-click emits
+  `slot_activated`, and Main routes by content type: a consumable drinks (`use_item`), a weapon equips
+  (`equip_item`). The old 1–5 use keys are retired. **Equip is an INSTANT swap** (the Tab swap_weapon precedent
+  — busy-gated, no committed window): the looted weapon comes off the bag, the previously-held weapon goes back
+  into the freed slot (nothing lost). A looted weapon resolves its stats through the equipper's OWN modifiers
+  (v0.19.0), so the goblin's slow club is a fast weapon in your hands. A startup guard warns on any display_name
+  present in BOTH catalogs (a bag name resolves against both — ambiguity would equip/drink the wrong thing).
+  New `equip=`/`equipwait=` harness knobs (mirror of `use=`) exercise the equip server path. **VERIFIED
+  two-instance:** host kills a goblin → `spawned item 'club'` on its tile → walk-over `item_picked_up "club"` →
+  `equip_item {equipped: "club", returned: "longsword"}` (the longsword swaps back into the bag), all replicated
+  to the client; a windowed screenshot shows the club icon in the inventory + the log "Goblin dies / HOST picks
+  up the club." (The raw left-click gesture is windowed-only and unscriptable — `click=` targets world tiles —
+  so the HUD click→intent handler is verified by construction; every other link is directly observed.)
 - **v0.19.0 (2026-07-23) — WEAPONS: base stats + wielder modifiers, claw→club, the double-hit fix
   (Jon/Jeff).** Foundation for lootable weapons (Jeff: "every enemy should drop the weapon it was
   using"). THREE coupled changes. (1) **Base + wielder-modifier stat model (§2.3.7).** A weapon now

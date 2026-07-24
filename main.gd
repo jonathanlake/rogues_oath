@@ -319,6 +319,9 @@ func _ready() -> void:
 	# signal, THEN seed it once with the current rect so the consumer never sits on a stale/zero rect from
 	# _ready ordering (the HUD lays out deferred, but world_frame_rect() returns its seeded default meanwhile).
 	_hud.world_frame_changed.connect(_on_world_frame_changed)
+	# Left-click on an inventory slot (v0.19.x loot): the HUD emits the bag index; we resolve its content type
+	# and submit the matching intent. Local UI on every peer (the HUD only ever surfaces our OWN player's bag).
+	_hud.slot_activated.connect(_on_inventory_slot_activated)
 	_on_world_frame_changed(_hud.world_frame_rect())
 
 	# Wire the F7 range overlay its Monsters container on EVERY peer (component pattern — the overlay
@@ -419,14 +422,16 @@ func _ready() -> void:
 		item.name = str(data.item_id)
 		item.item_id = int(data.item_id)
 		item.tile = data.tile
-		# Resolve the item's name + icon from the loaded .tres — a null type (broken path) leaves the safe
-		# fallbacks (empty name / (0,0) cell) and warns, rather than crashing the whole spawn on every peer.
-		var item_type := load(data.type_path) as ItemType
-		if item_type != null:
-			item.item_name = item_type.display_name
-			item.atlas_coords = item_type.atlas_coords
+		# Resolve name + icon from EITHER an ItemType (a consumable) OR a WeaponType (a dropped weapon, v0.19.x
+		# loot) — both expose display_name + atlas_coords. EXPLICIT type branch (not bare duck-typing): the two-type
+		# set is closed, so a future third catalog type without atlas_coords hits the warn+safe-fallback instead of
+		# crashing every peer. A broken path / other type leaves the safe fallbacks (empty name / (0,0) cell) + warns.
+		var res := load(data.type_path)
+		if res is ItemType or res is WeaponType:
+			item.item_name = res.display_name
+			item.atlas_coords = res.atlas_coords
 		else:
-			push_warning("[Main] ground-item spawn: type_path '%s' did not load an ItemType" % data.type_path)
+			push_warning("[Main] ground-item spawn: type_path '%s' loaded neither ItemType nor WeaponType" % data.type_path)
 		print("[peer %d] spawned item '%s' (id %d) at tile %s" % [
 			multiplayer.get_unique_id(), item.item_name, item.item_id, item.tile])
 		return item
@@ -463,7 +468,10 @@ func _ready() -> void:
 		# any spawn — its container enter hooks then seed HP for every entity (host player + goblin), and
 		# the referees hold each other's references so bump/AoO/wind-up/death can cross-call and every attack
 		# window stamps at the attacker's resolved pace. Then hand the movement referee the combat reference.
-		_combat.activate(_players, _monsters, _referee, _pace)
+		# The last arg is the weapon-drop-on-death hook (v0.19.x loot): the SAME guarded _spawn_item_at the /item
+		# dev command uses, bound as a Callable so the combat referee drops a dead monster's weapon without ever
+		# reaching up to Main (its invariant). Inert on clients (this whole branch is host-only).
+		_combat.activate(_players, _monsters, _referee, _pace, _spawn_item_at)
 		_referee.set_combat(_combat)
 		# Host-only: activate the inventory referee (v0.18.0 chunk B) with the Players + Items containers (it
 		# wires the players' child_exiting_tree to drop a leaving player's bag — inventory dies with the player,
@@ -663,19 +671,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("weapon_swap"):
 		NetEvents.submit_intent("swap_weapon", {})
 		get_viewport().set_input_as_handled()
-	# Item use (v0.18.0 chunk C): number keys 1-5 use the hotbar slot of that index for OUR OWN player.
-	# Sampled here (like weapon_swap) so a focused chat LineEdit consumes the number keys first — the same
-	# not-chat-focused gate every _unhandled_input action rides. The HOST authority adjudicates every use
-	# (dead / busy / empty-slot / not-usable rejects, §2.2.8); we only submit the 0-based bag index (slot N-1).
-	# A use while busy is refused (bonk), never a free cancel of the committed action. The five bindings are
-	# looped rather than five branches so the hotbar width stays ONE literal (COUPLING: 5 == hud.gd INV_COLS ==
-	# InventoryReferee.INVENTORY_SLOTS). A key press is consumed the moment it matches so it never falls through.
-	else:
-		for slot_num in range(1, 6):
-			if event.is_action_pressed("use_slot_%d" % slot_num):
-				NetEvents.submit_intent("use_item", { "slot": slot_num - 1 })
-				get_viewport().set_input_as_handled()
-				break
+	# Item use / weapon equip is now LEFT-CLICK on the inventory slot (v0.19.x), NOT a number-key action bar
+	# (Jon: nothing auto-binds to a hotbar). The click path is _on_inventory_slot_activated, wired to the HUD's
+	# slot_activated signal in _ready — it routes by content type to a use_item or equip_item intent. The old
+	# use_slot_1..5 key bindings are retired here (kept in the InputMap harmlessly for the tap= harness).
 
 
 ## Detect and repair the ONE illegitimate window state: WINDOWED at (or beyond) the full screen size.
@@ -772,6 +771,10 @@ func _on_net_event(event: Dictionary) -> void:
 			# A committed item use (v0.18.0 chunk C, host-authored). Every peer plays the drink cue + re-packs the
 			# user's inventory mirror; the user's HUD repaints its hotbar (the log line comes from game_log).
 			_handle_item_used_event(event)
+		"equip_item":
+			# A committed weapon equip from the bag (v0.19.x loot, host-authored). Every peer repaints the rig +
+			# mirrors the swapped bag; the user's HUD repaints (the log line comes from game_log).
+			_handle_equip_item_event(event)
 		"heal":
 			# A resolved heal (v0.18.0 chunk C, host-authored — the effect end of a drink). Every peer floats the
 			# green "+N" popup + refreshes HP; the healed player's HUD/party-frame mirrors it (log line from game_log).
@@ -1059,6 +1062,51 @@ func _handle_item_used_event(event: Dictionary) -> void:
 	# item_picked_up handler's own-player HUD repaint.
 	if entity_id == multiplayer.get_unique_id():
 		_hud.on_inventory_changed(entity_id)
+
+
+## Local: a LEFT-CLICK on our own inventory slot (v0.19.x loot), from the HUD's slot_activated signal. Resolve
+## the slot's content in our client mirror and submit the matching intent: a CONSUMABLE drinks (use_item), a
+## WEAPON equips (equip_item). Client-side type routing only picks the intent name; the HOST re-validates
+## authoritatively (dead / busy / wrong-type / unknown, §2.2.8). An empty or unresolvable slot is ignored.
+func _on_inventory_slot_activated(slot: int) -> void:
+	var me := _players.get_node_or_null(str(multiplayer.get_unique_id())) as Player
+	if me == null or slot < 0 or slot >= me.inventory.size():
+		return
+	var item_name := str(me.inventory[slot])
+	if GameManager.config.item_by_name(item_name) != null:
+		NetEvents.submit_intent("use_item", { "slot": slot })
+	elif GameManager.config.weapon_by_name(item_name) != null:
+		NetEvents.submit_intent("equip_item", { "slot": slot })
+
+
+## All peers: play back a committed weapon EQUIP from the bag (v0.19.x loot, §2.3.4). The host-authored event
+## carries the newly-equipped weapon and the one it SWAPPED OUT (now sitting in the freed bag slot). Three jobs:
+## (1) repaint the rig to the equipped weapon (name-resolved every peer, like swap_weapon); (2) mirror the SWAP
+## into the client bag — the freed slot now holds the returned weapon (an empty return = the slot vacated); (3)
+## own player: repaint the HUD inventory + equipment panel + play the equip cue. The log line rides game_log.
+func _handle_equip_item_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var entity_id := int(data.get("entity_id", 0))
+	var slot := int(data.get("slot", -1))
+	var equipped_name := str(data.get("equipped", ""))
+	var returned_name := str(data.get("returned", ""))
+	var player := _players.get_node_or_null(str(entity_id)) as Player
+	if player == null:
+		return
+	var weapon := GameManager.config.weapon_by_name(equipped_name)
+	if weapon != null:
+		player.set_weapon(weapon)
+	# Mirror the host's authoritative swap: the freed slot takes the previously-equipped weapon, or vacates if
+	# there was none (a bare-handed equip — impossible today, but the referee mirrors this exact shape).
+	if slot >= 0 and slot < player.inventory.size():
+		if returned_name.is_empty():
+			player.inventory.remove_at(slot)
+		else:
+			player.inventory[slot] = returned_name
+	_pickup_sfx.play()  # equip cue (Feel= placeholder — reuses the pickup tick; a distinct "gear changed" sound later)
+	if entity_id == multiplayer.get_unique_id():
+		_hud.on_inventory_changed(entity_id)
+		_hud.on_weapon_swap(entity_id)
 
 
 ## All peers: play back a resolved HEAL (v0.18.0 chunk C, §2.3.4 — a distinct recovery cue). Off the one
@@ -1507,11 +1555,12 @@ func _node_for_peer(entity_id: int) -> Entity:
 ## the game log adds the line via its own connection). Rejects reach only the sender, so the
 ## local player is always the right target.
 func _on_intent_rejected(action: String, reason: String) -> void:
-	# glide_to, swap_weapon (M3.7), shoot (v0.17.0), and use_item (v0.18.0 chunk C) all bonk the sender's own
-	# player: a refused move / swap / shot / use gets the same distinct sound+flash, so "the host refused" is
-	# never a silent no-op (§2.3.4). A use reject (dead, busy, empty slot, not usable, unknown item) thus fires
-	# the bonk exactly like a refused move — the game_log line adds the reason for the non-suppressed cases.
-	if action != "glide_to" and action != "swap_weapon" and action != "shoot" and action != "use_item":
+	# glide_to, swap_weapon (M3.7), shoot (v0.17.0), use_item (v0.18.0 chunk C), and equip_item (v0.19.x loot)
+	# all bonk the sender's own player: a refused move / swap / shot / use / equip gets the same distinct
+	# sound+flash, so "the host refused" is never a silent no-op (§2.3.4). An equip reject (dead, busy, wrong
+	# slot, not-a-weapon) fires the bonk exactly like a refused move — the game_log line adds the reason.
+	if action != "glide_to" and action != "swap_weapon" and action != "shoot" \
+			and action != "use_item" and action != "equip_item":
 		return
 	var me := _players.get_node_or_null(str(multiplayer.get_unique_id())) as Player
 	if me == null:

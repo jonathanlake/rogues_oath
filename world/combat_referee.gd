@@ -61,6 +61,11 @@ var _move_referee = null
 # instance calls resolve dynamically); the null-resolver fallback lives in PaceReferee.beat_or_explore.
 # Null on clients (activate never runs there).
 var _pace = null
+# Weapon-drop-on-death hook (v0.19.x loot), host-only: a Callable bound to Main._spawn_item_at (the SAME
+# guarded, id-assigning, replicating spawn helper the /item dev command uses). Injected via activate so this
+# referee never reaches up to Main (its documented invariant). _kill_entity calls it to drop a dead monster's
+# equipped weapon as a GroundItem. Unset/invalid on clients (activate never runs there) — is_valid() gates it.
+var _drop_item: Callable = Callable()
 
 # Monotonic per-shot projectile id (v0.17.0), host-only. Stamped into each projectile_launched /
 # projectile_ended pair so multiple arrows in flight stay id-keyed and independent. Never reset mid-session.
@@ -84,11 +89,12 @@ var _round_gen: int = 0
 ## attack window is stamped. Wires both containers' membership signals the same way MoveReferee does.
 ## Registers the "shoot" intent validator on the shared pipe (the way MoveReferee registers "glide_to").
 ## Never called on clients (their combat referee stays inert).
-func activate(players: Node2D, monsters: Node2D, move_referee: Node, pace: Node) -> void:
+func activate(players: Node2D, monsters: Node2D, move_referee: Node, pace: Node, drop_item: Callable) -> void:
 	_players = players
 	_monsters = monsters
 	_move_referee = move_referee
 	_pace = pace
+	_drop_item = drop_item
 	_players.child_entered_tree.connect(_on_entity_entered)
 	_players.child_exiting_tree.connect(_on_entity_exiting)
 	_monsters.child_entered_tree.connect(_on_entity_entered)
@@ -754,12 +760,37 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 ## later and is idempotent (erasing already-erased keys is a no-op). `died` is server-authored
 ## (peer 0) — no attacker attribution; the preceding `attack` event carried that.
 func _kill_entity(entity_id: int, ent_name: String) -> void:
+	# Capture the authoritative death tile + node BEFORE clear_entity erases occupancy (the drop needs the
+	# tile, and the node is still valid — queue_free is deferred to end-of-frame). Read the tile from the
+	# MOVE referee (authoritative), never the node's presentation `tile`.
+	var death_tile: Vector2i = _move_referee.tile_of_entity(entity_id)
+	var node := _node_of_id(entity_id)
 	_hp.erase(entity_id)
 	_move_referee.clear_entity(entity_id)
 	NetEvents.post_event("died", { "entity_id": entity_id, "name": ent_name })
-	var node := _node_of_id(entity_id)
 	if node != null:
+		_drop_weapon_of(node, death_tile)
 		node.queue_free()
+
+
+## Drop a dead MONSTER's equipped weapon as a ground item on its death tile (v0.19.x loot). Host-only, called
+## from _kill_entity while the node is still valid. MONSTERS ONLY (Jeff: "every enemy drops the weapon it was
+## using") — a fallen player keeps its gear on the corpse for now. A weaponless monster (the training dummy)
+## and an unset drop hook (clients — this whole referee is inert there) drop nothing. Placement: try the death
+## tile first (its occupancy guard is ITEM-occupancy — a corpse is not an item, so the tile is normally free);
+## if an item already lies there, fall back to the nearest walkable neighbour so loot never silently vanishes.
+func _drop_weapon_of(node: Node, tile: Vector2i) -> void:
+	if not (node is Monster) or node.equipped_weapon == null or not _drop_item.is_valid():
+		return
+	var path: String = node.equipped_weapon.resource_path
+	if _drop_item.call(tile, path):
+		return
+	# Death tile was item-occupied (the only realistic false for a live weapon's always-existing path) — probe
+	# the 8 neighbours; _spawn_item_at re-checks walkable + occupancy, so a wall/occupied neighbour just fails on.
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+			Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]:
+		if _drop_item.call(tile + d, path):
+			return
 
 
 ## Seed HP as an Entity enters its container (players + monsters share this hook, branch-free).
