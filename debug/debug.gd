@@ -68,6 +68,15 @@ var _event_log_file: FileAccess = null
 var _ability_index: int = -1
 var _ability_wait_sec: float = -1.0
 
+# pickup=<n> (v0.21.0): submit n pickup_item intents (the G key) through the real pipe from either role, so the
+# manual-pickup flow is scriptable. Exact mirror of ability=: the G key sampling is focus-gated like the number
+# keys, so a scripted two-instance run can't reach it on the unfocused window — this bypasses the sampler and
+# exercises the INTENT, which is where the adjudication lives. n > 1 submits them back-to-back in ONE frame,
+# which is precisely the same-frame double-pickup case the GroundItem.is_queued_for_deletion guard closes.
+# pickupwait= its own delay.
+var _pickup_count: int = 0
+var _pickup_wait_sec: float = -1.0
+
 # Held-key harness (hold=/holdsec=): synthesizes a HELD move key via Input.action_press/release,
 # driving the GENUINE MoveInput sampler — key-held cadence, host/client symmetric — unlike move=,
 # which bypasses MoveInput by design and so can't catch input-layer bugs (e.g. a latch that only
@@ -313,6 +322,12 @@ func _ready() -> void:
 			_ability_index = arg.trim_prefix("ability=").to_int()
 		elif arg.begins_with("abilitywait="):
 			_ability_wait_sec = arg.trim_prefix("abilitywait=").to_float()
+		elif arg.begins_with("pickupwait="):
+			_pickup_wait_sec = arg.trim_prefix("pickupwait=").to_float()
+		elif arg.begins_with("pickup="):
+			# Clamped: the same-frame burst is a deliberate adversarial case, but an unbounded count off the
+			# command line would flood the intent pipe with rejects. 8 is far past any real test need.
+			_pickup_count = clampi(arg.trim_prefix("pickup=").to_int(), 0, 8)
 		elif arg.begins_with("beatsec="):
 			beat_override = arg.trim_prefix("beatsec=").to_float()
 		elif arg.begins_with("glidesec="):
@@ -537,6 +552,10 @@ func _schedule_input_knobs(default_anchor_sec: float) -> void:
 		_schedule_moves(move_anchor)
 	if _ability_index >= 0:
 		_schedule_ability(_ability_wait_sec if _ability_wait_sec >= 0.0 else move_anchor)
+	# pickup= fires at its own anchor (default the move anchor) so a scripted run can walk ONTO a non-potion
+	# item and then deliberately pick it up — the two halves of the v0.21.0 potion-only autopickup split.
+	if _pickup_count > 0:
+		_schedule_pickups(_pickup_wait_sec if _pickup_wait_sec >= 0.0 else move_anchor)
 	if _has_hold:
 		_schedule_hold(_hold_wait_sec if _hold_wait_sec >= 0.0 else move_anchor)
 	if _has_tap:
@@ -888,6 +907,17 @@ func _schedule_ability(delay_sec: float) -> void:
 	NetEvents.submit_intent("use_ability", { "index": _ability_index })
 
 
+## pickup= (v0.21.0): submit the scripted pickup_item intents after the anchor delay. Deliberately NO spacing
+## between them — a count > 1 lands every intent in the SAME frame, which is the exact adversarial case for the
+## GroundItem.on_tile is_queued_for_deletion guard (queue_free sets the flag synchronously but defers the tree
+## removal, so an unguarded second resolution in that frame would bank the same item twice).
+func _schedule_pickups(delay_sec: float) -> void:
+	await get_tree().create_timer(delay_sec).timeout
+	for i in _pickup_count:
+		print("[Debug] pickup: submitting pickup_item (%d/%d)" % [i + 1, _pickup_count])
+		NetEvents.submit_intent("pickup_item", {})
+
+
 ## eventlog= (v0.20.0 dev observe): open the log file and subscribe to the broadcast NetEvents stream. Flushed
 ## per line so a force-kill still leaves a complete file (block-buffered stdout would not).
 func _start_event_log() -> void:
@@ -906,8 +936,11 @@ func _log_net_event(event: Dictionary) -> void:
 	if _event_log_file == null:
 		return
 	var action := str(event.get("action", ""))
+	# v0.21.0: the ITEM events joined the set — the potion-only autopickup split (item_pickup_available vs
+	# item_picked_up) and the manual G pickup are only assertable two-instance if they reach this file.
 	if not (action in ["glide_to", "windup", "heal_cast", "smite_cast", "heal", "attack", "died",
-			"status_applied", "status_expired"]):
+			"status_applied", "status_expired",
+			"item_picked_up", "item_pickup_full", "item_pickup_available", "item_used", "equip_item"]):
 		return
 	_event_log_file.store_line("%9.2f  p%-5d  %-15s  %s" % [
 		float(event.get("server_time", 0.0)), int(event.get("peer", 0)), action, str(event.get("data", {}))])

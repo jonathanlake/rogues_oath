@@ -189,7 +189,9 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   drink it after damage and the heal lands clamped — DEMONSTRATED (v0.18.0 event traces).
   *Items are a CAPABILITY TRACK — the design + "complete when" live in **DESIGN §2.10**; stage
   status is tracked here in ROADMAP (this milestone shipped v1; M5 below owns the drop-tables +
-  designer-pipeline gate).*
+  designer-pipeline gate).* **Superseded in part by v0.21.0** — the bag is now 20 slots authored as
+  `GameConfig.inventory_slots`, and walk-over autopickup is POTION-ONLY (everything else is picked
+  up deliberately with **G**). The text above records what M5-lite shipped; §2.10 is current truth.
 
 - [ ] **M5 — Loot & Builds (remainder)** **[size M]**
   Drop tables; placeholder stats; the designer pipeline proven.
@@ -272,9 +274,29 @@ Not scheduled — pulled in when their moment comes:
   the 1-5 ability pipe (`use_ability` + `ActiveAbility` + `PlayerClass.active_abilities`) with knight **Shield
   Bash** + rogue **Kick** (verified two-instance). Stun INTERRUPTS in-flight attacks/casts + a dizzy visual
   (v0.20.2). The 1-5 hotbar HUD shows the class ability icons + keycaps, items dropped to the row below, + a
-  GitHub-build menu prefill (v0.20.3). REMAINING: items to their own left-click **Backpack** panel, an
-  equippable off-hand shield item (the `[Off]` socket), clickable ability slots, telegraphed/ranged abilities,
-  more status effects (slow/poison/shield).
+  GitHub-build menu prefill (v0.20.3). v0.21.0 moved the ability bar OUT of the bag grid to a click-transparent
+  bottom-center bar on the world frame — which also RETIRES the "items to their own Backpack panel" item (the
+  right column's whole 5×4 grid is the bag now). REMAINING: an equippable off-hand shield item (the `[Off]`
+  socket — now gated on §2.10's EQUIPMENT slot model below), clickable ability slots, telegraphed/ranged
+  abilities, more status effects (slow/poison/shield).
+- **Equipment slot model** (v0.21.0 opened the door, deliberately didn't walk through it): the
+  `EQUIPMENT` item category and the HUD's 9 equipment sockets exist, but no armour/shield/boot/ring
+  resources do and nothing equips into a socket — the sockets are cosmetic. Its own milestone when
+  it comes: what a worn item does, how it stacks with the held weapon, and the `[Off]`-hand shield
+  the abilities track (§2.11) is waiting on. Coordinate with the build-system pass.
+- Ability-bar occlusion (v0.21.0, accepted at ship): the bottom-center bar covers ~10×2 tiles at the
+  world frame's bottom edge — clicks pass through (`MOUSE_FILTER_IGNORE`), so it is occlusion only —
+  and at very small window sizes it can overlap the bottom-left game-log CanvasLayer (identity-scaled
+  canvas px; worst case `h == s`). Revisit if Jon/Jeff find it blocks anything that matters.
+- "Press G" hint gaps (v0.21.0, both judged not worth code): an item that lands *underneath* a
+  standing player fires no arrival event and so no hint line (G still picks it up — a proximity scan
+  was judged unjustified); and a G press on the exact arrival frame can reject "busy" because the
+  busy record clears just after `try_pickup` runs (a single-frame edge).
+- Cross-catalog `display_name` collisions are a startup WARNING, not a hard failure
+  (`_warn_cross_catalog_collisions`) — a name authored into BOTH `item_catalog` and `weapon_catalog`
+  can misclassify. Pre-existing (it already mis-routes equip-vs-use); v0.21.0's `category_of` and the
+  widened `/item` lookup inherit the same item-first order rather than making it worse. Promote to a
+  hard failure when the `.tres` authoring gate (M5) lands.
 - Build system design pass (Rogue Fable-legibility bar, DESIGN §2.7)
 - Dungeon generation depth (beyond M4's basic rooms-and-corridors)
 - Shared-beat coordination mechanic (DESIGN §2.4.2) — only if a concrete need appears
@@ -300,7 +322,9 @@ Not scheduled — pulled in when their moment comes:
   v0.12.0: when re-enabling, gate MoveInput clicks on the HUD's world-frame rect — clicks
   currently pass through the opaque right column to hidden world tiles, and a pathing click
   there would commit an unseen, key-uncancelable walk; script default was flipped to false
-  so the config-load fallback can't silently arm it)*, longer
+  so the config-load fallback can't silently arm it — STILL OPEN after v0.21.0: the new bottom-center
+  ability bar is deliberately `MOUSE_FILTER_IGNORE`, so it neither fixes nor worsens this; the opaque
+  right column is the remaining offender and the world-frame rect is still the gate to write)*, longer
   windup telegraph — each waits on Jon+Jeff playtest verdicts.
   *The go-stop-go REST is no longer a pending reversion — it was ANSWERED and retired in
   v0.8.0 (read as lag; kept behind `move_rest_beats=0`); the visible-slide `slide_fraction`

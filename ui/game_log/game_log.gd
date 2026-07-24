@@ -285,6 +285,16 @@ func _on_event_received(event: Dictionary) -> void:
 			# full bag isn't our line, and v1 has no unicast pipe, so the broadcast event self-filters here.
 			if int(data.get("entity_id", 0)) == multiplayer.get_unique_id():
 				add_line("(your bag is full)")
+		"item_pickup_available":
+			# A non-potion ground item the mover just STEPPED ON but did not auto-collect (v0.21.0, §2.3.4 —
+			# never a silent swallow). Only potions autopickup now; everything else is left lying there, so this
+			# line is both the outcome feedback AND the discoverability affordance for the G key. SENDER-ONLY,
+			# the same self-filter as item_pickup_full above (a teammate's ground find isn't our line, and v1 has
+			# no unicast pipe, so the broadcast event filters here). Deliberately worded NOTHING like the bag-full
+			# line — that one refuses, this one invites — so the two outcomes are never confusable. Item name
+			# flows through add_line's sink escape like every line.
+			if int(data.get("entity_id", 0)) == multiplayer.get_unique_id():
+				add_line("a %s lies here — press G to pick up" % str(data.get("item", "item")))
 		"item_used":
 			# A committed item use (v0.18.0 chunk C, §2.3.4 — the telegraph line). Party-wide: everyone sees
 			# who drank what, at COMMIT (the heal, if any, lands on its own `heal` event when the window ends —

@@ -134,6 +134,22 @@ extends Resource
 ## here to make its name resolvable across the wire.
 @export var item_catalog: Array[ItemType] = []
 
+## The player BAG capacity in slots (v0.21.0) — the AUTHORITATIVE number of items a player can carry, read
+## host-side by InventoryReferee (both the walk-over pickup and the manual G pickup gate on it) and client-side
+## by the HUD (how many bag sockets it draws) and by Main's presentation-mirror cap. It REPLACES a three-way
+## hardcoded coupling that used to carry a comment begging the next person to keep it in sync:
+## InventoryReferee's `const INVENTORY_SLOTS := 5`, main.gd's literal `5` in the item_picked_up mirror, and
+## hud.gd's INV_COLS. One authored value now; the coupling is gone.
+##
+## Default 20 = the HUD's existing 5x4 socket block, which is why 20 is FREE: the grid already draws 20
+## sockets (rows 2-3 were inert decoration), so promoting all of them to real slots changes zero pixels of
+## column height. Raising this ABOVE 20 adds a grid ROW, which makes the HUD column taller — and because the
+## HUD picks its integer zoom `h` each layout pass to FIT that column into the window, a taller column
+## literally renders the whole HUD smaller. That is the tabled fractional-`h` work, not a free knob: treat
+## anything over 20 as a deliberate visual trade, not a balance tweak. The HUD clamps its read (maxi(1, ...))
+## so a 0 or negative authored value can't produce a zero-row grid.
+@export var inventory_slots: int = 20
+
 ## Arrows-hit-allies toggle (v0.17.0, DESIGN ranged). true (default) = an arrow STOPS at the first
 ## living occupant on its path, ally or enemy (friendly fire on). false = arrows PASS THROUGH allies
 ## everywhere, stopping only at the first hostile. Read HOST-side by CombatReferee's projectile travel;
@@ -177,6 +193,35 @@ func item_by_name(name: String) -> ItemType:
 		if it != null and it.display_name == name:
 			return it
 	return null
+
+
+## The CATEGORY of a bag / ground entry NAME (v0.21.0) — the ONE place "what kind of thing is this name" is
+## answered, host-side, from the shared catalogs (never a client value, §2.5). Callers: InventoryReferee's
+## autopickup gate (only POTION is walked-over into the bag; everything else needs the manual G pickup).
+##
+## RESOLUTION ORDER IS item_catalog FIRST, then weapon_catalog, DELIBERATELY: an ItemType carries an AUTHORED
+## category, so it is the specific answer; a weapon has no category field and answers WEAPON purely by
+## construction (living in weapon_catalog IS the classification). The order also deliberately MIRRORS
+## hud.gd's _bag_icon_coords and main.gd's click routing, which resolve the same bag string item-first — if
+## this function disagreed with them, one name could be drawn/clicked as an item but categorised as a weapon.
+##
+## The two catalogs are kept DISJOINT by _warn_cross_catalog_collisions(), which is a startup push_warning,
+## NOT a hard failure. So a display_name authored into BOTH catalogs would resolve item-first here and could
+## misclassify a weapon. That is a PRE-EXISTING ambiguity (the same collision already breaks equip-vs-use
+## click routing), it warns loudly at session start, and inverting the order here would only trade it for a
+## desync against _bag_icon_coords — which is worse. Documented, not changed.
+##
+## Returns int, NOT ItemType.Category, ON PURPOSE: -1 (unresolvable — a name in neither catalog, i.e. config
+## drift or a stale mirror) is a SENTINEL that is not a valid enum member, so a Category-typed return would
+## be lying about its domain. Callers compare against ItemType.Category.* explicitly; -1 matches nothing and
+## therefore fails closed (no autopickup) by construction.
+func category_of(item_name: String) -> int:
+	var item: ItemType = item_by_name(item_name)
+	if item != null:
+		return item.category
+	if weapon_by_name(item_name) != null:
+		return ItemType.Category.WEAPON
+	return -1
 
 
 ## The active swap ROSTER for a player of `player_class` (v0.17.0): the class's own weapon_roster when it is

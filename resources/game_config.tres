@@ -22,4 +22,5 @@ click_pathing_enabled = false
 weapon_roster = Array[Resource]([ExtResource("2_dagger"), ExtResource("3_longsword")])
 weapon_catalog = Array[Resource]([ExtResource("2_dagger"), ExtResource("3_longsword"), ExtResource("10_bow"), ExtResource("12_club")])
 item_catalog = Array[Resource]([ExtResource("11_potion")])
+inventory_slots = 20
 class_roster = Array[Resource]([ExtResource("4_rogue"), ExtResource("5_knight"), ExtResource("6_wizard"), ExtResource("7_barbarian"), ExtResource("8_priest"), ExtResource("9_ranger")])

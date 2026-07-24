@@ -57,11 +57,19 @@ func _ready() -> void:
 ## item-collision / pickup-target predicate, SHARED by Main's spawn guard (_item_on_tile) and
 ## InventoryReferee.try_pickup — items claim no referee occupancy (a body glides OVER them), so "is there an
 ## item here" is answered by scanning the container directly rather than the move referee's tile bookkeeping.
-## Static so both host-only callers share ONE implementation without reaching across each other. Cheap: a
-## handful of ground items per room at most. Host-only by usage (both callers run only on the server).
+## Static so the host-only callers share ONE implementation without reaching across each other. Cheap: a
+## handful of ground items per room at most. Host-only by usage (every caller runs only on the server).
+##
+## GHOST GUARD (v0.21.0): queue_free() sets is_queued_for_deletion() SYNCHRONOUSLY but removes the node from
+## the tree only at the END of the frame — so a node freed earlier in this same frame is STILL a child here.
+## Without the flag test, a second resolution within that frame would hand back an already-claimed item and
+## bank it TWICE (two bag entries, one real item). Fixing it in the shared predicate hardens all three callers
+## at once: try_pickup (walk-over), _validate_pickup_item (the G key), and Main's _item_on_tile spawn guard.
+## Latent until v0.21.0 — walk-over was the only caller and two bodies can never arrive on one tile; the manual
+## pickup path gives the predicate a second caller that CAN fire in the same frame, so it is closed now.
 static func on_tile(items: Node2D, tile: Vector2i) -> GroundItem:
 	for node in items.get_children():
 		var gi := node as GroundItem
-		if gi != null and gi.tile == tile:
+		if gi != null and gi.tile == tile and not gi.is_queued_for_deletion():
 			return gi
 	return null

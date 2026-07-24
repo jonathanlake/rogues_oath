@@ -18,8 +18,8 @@ restart restores every authored value (no command saves to disk).
 | `/m <monster> <field> <value\|reset>` | Tune a MonsterType. Fields: `max_hp`, `aggro_range_tiles`, `tactical_radius_tiles`, `bonus_windup_beats`, `bonus_recovery_beats`, `bonus_damage`, plus spell params (v0.19.10) `heal_amount`/`heal_range_tiles`/`heal_cast_beats`/`heal_recovery_beats`, `smite_damage`/`smite_range_tiles`/`smite_cast_beats`/`smite_recovery_beats`, and `flee_range_tiles`. Out-of-range rejected; `reset` restores all. `/help` prints the live list (derived from the allowlist, never stale). |
 | `/god` | Toggle **your own** invulnerability. A hit on a godded target resolves as a visible no-op (grey `0` popup + "no effect (god)" log line), never a silent block. Cleared on disconnect / despawn / F5 respawn. |
 | `/class <name>` | Set **your own** class (sprite today, stats later). `name` ∈ `rogue`, `knight`, `wizard`, `barbarian`, `priest`, `ranger`. Broadcasts to every peer; late joiners sync via `sync_player_field`. Reverts to the slot default on F5 respawn. |
-| `/item <name> [x,y]` | Spawn a ground item (v0.18.0). Tile = explicit `x,y`, else the sender's facing-neighbour tile (never the own tile → reject if the sender hasn't faced yet). Distinct rejects: unknown item / broken resource path (catalog drift) / not-walkable / tile already has an item. Multi-word names work (`/item health potion`). |
-| `/stun [me\|<monster>] [beats]` | Apply a STUN (v0.20.0). No arg / `me` / `self` stuns you; a monster display_name stuns the first live monster of that name. A numeric token = beats (default 3). Host-authoritative; the overhead icon shows on every peer. Stun blocks *starting* a new action but never interrupts an in-flight one (§2.1). |
+| `/item <name> [x,y]` | Spawn a ground item (v0.18.0). Tile = explicit `x,y`, else the sender's facing-neighbour tile (never the own tile → reject if the sender hasn't faced yet). Distinct rejects: unknown item or weapon / broken resource path (catalog drift) / not-walkable / tile already has an item. Multi-word names work (`/item health potion`). **v0.21.0: `<name>` resolves the WEAPON catalog as a fallback** (`/item longsword`), so weapons can be placed as ground items — necessary now that only potions autopickup and everything else must be taken with **G**. |
+| `/stun [me\|<monster>] [beats]` | Apply a STUN (v0.20.0). No arg / `me` / `self` stuns you; a monster display_name stuns the first live monster of that name. A numeric token = beats (default 3). Host-authoritative; the overhead icon shows on every peer. Stun blocks *starting* a new action AND — since v0.20.2 — INTERRUPTS an in-flight attack/cast (its resolve fizzles); movement is not interrupted. This is the one sanctioned exception to the Commitment Rule (DESIGN §2.11). |
 | `/config <alias>` | Apply a preset **bundle** of `/w` + `/m` tunings in one command (v0.19.7). Aliases live in `GameManager.CONFIG_PRESETS`; each row runs through the same allowlist + clamp path as `/w`/`/m`, so a bad row rejects the whole `/config` naming that row. Currently `1` = longsword & club `windup_beats 1`/`attack_beats 3`, goblin `bonus_windup_beats 1`. Add a loadout by adding an alias entry — no code change. |
 | `/help` | Print the command list (local only — never crosses the wire). |
 
@@ -29,16 +29,41 @@ restart restores every authored value (no command saves to disk).
   `res://resources/weapons/<name>.tres` (guarded by `ResourceLoader.exists`) — so the claw (not in the
   roster) is reachable as `/w claw ...`.
 - **Monsters** resolve only by filename: `res://resources/monsters/<name>.tres` (e.g. `/m goblin ...`).
-- **Items** resolve by `display_name` through `GameConfig.item_catalog` (`item_by_name`) — so a
-  spawnable item must be in the catalog (a mis-authored/duplicate name warns at session start).
+- **Items** resolve by `display_name` through `GameConfig.item_catalog` (`item_by_name`) first, then
+  `weapon_catalog` (`weapon_by_name`, v0.21.0) — so a spawnable item must be in ONE of the two catalogs.
+  That item-first order is the same one `GameConfig.category_of()` and the HUD's bag icons use; a
+  `display_name` present in BOTH catalogs only warns at session start (it does not fail), so keep names
+  unique across them.
 - **`reset`** re-reads the `.tres` from disk with `CACHE_MODE_IGNORE` and copies the allowlisted fields
   back onto the shared live instance.
 - **`/m ... max_hp`** affects **new spawns only** (HP is seeded at spawn); the other three monster
   fields are read live. The other tunes take effect from the next adjudicated verdict (stamp-and-bake —
   in-flight commits keep their baked values).
 
+## The G key (manual pickup, v0.21.0)
+
+Not a slash command — a real gameplay key — but it's the other half of `/item`, so it's documented here.
+Autopickup is **potion-only**: walk over anything else (a dropped weapon, a `/item longsword`) and it stays
+on the ground with a "press G to pick up" line in your own log (or a bag-full line instead, if the bag is
+full). **G** submits a `pickup_item` intent with an EMPTY payload — the host reads your tile from the move
+referee's authoritative occupancy — and the pickup is INSTANT, not a committed window: the busy gate refuses
+it during any action, so it can only happen between actions. Distinct §2.2.8 rejects, in adjudication order:
+dead → stunned → busy → not in session → nothing to pick up → bag full. Bag capacity is authored in
+`game_config.tres` as `inventory_slots` (20).
+
 ## Scripted testing
 
 The `cmd=` autostart knob feeds one command through the real `game_log._on_input_submitted()` entry
 point (the genuine interception path), on either role: e.g. `-- host cmd=/god`,
 `-- join cmd=/w longsword 3`, `cmd=/class knight`. `cmdwait=<sec>` overrides the fire delay.
+
+`pickup=<n>` / `pickupwait=<sec>` (v0.21.0) script the G key from either role. The key's own sampling is
+focus-gated like the number keys, so an unfocused window in a two-instance run can never reach it — the knob
+bypasses the sampler and submits the **intent**, which is where the adjudication lives (the exact shape of
+`ability=`). `n` is clamped 0–8 and the intents go back-to-back with NO spacing, so `pickup=2` lands both in
+ONE frame — deliberately the adversarial case for `GroundItem.on_tile`'s `is_queued_for_deletion` ghost guard
+(`queue_free()` sets that flag synchronously but defers tree removal, so without the guard the same item banks
+twice). Expected: exactly one `item_picked_up`, the rest `rejected pickup_item: nothing to pick up`. The
+default anchor is the move anchor — so a run can walk onto a non-potion and then take it — and `pickupwait=`
+pins it. The `eventlog=` allowlist now carries `item_picked_up`, `item_pickup_full`, `item_pickup_available`,
+`item_used` and `equip_item`, which is how these assertions are made two-instance.

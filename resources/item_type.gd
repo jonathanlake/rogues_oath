@@ -17,6 +17,13 @@ extends Resource
 ## pickup, inventory state, and the use flow land in later chunks. They are documented with their eventual
 ## host-vs-wire read side so the resource is self-describing the moment those chunks wire them.
 
+## The item taxonomy (v0.21.0). Declared HERE (on the item resource) rather than on GameConfig because it is a
+## property OF an item type — GameConfig.category_of() merely resolves a bag/ground NAME to one of these.
+## Ordinals are part of the authored surface (a .tres stores the int), so NEVER reorder or insert mid-list —
+## append only, or every authored .tres silently re-categorises.
+enum Category { POTION, EQUIPMENT, WEAPON }
+
+
 # ── Identity ──────────────────────────────────────────────────────────────────
 
 ## Machine + display name for this item ("health potion"). Doubles as the identity used everywhere: the
@@ -25,6 +32,31 @@ extends Resource
 ## resource via GameConfig — so this is what crosses the wire, never the Resource itself. Read on BOTH
 ## sides (host to adjudicate, client to render the log line / catalog the icon).
 @export var display_name: String = "health potion"
+
+# ── Taxonomy (read HOST-side for pickup rules; never the wire) ─────────────────
+
+## What KIND of thing this is (v0.21.0). Before this, "what kind of thing is this" was inferred from WHICH
+## CATALOG resolved the name (item_catalog → consumable-ish, weapon_catalog → weapon) — an implicit taxonomy
+## with no authoring surface. This makes it explicit and designer-editable: an enum-typed @export renders as
+## an inspector dropdown, so a non-coder picks the category from a list (no magic ints in a .tres).
+##   POTION    — auto-picked-up by walking over it (the only autopickup category, v0.21.0).
+##   EQUIPMENT — armour / rings / boots: wired but EMPTY today (no such .tres exists yet; the HUD's equipment
+##               sockets are cosmetic and the equip-slot model is a separate milestone). Manual pickup (G) only.
+##   WEAPON    — for completeness of the taxonomy. A WeaponType is NOT an ItemType and is never authored here:
+##               a weapon answers WEAPON by virtue of living in GameConfig.weapon_catalog (see
+##               GameConfig.category_of). This value exists so the enum is total, not because it is authored.
+##
+## THE DEFAULT IS EQUIPMENT, DELIBERATELY — it must FAIL CLOSED. A designer who adds a new item .tres and
+## forgets this field gets the RESTRICTIVE outcome (walk-over does nothing; you must press G), never the
+## permissive one. Defaulting to POTION would silently opt every forgotten field into the exact autopickup
+## behaviour the category gate exists to restrict, and the mistake would be invisible in play — the item just
+## quietly leaps into your bag. Note the .tres authoring model above (the saver STRIPS default-equal values),
+## so this default IS the authored value for any file that omits the field: it has to be the safe one.
+##
+## RULES-ONLY for now (v0.21.0): category gates AUTOPICKUP and nothing else — no bag sorting, no icon tinting,
+## no slot restrictions. The bag stays a flat pickup-order list. Read HOST-side by InventoryReferee through
+## GameConfig.category_of; never crosses the wire (events carry the item NAME, peers resolve the category).
+@export var category: Category = Category.EQUIPMENT
 
 # ── Presentation (read CLIENT-side; gameplay NEVER reads this) ─────────────────
 

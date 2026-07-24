@@ -706,6 +706,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("use_slot_5"):
 		NetEvents.submit_intent("use_ability", { "index": 4 })
 		get_viewport().set_input_as_handled()
+	# MANUAL PICKUP (v0.21.0): G picks up whatever lies on our own tile. Autopickup is POTION-ONLY now, so this
+	# is the acquisition path for weapon drops and (future) equipment — without it those would be unlootable.
+	# EMPTY PAYLOAD, deliberately: the host reads the SENDER'S OWN authoritative tile off the move referee, never
+	# a tile from the wire (§2.5), so this intent carries nothing a client could lie about. The host adjudicates
+	# dead / stunned / busy / nothing-here / bag-full and each rejects distinctly → the §2.2.8 bonk.
+	elif event.is_action_pressed("pickup_item"):
+		NetEvents.submit_intent("pickup_item", {})
+		get_viewport().set_input_as_handled()
 
 
 ## Detect and repair the ONE illegitimate window state: WINDOWED at (or beyond) the full screen size.
@@ -797,6 +805,13 @@ func _on_net_event(event: Dictionary) -> void:
 			# A pickup BLOCKED by a full bag (v0.18.0 chunk B). PRESENTATION ONLY — no node/state change here
 			# (the item stayed on the ground, host-side); game_log renders the sender-filtered "bag is full"
 			# line off this same broadcast event (the "You died." self-filter precedent). Nothing else to do.
+			pass
+		"item_pickup_available":
+			# A non-potion ground item stepped on but NOT auto-collected (v0.21.0 — autopickup is potion-only).
+			# PRESENTATION ONLY, exactly like item_pickup_full above: the item stayed on the ground host-side and
+			# nothing local changes. game_log renders the sender-filtered "press G to pick up" line off this same
+			# broadcast event. Listed explicitly (rather than falling through) so the match stays the readable
+			# inventory of every event this peer receives.
 			pass
 		"item_used":
 			# A committed item use (v0.18.0 chunk C, host-authored). Every peer plays the drink cue + re-packs the
@@ -1079,13 +1094,14 @@ func _handle_item_picked_up_event(event: Dictionary) -> void:
 	var entity_id := int(data.get("entity_id", 0))
 	var item_name := str(data.get("item", ""))
 	var player := _players.get_node_or_null(str(entity_id)) as Player
-	# COUPLING: cap the mirror at the hotbar width (INVENTORY_SLOTS on the inventory referee / INV_COLS in
-	# hud.gd — both 5). The host only ever posts item_picked_up when its authoritative bag had room, so this
-	# guard never actually bites in normal play; it is the defensive backstop keeping the mirror ≤ the hotbar.
-	# If it EVER fires the mirror has desynced from the host's bag — warn loudly (GLM v0.18.0 review #2:
-	# a silent drop here would be a permanent, invisible hotbar desync on this peer).
+	# Cap the mirror at the AUTHORED bag capacity (v0.21.0: GameManager.config.inventory_slots — the same single
+	# value the inventory referee gates on and the HUD derives its socket count from, so the old three-way
+	# hardcoded coupling is gone). The host only ever posts item_picked_up when its authoritative bag had room,
+	# so this guard never actually bites in normal play; it is the defensive backstop keeping the mirror ≤ the
+	# bag. If it EVER fires the mirror has desynced from the host's bag — warn loudly (GLM v0.18.0 review #2:
+	# a silent drop here would be a permanent, invisible inventory desync on this peer).
 	if player != null:
-		if player.inventory.size() < 5:
+		if player.inventory.size() < GameManager.config.inventory_slots:
 			player.inventory.append(item_name)
 		else:
 			push_warning("[Main] item_picked_up for %d but the local mirror is FULL — mirror desynced from the host bag (dropped '%s')" % [entity_id, item_name])

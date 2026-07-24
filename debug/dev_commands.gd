@@ -252,9 +252,18 @@ func _dev_cmd_item(sender_peer_id: int, args: Array[String], by: String) -> Dict
 	if name_tokens.is_empty():
 		return { "ok": false, "reason": "usage: /item <name> [x,y]" }
 	var item_name := " ".join(name_tokens)
-	var item := GameManager.config.item_by_name(item_name)
+	# Resolve item_catalog FIRST, then weapon_catalog (v0.21.0) — the SAME item-first order GameConfig's
+	# category_of and hud.gd's _bag_icon_coords use, kept unambiguous by _warn_cross_catalog_collisions.
+	# Weapons became spawnable here because v0.21.0 made autopickup POTION-ONLY: a weapon on the ground is
+	# now the thing you must pick up deliberately with G, so a dev testing or tuning that flow has to be able
+	# to PLACE one. Main's _spawn_item_at already accepts either type (it branches on ItemType vs WeaponType),
+	# so this only widens the lookup. Held as Resource: both types expose display_name + resource_path, which
+	# is all the rest of this function reads.
+	var item: Resource = GameManager.config.item_by_name(item_name)
 	if item == null:
-		return { "ok": false, "reason": "unknown item '%s'" % item_name }
+		item = GameManager.config.weapon_by_name(item_name)
+	if item == null:
+		return { "ok": false, "reason": "unknown item or weapon '%s'" % item_name }
 	# Resolve the target tile. Explicit x,y wins; otherwise the sender's facing-neighbor (their tile + the
 	# authoritative 8-way facing the move referee tracks). A never-moved sender has ZERO facing (no
 	# facing-neighbor exists) — reject as a bad tile rather than dropping the item on the sender's own tile.

@@ -5,6 +5,7 @@
 [resource]
 script = ExtResource("1_item")
 display_name = "health potion"
+category = 0
 atlas_coords = Vector2i(1, 19)
 usable = true
 heal_amount = 10

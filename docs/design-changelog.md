@@ -10,6 +10,62 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.21.0 (2026-07-24) — INVENTORY: the ability bar moves to the bottom, the bag grows to 20, and picking
+  things up becomes a DECISION (G).** Four coupled changes plus the bug the last one exposed. (1) **The ability
+  bar left the bag grid.** The five gold ability sockets (icons + "1".."5" keycaps) now live in a dedicated
+  `AbilityBar` Control centred on the world frame's bottom edge (4px gap) — the genre-conventional place to look
+  for your actions — instead of borrowing row 0 of the right column's 5×4 grid. It is `MOUSE_FILTER_IGNORE` so
+  world clicks pass straight through, and it sits OUTSIDE `RightVBox` so it contributes nothing to
+  `_column_stack_min_h()` and the HUD's integer zoom `h` is unchanged; it is placed in HUD-local px per hud.gd's
+  existing UNIT BOUNDARY invariant. (2) **The bag is now the whole grid — 20 slots, drawn GREY**; the gold accent
+  finally means one thing ("abilities and hands"). Capacity became a single designer-editable
+  `@export var inventory_slots: int = 20` on GameConfig, killing the old three-way coupling (the referee's
+  `INVENTORY_SLOTS` const, main.gd's literal 5, hud.gd's `INV_COLS`); hud.gd derives its row count from it with
+  `INV_ROWS` (4) as a visual FLOOR, so sockets past capacity are decorative and untracked. (3) **Item categories.**
+  `ItemType` gained `enum Category { POTION, EQUIPMENT, WEAPON }` + an @export field, defaulting to EQUIPMENT
+  deliberately so a designer who forgets it fails CLOSED (no autopickup); weapons answer WEAPON by living in
+  `weapon_catalog`, and `GameConfig.category_of()` is the one resolution point (item_catalog then weapon_catalog,
+  `-1` unresolvable — the same order hud.gd's `_bag_icon_coords` uses). The EQUIPMENT bucket is WIRED BUT EMPTY:
+  no armour/shield/ring resources exist, the HUD's 9 equipment sockets are still cosmetic, and the equip-SLOT
+  model is explicitly a separate future milestone. (4) **Autopickup is POTION-ONLY, and everything else asks.**
+  Walk over a non-potion and it stays on the ground, posting a new broadcast `item_pickup_available
+  {entity_id, name, item}` that game_log self-filters to the mover's own instance and renders as an invitation to
+  press G — or `item_pickup_full` instead if the bag is already full, so the player is never told "press G" and
+  refused one keystroke later. (5) **Manual pickup on G.** New `pickup_item` input action + intent;
+  `InventoryReferee._validate_pickup_item` adjudicates host-side with §2.2.8-distinct rejects in order (dead →
+  stunned → busy → not in session → nothing to pick up → bag full) and reads the sender's tile from
+  `MoveReferee.tile_of_entity` — the payload is EMPTY, nothing positional crosses the wire. Pickup is INSTANT
+  rather than a committed window, copying the `equip_item` precedent: the BUSY gate means you can never pick up
+  mid-action, so it is atomic BETWEEN actions and cancels nothing (not a Commitment Rule leak — a zero-length
+  action that can only fire when you are already free). It reuses `item_picked_up`, so every downstream consumer
+  is untouched. (6) **A latent bug the G key would have woken:** `GroundItem.on_tile` now also tests
+  `not gi.is_queued_for_deletion()` — `queue_free()` sets that flag synchronously but DEFERS tree removal, so a
+  second resolution in the same frame used to hand back an already-claimed item. Latent until now (walk-over was
+  the only caller and two bodies can't arrive on one tile); manual pickup gave the predicate a second same-frame
+  caller. (7) **Dev tooling:** `/item <name> [x,y]` now falls back to the weapon catalog, so weapons can be placed
+  as ground items (necessary now that they must be picked up deliberately); new `pickup=<n>` / `pickupwait=<sec>`
+  harness knobs (n>1 submits in ONE frame — the adversarial case for the ghost guard; clamped 0-8); the
+  `eventlog=` allowlist gained the item events. **Verified two-instance, host + client:** potion at (5,3)
+  auto-picked-up on arrival while a longsword at (4,3) was NOT — it posted `item_pickup_available` instead, both
+  mirrored on the client; `pickup=2` in one frame produced exactly ONE `item_picked_up` with the second intent
+  `rejected pickup_item: nothing to pick up`; **NEGATIVE CONTROL** — with the `is_queued_for_deletion` guard
+  temporarily removed, the identical run banked the SAME longsword twice (`slot: 0` and `slot: 1`, same frame),
+  proving the guard load-bearing rather than decorative; a pickup submitted mid-glide got
+  `rejected pickup_item: busy`; a HUD probe from a windowed client at the hard case `s=2, h=1` (layer scale 0.5)
+  showed the bar centred on the world frame to a delta of 0.000px, 4px above the world's bottom edge, integer
+  position, 168×32, with 20 grey clickable bag slots (0 accented), 5 accented ability sockets, and
+  `mouse_filter=2`; the config drives BOTH sides (`inventory_slots=7` → 7 clickable slots inside the 20-socket
+  4-row floor with `column_min_h` UNCHANGED at 398.00; `inventory_slots=1` → the referee posted
+  `item_pickup_full` on the second potion); the ability pipeline is intact (`use_ability index=0` →
+  `attack {kind:"ability", verb:"bashes"}` + `status_applied {stun}`, mirrored client-side). **Known gaps,
+  recorded not hidden:** the bar OCCLUDES roughly 10×2 tiles at the world's bottom edge (clicks pass through, so
+  it is occlusion only) and at very small window sizes can overlap the bottom-left game-log CanvasLayer, which is
+  identity-scaled canvas px — worst case `h == s`; an item that lands *under* a standing player produces no
+  arrival event and therefore no "press G" hint line (G still works — a proximity scan was judged unjustified);
+  `_warn_cross_catalog_collisions()` is a warning, not a hard failure, so a `display_name` authored into both
+  catalogs could misclassify (pre-existing — it already breaks equip-vs-use routing); and a G press on the exact
+  arrival frame may reject "busy" (the busy record clears just after `try_pickup` runs) — a single-frame edge, no
+  code change made.
 - **v0.20.4 (2026-07-24) — FIX: the exported-build address prefill (Jon report).** v0.20.3's prefill set Jeff's
   NAME correctly (confirming the `has_feature("editor")` export gate works) but left the address on "127.0.0.1" —
   the field carries that as a SCENE DEFAULT, so the "only if empty" guard never fired. Now the exported (GitHub)

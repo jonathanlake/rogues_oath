@@ -18,18 +18,20 @@ extends Node
 ##    arrival is finalized (a walk-over). The referee scans the Items container for a GroundItem on that tile
 ##    and, if the mover has room, moves it into the bag + frees the ground node (the spawner replicates the
 ##    despawn); a full bag posts a distinct blocked outcome and leaves the item lying there (§2.3.4 — never a
-##    silent swallow). Monsters (negative ids) never loot.
+##    silent swallow). Monsters (negative ids) never loot. v0.21.0: that walk-over is now POTION-ONLY.
+##  - MANUAL PICKUP (v0.21.0) — the G key submits a pickup_item intent, adjudicated by _validate_pickup_item on
+##    the shared pipe. It is the acquisition path for everything autopickup no longer takes; without it,
+##    restricting walk-over to potions would strand every monster weapon drop permanently unlootable.
 ##  - RESET — Main._reset_round calls reset_round() beside CombatReferee.reset_round(): a fresh round starts
 ##    every bag empty (the mass free() of players also fires the child-exit erase below; this is the belt).
 
-# The HUD hotbar width (hud.gd INV_COLS) — a picked-up item lands in the next hotbar slot, so the bag caps at
-# exactly the hotbar's slot count. COUPLING: this MUST stay equal to hud.gd's INV_COLS (the top inventory row
-# painted by _build_inventory / _refresh_hotbar) and to the client mirror's cap in main.gd's item_picked_up
-# handler — a bag bigger than the hotbar would carry items with nowhere to show (v1 has no scrolling inventory).
-const INVENTORY_SLOTS := 5
+# Bag capacity is CONFIG-DRIVEN (v0.21.0): GameManager.config.inventory_slots is the single authored source of
+# truth, read at each use site below. It replaced a three-way hardcoded coupling (a const here, a literal in
+# main.gd's mirror cap, hud.gd's INV_COLS) that only a comment held together; the HUD now DERIVES its socket
+# count from the same value, so it can never show fewer slots than the bag holds.
 
 # Authoritative BAGS: entity_id (peer id, always > 0 — monsters don't loot) -> Array[String] of item
-# display_names, in pickup order (index == hotbar slot). THE inventory truth; Player.inventory on each peer is
+# display_names, in pickup order (index == bag slot). THE inventory truth; Player.inventory on each peer is
 # only a presentation mirror adopted from the item_picked_up events. Seeded EMPTY on demand at first pickup and
 # erased wholesale when the player's node leaves (death / disconnect / F5 reset — permadeath: the bag dies with
 # the player). A fresh spawn / late joiner therefore starts EMPTY by construction — no late-join bag sync
@@ -82,17 +84,25 @@ func activate(players: Node2D, items: Node2D, move_referee: Node, combat: Node, 
 	# Register the "equip_item" validator (v0.19.x loot): left-click a looted weapon in the bag to equip it,
 	# swapping the currently-held weapon back into the freed slot. Host-only, same as use_item.
 	NetEvents.register_handler("equip_item", _validate_equip_item)
+	# Register the "pickup_item" validator (v0.21.0): the G key deliberately picks up whatever lies on YOUR OWN
+	# tile. Mandatory scope alongside the potion-only autopickup gate below — walk-over used to be the only
+	# acquisition path in the game, so restricting it without a manual path would strand every weapon drop.
+	NetEvents.register_handler("pickup_item", _validate_pickup_item)
 
 
 ## Host-only walk-over pickup adjudication, called by MoveReferee at a glide's finalized arrival. Scans the
 ## Items container for a GroundItem on `tile`; no item → nothing to do. With an item present:
-##  - FULL bag (size >= INVENTORY_SLOTS): the item STAYS on the ground and a broadcast item_pickup_full event
+##  - NOT A POTION (v0.21.0): the item STAYS on the ground and a broadcast item_pickup_available event fires —
+##    autopickup is POTION-ONLY, everything else is acquired deliberately with G (_validate_pickup_item). Same
+##    self-filtered shape as item_pickup_full below, so the mover's own instance renders "…press G to pick up":
+##    the §2.3.4 no-silent-swallow discipline AND the discoverability affordance for the G key.
+##  - FULL bag (size >= config.inventory_slots): the item STAYS on the ground and a broadcast item_pickup_full event
 ##    fires. There is no unicast pipe in v1, so game_log self-filters that event to the mover's OWN instance
 ##    (the "You died." self-filter precedent) and renders "(your bag is full)" there — §2.3.4 forbids a
 ##    silently-swallowed outcome, so a blocked pickup is still surfaced, just not as party spam.
 ##  - Room available: append the item's name (the next slot), FREE the ground node host-side (the ItemSpawner
 ##    replicates the despawn to every peer), and broadcast item_picked_up so every peer mirrors the bag +
-##    renders the log line + plays the cue (main.gd), and the picker's HUD repaints its hotbar.
+##    renders the log line + plays the cue (main.gd), and the picker's HUD repaints its bag.
 ## MONSTERS DON'T LOOT (v1): a NEGATIVE mover id (a monster's glide rides the same _finish_glide seam) returns
 ## immediately. A vanished mover node (killed the same frame) also returns — belt with MoveReferee's own
 ## stale-guard, which already cleared a dead mover's glide record before this could fire.
@@ -114,18 +124,38 @@ func try_pickup(mover_id: int, tile: Vector2i) -> void:
 	var bag: Array[String] = _inventories[mover_id]
 	var item_name: String = ground.item_name
 	var mover_name: String = mover.display_name
+	# CATEGORY GATE (v0.21.0). Only a POTION is picked up by walking over it. Anything else — a monster's weapon
+	# drop, a future piece of equipment, or an unresolvable name (category_of returns the -1 sentinel, which
+	# matches no category and therefore FAILS CLOSED) — stays on the ground and is ANNOUNCED instead, so the
+	# player is told to press G rather than silently walking past their loot. The category is resolved HOST-side
+	# from the shared catalogs (GameConfig.category_of); the wire format is unchanged — a GroundItem still
+	# carries only item_id / item_name / tile / atlas_coords, never a category.
+	#
+	# Placed BEFORE the bag-full check DELIBERATELY: a sword you were never going to auto-grab must not report
+	# "your bag is full", which would blame a constraint the refusal never depended on.
+	if GameManager.config.category_of(item_name) != ItemType.Category.POTION:
+		# …EXCEPT when the bag genuinely IS full: then say THAT instead, because telling the player "press G to
+		# pick up" and then refusing that exact keypress one keystroke later is precisely the confusable
+		# feedback §2.3.4 forbids. One conditional keeps the two paths' messaging consistent.
+		var no_room := bag.size() >= GameManager.config.inventory_slots
+		NetEvents.post_event("item_pickup_full" if no_room else "item_pickup_available", {
+			"entity_id": mover_id,   # game_log self-filters on this — the line renders ONLY on the mover's instance
+			"name": mover_name,
+			"item": item_name,
+		})
+		return
 	# FULL bag: the item stays on the ground (no free, no bag mutation). Broadcast the blocked outcome so the
 	# mover's own instance can surface it (§2.3.4 no-silent-swallow) — a broadcast event self-filtered in
 	# game_log, because v1 has no per-peer unicast and a pickup is not an intent (so the reject-to-sender pipe
 	# does not fit). entity_id lets game_log render the line ONLY on the mover's instance.
-	if bag.size() >= INVENTORY_SLOTS:
+	if bag.size() >= GameManager.config.inventory_slots:
 		NetEvents.post_event("item_pickup_full", {
 			"entity_id": mover_id,
 			"name": mover_name,
 			"item": item_name,
 		})
 		return
-	# Room available: commit the pickup. Append to the bag (index == the hotbar slot it lands in), free the
+	# Room available: commit the pickup. Append to the bag (index == the bag slot it lands in), free the
 	# ground node host-side (the spawner replicates the despawn — mirror of CombatReferee._kill_entity's free),
 	# then broadcast so every peer mirrors the bag, logs the line, and plays the cue.
 	var slot := bag.size()
@@ -135,7 +165,7 @@ func try_pickup(mover_id: int, tile: Vector2i) -> void:
 		"entity_id": mover_id,
 		"name": mover_name,       # mover's display name (game_log line), server-resolved, never the wire
 		"item": item_name,        # item display_name — the name-resolution key every peer maps to an ItemType
-		"slot": slot,             # the hotbar slot index it occupies
+		"slot": slot,             # the bag slot index it occupies (v0.21.0: "hotbar" now means the ability bar)
 	})
 
 
@@ -151,7 +181,7 @@ func reset_round() -> void:
 	_inventories.clear()
 
 
-# ── Use flow (v0.18.0 chunk C — drink / consume a hotbar item) ────────────────
+# ── Use flow (v0.18.0 chunk C — drink / consume a bag item) ───────────────────
 
 ## The "use_item" intent validator (host-only; registered on the shared pipe in activate()). A player submits
 ## use_item {slot}; the host adjudicates from ITS OWN authoritative bag + the shared item catalog (never a client
@@ -306,6 +336,82 @@ func _validate_equip_item(sender_peer_id: int, data: Dictionary) -> Dictionary:
 		"equipped": weapon.display_name,
 		"returned": returned_name,
 	}, sender_peer_id)
+	return { "ok": true, "deferred": true }
+
+
+# ── Manual pickup (v0.21.0 — the G key) ───────────────────────────────────────
+
+## The "pickup_item" intent validator (host-only; registered on the shared pipe in activate()). A player presses
+## G; the host adjudicates entirely from ITS OWN state — the sender's authoritative tile, the Items container,
+## and its authoritative bag (§2.5: the intent payload is EMPTY and nothing about it is trusted). This is the
+## acquisition path for every category autopickup no longer takes, and it works for potions too (G is the
+## fallback for the potion you walked over with a full bag, before drinking something to make room).
+##
+## Gate order MIRRORS _validate_equip_item exactly, so the reject reasons stay §2.2.8-DISTINCT — the player can
+## always tell "the rules refused me" apart from "my key didn't register" (the CLAUDE.md feedback rule).
+## Returns a DEFERRED accept on success: the existing item_picked_up event IS the outcome (mirror of the
+## use/equip/shoot validators), so no generic "pickup_item" event is broadcast.
+##
+## INSTANT, NOT A COMMITTED WINDOW — deliberately copying the _validate_equip_item precedent above, whose
+## comment already argues the case: the BUSY gate means you can never pick up mid-action, so a pickup is atomic
+## BETWEEN actions and therefore cancels, interrupts and redirects nothing (Commitment Rule intact). Instant
+## also sidesteps a two-player race for one item. If it ever feels too free, a pickup_beats config knob +
+## commit_in_place is a clean follow-up; not this change.
+func _validate_pickup_item(sender_peer_id: int, _data: Dictionary) -> Dictionary:
+	# The payload is UNREAD BY CONTRACT (hence the `_data` name, the swap_weapon validator's convention): the
+	# intent carries nothing and the tile is read from the sender's own authoritative position below — a
+	# wire-supplied tile would let a client loot across the map (§2.5).
+	# Liveness — log-suppressed like the use/equip/glide dead reject (the `died` event already told the player).
+	if not _combat.is_alive(sender_peer_id):
+		return { "ok": false, "reason": "dead" }
+	# STUNNED (v0.20.0): can't stoop for loot while stunned — rejected before the busy check, never touching the
+	# busy record (an in-flight action still finishes; §2.1). Distinct reason → the §2.2.8 bonk.
+	if _combat.is_stunned(sender_peer_id):
+		return { "ok": false, "reason": "stunned" }
+	# BUSY — the Commitment Rule gate. is_entity_moving covers a glide AND a commit_in_place record (the SAME
+	# predicate melee/swap/shoot/use/equip read), so a pickup can never interrupt or overlap a committed action.
+	# This gate is ALSO what makes the INSTANT grab below safe (see the header note).
+	if _move_referee.is_entity_moving(sender_peer_id):
+		return { "ok": false, "reason": "busy" }
+	# Resolve the picker off the Players container (as Entity — the pickup path needs only the universal
+	# id/display_name contract, exactly like try_pickup's mover). Null is near-impossible past the is_alive gate;
+	# distinct reason mirrors _validate_equip_item's own null-player reject.
+	var picker := _players.get_node_or_null(str(sender_peer_id)) as Entity
+	if picker == null:
+		return { "ok": false, "reason": "not in session" }
+	# THE TILE IS THE REFEREE'S, NOT THE WIRE'S (§2.5) and not the node's presentation mirror either:
+	# tile_of_entity is the move referee's authoritative occupancy truth, the same space try_pickup's arrival
+	# tile comes from. An untracked entity yields the (0,0) wall sentinel, where no item can ever lie — so it
+	# fails closed into the "nothing to pick up" reject below.
+	var tile: Vector2i = _move_referee.tile_of_entity(sender_peer_id)
+	var ground := GroundItem.on_tile(_items, tile)
+	if ground == null:
+		return { "ok": false, "reason": "nothing to pick up" }
+	# Seed the bag lazily on first pickup (a fresh player has no entry — that IS the empty-start contract).
+	if not _inventories.has(sender_peer_id):
+		var fresh: Array[String] = []
+		_inventories[sender_peer_id] = fresh
+	var bag: Array[String] = _inventories[sender_peer_id]
+	# Capacity from the shared config — the SAME authored value try_pickup reads, so the manual path can never
+	# be a smuggling route past the walk-over cap.
+	if bag.size() >= GameManager.config.inventory_slots:
+		return { "ok": false, "reason": "bag full" }
+
+	# ── Accept ──
+	# Identical to try_pickup's commit, deliberately: append (index == the bag slot it lands in), FREE the ground
+	# node host-side (the ItemSpawner replicates the despawn), then post the EXISTING item_picked_up event with
+	# the IDENTICAL payload shape. Every downstream consumer — game_log's line, main.gd's cue + client mirror,
+	# the picker's HUD repaint — therefore works unchanged; the manual path adds no new presentation surface.
+	var item_name: String = ground.item_name
+	var slot := bag.size()
+	bag.append(item_name)
+	ground.queue_free()
+	NetEvents.post_event("item_picked_up", {
+		"entity_id": sender_peer_id,
+		"name": picker.display_name,  # server-resolved off the node, never the wire
+		"item": item_name,
+		"slot": slot,
+	})
 	return { "ok": true, "deferred": true }
 
 

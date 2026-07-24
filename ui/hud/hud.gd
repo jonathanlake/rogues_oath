@@ -36,9 +36,20 @@ extends CanvasLayer
 ## UNIT BOUNDARY (critical): the WorldFrame rect is computed in VIEWPORT CANVAS px (the column's canvas width
 ## is RIGHT_COL_W · h/s there) and EMITTED / cached in canvas px — the camera offset, DebugOverlay label and
 ## HurtVignette consumers all live on identity layers and read canvas px, so they stay UNCHANGED. The column,
-## WorldFrame and margin-band Controls are children of THIS scaled layer, so they are PLACED in HUD-LOCAL px
-## (the canvas-px geometry × s/h) and Root is sized to the HUD-local canvas (canvas × s/h). TacticalBorder is
-## a WorldFrame child — it co-scales, no changes.
+## WorldFrame, AbilityBar and margin-band Controls are children of THIS scaled layer, so they are PLACED in
+## HUD-LOCAL px (the canvas-px geometry × s/h) and Root is sized to the HUD-local canvas (canvas × s/h).
+## TacticalBorder is a WorldFrame child — it co-scales, no changes.
+##
+## ABILITY BAR (v0.21.0): the class's 1-5 active abilities moved OUT of the right column (they were row 0 of the
+## inventory grid through v0.20.x) into a BOTTOM-CENTER bar over the world, under the player's eye. It is a $Root
+## child — NOT a RightVBox section — so it contributes nothing to _column_stack_min_h() and cannot move the HUD
+## zoom h; promoting the freed column row to real bag space therefore costs zero pixels of column height. Like
+## every other Control on this scaled layer it is PLACED IN HUD-LOCAL px (see UNIT BOUNDARY): centred on the
+## world frame's HUD-local rect and floored to whole HUD-local pixels so it stays crisp at h < s. It is
+## MOUSE_FILTER_IGNORE bar-and-sockets — ability slots are display-only, so world clicks pass straight through
+## to move_input.gd. The accent (gold) socket style now means abilities-and-hands ONLY; the bag is all grey.
+## Accepted: the bar overlays ~10×2 tiles of world at the bottom edge (occlusion only, clicks pass through), and
+## in a very small window it can overlap the bottom-left game-log layer — the same severity class as column-hide.
 ##
 ## COMPONENT SHAPE: main.gd owns the events and fans them out (note_attack / note_died / on_class_changed /
 ## on_weapon_swap / remove_frame); the HUD is HANDED the $Players container (set_players) and mirrors OUR
@@ -74,11 +85,22 @@ const BLEED_CAP := Vector2(832.0, 576.0)
 ## world width is protected over the HUD column in tiny dev windows.
 const COLUMN_HIDE_FLOOR := 320.0
 
-## Equipment/inventory slot edge (base px) and inventory grid shape (5 wide × 4 tall; the top row is the
-## future hotbar). Doubled from v0.12.0's 16px for the airier column.
+## Equipment/inventory slot edge (base px), the gap between adjacent slots, and the inventory grid shape.
+## Slot edge doubled from v0.12.0's 16px for the airier column. Since v0.21.0 EVERY inventory socket is bag
+## space (the ability row moved to the bottom-center AbilityBar), so INV_COLS is the grid's width only — the
+## bag's CAPACITY is authored in game_config.tres (`inventory_slots`, 20 today), and INV_ROWS is now the
+## MINIMUM rows drawn, a visual floor that keeps the panel from shrinking below v0.20's 4-row block.
 const SLOT_PX := 32.0
+const SLOT_GAP_PX := 2.0
 const INV_COLS := 5
 const INV_ROWS := 4
+
+## Ability-bar shape (v0.21.0): 5 sockets, and the gap (HUD-design px) between the bar and the world frame's
+## BOTTOM edge. ABILITY_SLOTS is its OWN const, not INV_COLS: the count is fixed by the input map's
+## use_slot_1..use_slot_5 bindings (main._unhandled_input), so retuning the inventory grid's width must not
+## silently add a sixth, unbindable ability box. It happens to equal INV_COLS today.
+const ABILITY_SLOTS := 5
+const BOTTOM_PAD := 4.0
 
 ## The minimap slot's reserved square (base px) — M4b placeholder, rebudgeted down from 96 for the doubled
 ## slots below it.
@@ -142,16 +164,23 @@ var _own_hp_text: Label = null
 # Primary-hand weapon icon: an AtlasTexture over ITEMS_TEX, region re-pointed by refresh_self / on_weapon_swap.
 var _own_weapon_icon: TextureRect = null
 var _own_weapon_atlas := AtlasTexture.new()
-# Hotbar item icons (v0.18.0 chunk B): one TextureRect + its own AtlasTexture per top-row inventory slot
-# [0..INV_COLS-1], captured when _build_inventory builds that row so _refresh_hotbar can paint/hide them from
-# the local player's inventory mirror. Parallel arrays kept in slot order; the keycap labels stay on the sockets.
-var _hotbar_icons: Array[TextureRect] = []
-var _hotbar_atlases: Array[AtlasTexture] = []
-# ABILITY hotbar icons (v0.20.3): the TOP inventory row (the accented 1-5 boxes) now shows the local player's
-# class active_abilities; carried items moved to the row below. Parallel arrays in slot order, captured in
-# _build_inventory, painted by _refresh_abilities from the class. The 1-5 KEYS fire them (main._unhandled_input).
+# BAG item icons (v0.18.0 chunk B; renamed from _hotbar_* in v0.21.0, when "hotbar" became the bottom-center
+# ability bar): one TextureRect + its own AtlasTexture per REAL bag slot [0..inventory_slots-1], captured when
+# _build_inventory builds the grid so _refresh_bag can paint/hide them from the local player's inventory mirror.
+# Parallel arrays kept in slot order. Sockets drawn PAST capacity are decorative and are deliberately absent
+# from these arrays, so nothing can ever be written or painted past the authored capacity.
+var _bag_icons: Array[TextureRect] = []
+var _bag_atlases: Array[AtlasTexture] = []
+# ABILITY bar icons (v0.20.3; moved out of the inventory grid into the bottom-center bar in v0.21.0): the
+# accented 1-5 boxes showing the local player's class active_abilities. Parallel arrays in slot order, captured
+# in _build_ability_bar, painted by _refresh_abilities from the class. The 1-5 KEYS fire them
+# (main._unhandled_input) — the sockets themselves are display-only (mouse IGNORE).
 var _ability_icons: Array[TextureRect] = []
 var _ability_atlases: Array[AtlasTexture] = []
+# The bottom-center ability bar Control (v0.21.0), built in _ready as a $Root child — NOT a RightVBox section,
+# so it never enters _column_stack_min_h(). Placed in HUD-LOCAL px each _relayout pass (see the header's
+# ABILITY BAR + UNIT BOUNDARY notes).
+var _ability_bar: Control = null
 
 
 func _ready() -> void:
@@ -161,6 +190,7 @@ func _ready() -> void:
 	_build_char_info()
 	_build_equipment()
 	_build_inventory()
+	_build_ability_bar()
 	# Two triggers for the one layout pass: (1) the VIEWPORT's size_changed for real window resizes — Root is
 	# now top-left anchored with an EXPLICIT size (HUD-local px, see _relayout), so it no longer auto-tracks the
 	# viewport and its own `resized` can't catch a window resize; (2) Root's own `resized`, which fires when
@@ -233,12 +263,12 @@ func on_weapon_swap(entity_id: int) -> void:
 
 
 ## A player's inventory changed (fanned out by main.gd off the item_picked_up event): if it is our own
-## player, repaint the hotbar from its inventory mirror. Mirror of on_weapon_swap — filter to our id, then
+## player, repaint the bag grid from its inventory mirror. Mirror of on_weapon_swap — filter to our id, then
 ## refresh. A lighter path than refresh_self (no passive re-measure / relayout): item icons never change the
-## column's min-height, so the hotbar repaint alone suffices.
+## column's min-height, so the bag repaint alone suffices.
 func on_inventory_changed(entity_id: int) -> void:
 	if entity_id == _own_id:
-		_refresh_hotbar()
+		_refresh_bag()
 
 
 ## Dormant this iteration (v0.13.0): party frames are OFF, so there is no frame to remove — the own-player
@@ -261,14 +291,15 @@ func refresh_self() -> void:
 	if me.player_class != null:
 		_own_class_label.text = me.player_class.display_name
 		_refresh_passives(me.player_class)
-	# Ability hotbar (v0.20.3): repaint the 1-5 boxes from the class's active_abilities. Handles a null class
-	# (hides all). A /class change re-enters here (on_class_changed → refresh_self), so the bar swaps with the class.
+	# Ability bar (v0.20.3; bottom-center since v0.21.0): repaint the 1-5 boxes from the class's active_abilities.
+	# Handles a null class (hides all). A /class change re-enters here (on_class_changed → refresh_self), so the
+	# bar swaps with the class.
 	_refresh_abilities(me.player_class)
 	_set_weapon_icon(me.equipped_weapon)
-	# Hotbar (v0.18.0 chunk B): repaint the top inventory row from the player's inventory mirror. Called here so
-	# the (re)spawn seed (_seed_self → refresh_self) shows an EMPTY bar on a fresh spawn — a freed+re-made player
+	# Bag (v0.18.0 chunk B): repaint the inventory grid from the player's inventory mirror. Called here so the
+	# (re)spawn seed (_seed_self → refresh_self) shows an EMPTY bag on a fresh spawn — a freed+re-made player
 	# carries nothing — and any own class/weapon refresh re-paints it too (harmless, the mirror is unchanged then).
-	_refresh_hotbar()
+	_refresh_bag()
 	# Passives are the one live content that changes the column's min-height between resizes; re-measure now so
 	# the HUD zoom h re-fits immediately (the class swap can add/remove passive lines — see _column_stack_min_h).
 	_relayout()
@@ -407,6 +438,17 @@ func _relayout() -> void:
 		# HUD-design px (= col_canvas_w × s/h), so no further conversion on its width.
 		_place(_right_column, Vector2(origin_local.x + world_local.x, 0.0), Vector2(RIGHT_COL_W, local_canvas.y))
 	_place(_world_frame, origin_local, world_local)
+	# Ability bar (v0.21.0): centred on the world frame's BOTTOM edge, in HUD-LOCAL px like every other Control on
+	# this scaled layer (the UNIT BOUNDARY invariant — placing it from the canvas-px `frame` would drift it by s/h
+	# at h < s). Its size is DERIVED from the slot constants, never a literal, so a retune of SLOT_PX/SLOT_GAP_PX
+	# re-centres it for free. Both axes are floored so the bar lands on a whole HUD-local pixel and stays crisp:
+	# floored on the SUM, not on the centring term alone, because origin_local itself is fractional whenever the
+	# BLEED_CAP centring bit an axis at h < s. Placed unconditionally — the bar is over the world, not the column,
+	# so column-hide doesn't affect it.
+	var bar_size := _ability_bar_size()
+	_place(_ability_bar, Vector2(
+		floorf(origin_local.x + (world_local.x - bar_size.x) / 2.0),
+		floorf(origin_local.y + world_local.y - bar_size.y - BOTTOM_PAD)), bar_size)
 	_layout_margin_frame(local_canvas, origin_local, world_local, RIGHT_COL_W if column_visible else 0.0)
 	_world_frame_rect = frame
 	world_frame_changed.emit(frame)
@@ -475,6 +517,14 @@ func _apply_scale_policy() -> bool:
 	return true
 
 
+## The ability bar's size in HUD-DESIGN px, DERIVED from the slot constants rather than written as a literal
+## (ABILITY_SLOTS sockets + the gaps between them, one socket tall — 5·32 + 4·2 = 168 × 32 today). _relayout
+## centres the bar on this, so a retune of SLOT_PX / SLOT_GAP_PX / ABILITY_SLOTS keeps it centred and correctly
+## sized with no second edit site — and it matches what the HBoxContainer in _build_ability_bar measures to.
+func _ability_bar_size() -> Vector2:
+	return Vector2(float(ABILITY_SLOTS) * SLOT_PX + float(ABILITY_SLOTS - 1) * SLOT_GAP_PX, SLOT_PX)
+
+
 ## Absolute-position a band/frame Control (top-left anchored) at pos with size, in base px.
 func _place(c: Control, pos: Vector2, size: Vector2) -> void:
 	c.set_anchors_preset(Control.PRESET_TOP_LEFT)
@@ -513,7 +563,8 @@ func _clear_style() -> StyleBoxEmpty:
 	return StyleBoxEmpty.new()
 
 
-## A reserved-socket fill. `accent` gives the hotbar row / hands sockets their distinct brighter border.
+## A reserved-socket fill. `accent` gives the ABILITY BAR / hands sockets their distinct brighter (gold) border.
+## Since v0.21.0 the bag grid is all non-accent grey, so accent reads unambiguously as "abilities and hands".
 func _slot_style(accent: bool) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.16, 0.16, 0.21, 1.0) if not accent else Color(0.19, 0.18, 0.13, 1.0)
@@ -625,50 +676,79 @@ func _build_equipment() -> void:
 	grid.add_child(_make_socket(false, ""))  # blank filler cell — completes the 2×4 block
 
 
-## Inventory panel — a 5×4 grid of 32px reserved slots, pinned at the column BOTTOM (the char-info expand
-## pushes it down). The FIRST ROW (the bag's 5 slots) holds carried items — a potion or a looted weapon —
-## each LEFT-CLICKABLE to use/equip (v0.19.x). No number-key action bar (Jon: nothing auto-binds to a hotbar).
-## 2px gaps.
+## Inventory panel (v0.21.0: ALL bag, ALL grey) — a grid of 32px reserved slots pinned at the column BOTTOM
+## (the char-info expand pushes it down), 2px gaps. The ability row is gone (it is the bottom-center AbilityBar
+## now), so EVERY socket here is bag space: a carried potion or a looted weapon, each LEFT-CLICKABLE to
+## use/equip (v0.19.x). Grey, never accent — the accent (gold) style now reads "abilities and hands", which is
+## what makes the bottom bar look special.
+##
+## CAPACITY IS THE CONFIG's, not the grid's: `GameManager.config.inventory_slots` (20 today) is the single
+## source of truth the referee adjudicates from, so the HUD can never show fewer slots than the bag holds —
+## the exact drift the old three-way-hardcoded coupling warned about. Clamped to ≥1 on read so a 0/negative
+## authored value can't produce a zero-row grid. Rows drawn = max(INV_ROWS, ceil(slots / INV_COLS)): INV_ROWS
+## is a VISUAL FLOOR keeping the panel at v0.20's 4-row height, and a capacity past the grid adds rows.
+## Sockets BEYOND capacity are decorative — grey, mouse IGNORE, no icon, and absent from _bag_icons/_bag_atlases,
+## so nothing can be written or painted past capacity. At the shipped 20 the two sets coincide and no decorative
+## socket exists. Going past 20 grows the column and shrinks the HUD zoom h (see _column_stack_min_h) — the
+## fractional-h work that permits that is tabled, so 20 is the free maximum today.
 func _build_inventory() -> void:
 	_inventory.add_theme_stylebox_override("panel", _clear_style())
 	var grid := GridContainer.new()
 	grid.columns = INV_COLS
 	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	grid.add_theme_constant_override("h_separation", 2)
-	grid.add_theme_constant_override("v_separation", 2)
+	grid.add_theme_constant_override("h_separation", int(SLOT_GAP_PX))
+	grid.add_theme_constant_override("v_separation", int(SLOT_GAP_PX))
 	_inventory.add_child(grid)
-	for i in INV_COLS * INV_ROWS:
-		var is_ability_row := i < INV_COLS                       # row 0 = the 1-5 ABILITY hotbar (v0.20.3)
-		var is_item_row := i >= INV_COLS and i < INV_COLS * 2     # row 1 = carried ITEMS (moved down off the hotbar)
-		var slot := _make_socket(is_ability_row or is_item_row, "")
+	var slots := maxi(1, GameManager.config.inventory_slots)
+	var rows := maxi(INV_ROWS, ceili(slots / float(INV_COLS)))
+	for i in INV_COLS * rows:
+		var slot := _make_socket(false, "")
 		grid.add_child(slot)
-		if is_ability_row:
-			# ABILITY icon (v0.20.3): the class active_abilities[i] icon, painted by _refresh_abilities. The 1-5
-			# KEYS fire the ability (main._unhandled_input); the slot itself stays non-interactive (mouse IGNORE)
-			# for now — it just SHOWS the ability (Jon: "put the abilities in the yellow boxes, they should show").
-			var a_icon := _make_slot_icon()
-			slot.add_child(a_icon["rect"])
-			_ability_icons.append(a_icon["rect"])
-			_ability_atlases.append(a_icon["atlas"])
-			# Keycap "1".."5" drawn OVER the icon (added LAST so it paints on top).
-			var cap := Label.new()
-			cap.text = str(i + 1)
-			cap.add_theme_font_size_override("font_size", 6)
-			cap.add_theme_color_override("font_color", Color(1, 1, 1, 0.85))
-			cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			cap.position = Vector2(1.0, -1.0)
-			slot.add_child(cap)
-		elif is_item_row:
-			# Item icon (v0.18.0 pattern), now on row 1. LEFT-CLICK to use/equip — bind the INVENTORY index
-			# (0-4), NOT the grid cell, so slot_activated carries the bag index main.gd already expects (the row
-			# moved, the index didn't). Sockets are IGNORE by default so world clicks pass THROUGH; only these
-			# consume. main.gd routes to use_item (consumable) or equip_item (weapon) by the slot's content type.
-			var it_icon := _make_slot_icon()
-			slot.add_child(it_icon["rect"])
-			_hotbar_icons.append(it_icon["rect"])
-			_hotbar_atlases.append(it_icon["atlas"])
-			slot.mouse_filter = Control.MOUSE_FILTER_STOP
-			slot.gui_input.connect(_on_slot_gui_input.bind(i - INV_COLS))
+		if i >= slots:
+			continue   # decorative filler past capacity: grey, IGNORE (the _make_socket default), untracked
+		# Item icon (v0.18.0 pattern). LEFT-CLICK to use/equip — bind the RAW grid index, which IS the bag index
+		# now that the ability row no longer offsets it (was i - INV_COLS through v0.20.x). Sockets are IGNORE by
+		# default so world clicks pass THROUGH; only these real slots consume. main.gd routes slot_activated to
+		# use_item (consumable) or equip_item (weapon) by the slot's content type.
+		var it_icon := _make_slot_icon()
+		slot.add_child(it_icon["rect"])
+		_bag_icons.append(it_icon["rect"])
+		_bag_atlases.append(it_icon["atlas"])
+		slot.mouse_filter = Control.MOUSE_FILTER_STOP
+		slot.gui_input.connect(_on_slot_gui_input.bind(i))
+
+
+## The bottom-center ability bar (v0.21.0) — the class's 1-5 active abilities, moved wholesale out of the
+## inventory grid's top row. A $Root child, NOT a RightVBox section, so it adds nothing to _column_stack_min_h()
+## and can never move the HUD zoom h; _relayout places it in HUD-LOCAL px on the world frame's bottom edge (see
+## the header's ABILITY BAR note). An HBoxContainer laid out at exactly _ability_bar_size(), so the sockets sit
+## on the same 2px gaps as every other slot block. Accent (gold) sockets — the visual signature the bag gave up.
+## MOUSE IGNORE on the bar AND every socket: ability slots are display-only (the 1-5 KEYS fire them via
+## main._unhandled_input), so a click here must pass straight through to move_input.gd's world handling.
+## Clickable ability slots stay a DESIGN §2.11 future item.
+func _build_ability_bar() -> void:
+	var bar := HBoxContainer.new()
+	bar.name = "AbilityBar"
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.add_theme_constant_override("separation", int(SLOT_GAP_PX))
+	_root.add_child(bar)
+	_ability_bar = bar
+	for i in ABILITY_SLOTS:
+		var slot := _make_socket(true, "")
+		bar.add_child(slot)
+		# ABILITY icon (v0.20.3): the class active_abilities[i] icon, painted by _refresh_abilities.
+		var a_icon := _make_slot_icon()
+		slot.add_child(a_icon["rect"])
+		_ability_icons.append(a_icon["rect"])
+		_ability_atlases.append(a_icon["atlas"])
+		# Keycap "1".."5" drawn OVER the icon (added LAST so it paints on top).
+		var cap := Label.new()
+		cap.text = str(i + 1)
+		cap.add_theme_font_size_override("font_size", 6)
+		cap.add_theme_color_override("font_color", Color(1, 1, 1, 0.85))
+		cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cap.position = Vector2(1.0, -1.0)
+		slot.add_child(cap)
 
 
 ## Build a hidden full-rect items.png icon (TextureRect + AtlasTexture) for an inventory slot (v0.20.3 extract) —
@@ -713,14 +793,10 @@ func _set_weapon_icon(weapon: WeaponType) -> void:
 	_own_weapon_icon.visible = true
 
 
-## Paint the bag row (v0.18.0 chunk B; v0.19.x adds weapons) from the LOCAL player's inventory mirror
-## (Array[String] of display_names, in slot order). For each slot: a filled slot windows the item's items.png
-## region out of ITEMS_TEX (the _set_weapon_icon pattern) — resolved via item_by_name (a consumable) OR
-## weapon_by_name (a looted weapon), both exposing atlas_coords; an empty or unresolvable name hides the icon
-## back to a bare socket. Reads the local player through $Players like refresh_self; no-op when we have no player.
-## Paint the ABILITY row (v0.20.3) from the LOCAL player's class active_abilities — each filled slot windows the
-## ability's items.png icon (the item-icon pattern); an empty/unauthored slot hides its icon. A null class hides
-## all. Called from refresh_self (spawn + class change), so switching class repaints the bar with its abilities.
+## Paint the ABILITY BAR (v0.20.3; bottom-center since v0.21.0) from the LOCAL player's class active_abilities —
+## each filled slot windows the ability's items.png icon (the item-icon pattern); an empty/unauthored slot hides
+## its icon. A null class hides all. Called from refresh_self (spawn + class change), so switching class repaints
+## the bar with its abilities. (Fixed in v0.21.0: this doc block previously carried _refresh_bag's paragraph too.)
 func _refresh_abilities(player_class: PlayerClass) -> void:
 	var abilities: Array = player_class.active_abilities if player_class != null else []
 	for i in _ability_icons.size():
@@ -732,18 +808,27 @@ func _refresh_abilities(player_class: PlayerClass) -> void:
 			_ability_icons[i].visible = false
 
 
-func _refresh_hotbar() -> void:
+## Paint the BAG grid (v0.18.0 chunk B; v0.19.x adds weapons; renamed from _refresh_hotbar in v0.21.0) from the
+## LOCAL player's inventory mirror (Array[String] of display_names, in slot order). For each slot: a filled slot
+## windows the item's items.png region out of ITEMS_TEX (the _set_weapon_icon pattern) — resolved via
+## item_by_name (a consumable) OR weapon_by_name (a looted weapon), both exposing atlas_coords; an empty or
+## unresolvable name hides the icon back to a bare socket. Reads the local player through $Players like
+## refresh_self; no-op when we have no player.
+func _refresh_bag() -> void:
 	var me := _players.get_node_or_null(str(_own_id)) as Player if _players != null else null
 	var bag: Array = me.inventory if me != null else []
-	for i in _hotbar_icons.size():
+	# Bounded by the ICON ARRAY, never by the socket count or the mirror's length: the array holds exactly the
+	# in-capacity sockets, so a decorative filler socket can never be painted and an over-long mirror can never
+	# overrun the grid.
+	for i in _bag_icons.size():
 		var coords := _bag_icon_coords(str(bag[i])) if i < bag.size() else Vector2i(-1, -1)
 		if coords.x >= 0:
-			_hotbar_atlases[i].region = WorldGrid.atlas_region(coords)
-			_hotbar_icons[i].visible = true
+			_bag_atlases[i].region = WorldGrid.atlas_region(coords)
+			_bag_icons[i].visible = true
 		else:
 			# Empty slot OR an unresolvable name (absent from both catalogs) — clear back to a bare socket rather
 			# than leave a stale icon; the config-validation guards warn on a genuinely missing/ambiguous name.
-			_hotbar_icons[i].visible = false
+			_bag_icons[i].visible = false
 
 
 ## The items.png cell for a bag entry NAME, resolving a consumable (item_catalog) first, then a looted weapon
@@ -768,7 +853,7 @@ func _on_slot_gui_input(event: InputEvent, slot: int) -> void:
 		slot_activated.emit(slot)
 
 
-## A 32px reserved socket Panel. `accent` = the brighter hotbar/hands border; a non-empty `label_text`
+## A 32px reserved socket Panel. `accent` = the brighter ability-bar/hands border; a non-empty `label_text`
 ## draws a faint tiny centred name (empty sockets only — the primary hand carries an icon instead).
 func _make_socket(accent: bool, label_text: String) -> Panel:
 	var socket := Panel.new()

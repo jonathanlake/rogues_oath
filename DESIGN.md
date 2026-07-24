@@ -445,14 +445,53 @@ this section is the design; checkboxes live only in ROADMAP.)*
 
 v1 model (host-authoritative, event-synced like everything else). Items are `ItemType` resources
 in `GameConfig.item_catalog`, name-resolved like weapons/classes. A world item is a replicated
-`GroundItem` node that claims NO occupancy — you glide onto its tile and pick it up (walk-over,
-adjudicated at the glide's settle). The bag is 5 slots (the HUD hotbar); it dies with the player
-(permadeath — fresh/late spawns start empty, so there is no late-join inventory sync in v1).
+`GroundItem` node that claims NO occupancy — you can stand on its tile, and acquiring it never
+costs you a tile reservation. The bag dies with the player (permadeath — fresh/late spawns start
+empty, so there is no late-join inventory sync in v1).
 Using an item is a COMMITTED action (§2.1): `use_item {slot}` roots you for `use_beats`, and a
 heal lands at the DRINK'S END — killed mid-drink consumes the potion and heals nothing ("attack
 or drink, not both"). Heals are their own referee pipe (`apply_heal`, clamped to max; god blocks
 damage, never healing) — the damage pipe stays damage-only. The health potion (heal 10 / 2-beat
 drink) is the v1 item; `/item` + `potion=` spawn for testing.
+
+**Categories (v0.21.0).** Every item answers to one of three categories — POTION, EQUIPMENT,
+WEAPON. `ItemType` carries `category` as an @export enum; WEAPON is answered by *living in*
+`weapon_catalog` rather than by an authored field, so a weapon can never be mis-tagged.
+`GameConfig.category_of(name)` is the single resolution point (item_catalog first, then
+weapon_catalog, an unresolvable sentinel otherwise) — the same item-first order the HUD's bag
+icons resolve in. The default is deliberately EQUIPMENT, so a designer who *forgets* the field
+fails CLOSED: the item sits on the ground waiting to be picked up rather than being silently
+hoovered up. The EQUIPMENT bucket is wired but EMPTY today — no armour/shield/boot/ring/amulet
+resources exist, and the HUD's equipment sockets stay cosmetic. **The equip-SLOT model (what a
+worn item does, where it goes, how it stacks with weapons) is a separate future milestone** and is
+deliberately not part of this track's v1; the category exists now so acquisition can already tell
+"wearable" apart from "drinkable."
+
+**Acquisition: autopickup is POTION-ONLY (v0.21.0).** Gliding onto a potion still banks it at the
+glide's settle — consumables are the case where stopping to think adds nothing. Everything else
+(weapons, and later equipment) STAYS on the ground and posts a broadcast `item_pickup_available`
+event, which each peer self-filters to the mover's own instance and renders as an invitation to
+press **G**. If the bag is already full the invitation is replaced by `item_pickup_full`, so the
+player is never told "press G" and then refused one keystroke later. The rationale is the pillar:
+picking up gear is a decision, and a decision you make by walking is not a decision.
+
+**Manual pickup (G) is INSTANT, not a committed window (v0.21.0).** `pickup_item` carries an EMPTY
+payload — the host reads the sender's tile from the move referee's authoritative occupancy, never
+from the wire — and adjudicates with §2.2.8-distinct rejects (dead / stunned / busy / not in
+session / nothing here / bag full). It deliberately copies the `equip_item` precedent: because the
+BUSY gate refuses a pickup during any committed action, a pickup is atomic *between* actions and
+therefore cancels nothing — it is not a Commitment Rule leak, it is a zero-length action that can
+only happen when you are already free. It reuses the existing `item_picked_up` event, so every
+downstream consumer (HUD, log, mirrors) is unchanged.
+
+**The bag is 20 slots, and its capacity is one authored number (v0.21.0).**
+`GameConfig.inventory_slots` (20) is the single designer-editable source: the referee's capacity
+check, the client-side mirror cap, and the HUD's row count all read it — replacing a three-way
+coupling between a referee constant, a literal, and a HUD column count that could drift apart. The
+HUD keeps a 4-row visual FLOOR, so a small authored capacity still draws a full grid with the
+surplus sockets decorative and untracked, and a large one grows the grid downward. With abilities
+moved out to their own bar (§2.11), the whole grid is real inventory, drawn GREY — the gold accent
+now means "abilities and hands" and nothing else.
 
 **Loot (v0.19.x).** Enemies DROP their equipped weapon on death — a `GroundItem` carrying the
 `WeaponType` on the death tile (nearest walkable neighbour if occupied) — so the bag now holds
@@ -465,18 +504,24 @@ stats through the equipper's own modifiers (§2.3.7 base+modifier), so the gobli
 becomes a fast weapon in the player's hands. A startup guard warns if any `display_name` is in
 both catalogs (a bag name resolves against both — ambiguity would equip/drink the wrong thing).
 
-**Shipped so far:** item resources + catalog, ground items + walk-over pickup, 5-slot bag,
+**Shipped so far:** item resources + catalog, ground items + walk-over pickup, a 5-slot bag,
 use-as-commit + heal pipe, dev spawn (v0.18.0); weapon drop-on-death + loot-to-bag + left-click
-use/equip-with-swap (v0.19.x).
+use/equip-with-swap (v0.19.x); item CATEGORIES, potion-only autopickup + the "press G" invitation,
+manual G pickup as a host-adjudicated instant intent, and the config-driven 20-slot bag (v0.21.0).
 
 **Still envisioned:** drop tables + the designer `.tres`-only authoring gate (= milestone **M5**,
-which owns that bar — this track points at it, doesn't restate its Done=); more item categories
-(buffs, keys, scrolls, throwables); equipment / wearables (coordinate with the build-system pass);
-the open v1 questions — item stacking, drop/discard, inventory beyond the 5-slot hotbar,
-numbers/cues (Feel=).
+which owns that bar — this track points at it, doesn't restate its Done=); the EQUIPMENT slot model
+(wearables that actually equip — its own milestone, coordinate with the build-system pass); more
+item categories (buffs, keys, scrolls, throwables); the open v1 questions — item stacking,
+drop/discard, numbers/cues (Feel=). Two known rough edges live with it: an item that lands
+*underneath* a standing player produces no arrival event and so no "press G" hint (G still works —
+a proximity scan was judged unjustified), and the cross-catalog `display_name` collision guard is a
+startup WARNING rather than a hard failure, so a name authored into both catalogs can misclassify
+(pre-existing — it already mis-routes equip-vs-use).
 
-**Complete when** items are a full designer-authored system: drop tables, multiple categories,
-the `.tres`-only gate (M5) met. *(Stage progress is tracked in ROADMAP, not here.)*
+**Complete when** items are a full designer-authored system: drop tables, multiple categories that
+all *do* something (including equipment that equips), the `.tres`-only gate (M5) met. *(Stage
+progress is tracked in ROADMAP, not here.)*
 
 ### 2.11 Active Abilities & Status Effects (v1 in progress — v0.20.x)
 
@@ -510,18 +555,29 @@ valve you spend — it is the enemy's teeth, resolved server-side; that's why it
 active dodge button would not.
 
 **The 1-5 bar is for abilities; items are left-click.** The number bar (which §2.10 had deliberately
-left unbound) is now the ability hotbar; consumables/weapons live in a left-click Backpack panel.
+left unbound) is the ability hotbar; consumables and weapons are left-clicked in the bag.
+
+**The bar's home is the bottom edge of the world (v0.21.0).** The five gold-accented ability sockets
+— icon + "1".."5" keycap, painted from the local player's class — sit in a dedicated bar centred on
+the bottom edge of the world frame, the genre-conventional place to look for your actions, instead
+of borrowing the top row of the bag grid. It is click-transparent, so the world underneath is still
+clickable, and it lives outside the right column's layout stack so it can never push the HUD's
+integer zoom around. The cost is honest and accepted: it OCCLUDES a strip of tiles at the world's
+bottom edge (occlusion only — clicks pass through), and at very small window sizes it can overlap
+the game-log panel. Vacating the bag grid is what let §2.10's bag grow to 20 real slots; the gold
+accent now reads as "abilities and hands," grey as "carried."
 
 **Shipped so far (v0.20.x):** the stun status (icon + dizzy wobble, INTERRUPTS an in-flight attack/cast,
 `/stun` dev cmd, all validator gates); the `use_ability` pipe + `ActiveAbility` resource +
 `PlayerClass.active_abilities`; knight **Shield Bash** (2 dmg + 3-beat stun) and rogue **Kick** (1 dmg +
 3-beat stun) — both verified two-instance; the 1-5 HOTBAR HUD shows the class ability icons + keycaps, with
-carried items dropped to the row below (v0.20.3).
+carried items dropped to the row below (v0.20.3); the ability bar moved OUT of the bag grid to its own
+click-transparent bar on the world's bottom edge, freeing the whole grid for items (v0.21.0).
 
-**Still envisioned:** items to their own left-click Backpack panel (they share the inventory grid for now);
-an equippable off-hand item (a real shield in the `[Off]` socket, not just the class ability); clickable
-ability slots (the keys drive them today); telegraphed/ranged/self-buff abilities; more status effects
-(slow, poison, shield); abilities from equipped gear as well as class.
+**Still envisioned:** an equippable off-hand item (a real shield in the `[Off]` socket, not just the class
+ability — it waits on §2.10's EQUIPMENT slot model); clickable ability slots (the keys drive them today);
+telegraphed/ranged/self-buff abilities; more status effects (slow, poison, shield); abilities from equipped
+gear as well as class.
 
 **Complete when** a non-coder can author a class ability + a status effect via `.tres` alone, the hotbar
 reads as the ability bar, and abilities compose with the build system (§2.7). *(Stage in ROADMAP.)*
