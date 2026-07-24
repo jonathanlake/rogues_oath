@@ -75,9 +75,15 @@ const GOBLIN_SPAWN_TILES: Array[Vector2i] = [
 # goblin and the shaman channels a heal onto the lowest-HP ally within 14 tiles. Spawned UNCONDITIONALLY
 # (like the training dummy), so the heal demo always appears regardless of the goblin=N cap. Each tile is
 # guarded (walkable + free) by _spawn_monster_at, so a future room edit that walls a tile skips that spawn.
+# v0.19.6 — the pack sits at the SOUTH END of room D (row 24, not the row-20 hallway mouth) and uses a
+# TIGHT aggro range (3, via goblin_shaman.tres + goblin_ambush.tres) so a party can file down the widened
+# hallway and gather INSIDE the room before engaging all three at once (Jon: the old row-20/aggro-5 pack
+# woke from the hallway and split — two chased up, one peeled east). The flankers are the low-aggro
+# `goblin_ambush.tres` variant (still displays "Goblin"), leaving the B/C/E map goblins at aggro 5.
 const SHAMAN_TYPE_PATH := "res://resources/monsters/goblin_shaman.tres"
-const SHAMAN_SPAWN_TILE := Vector2i(7, 20)
-const SHAMAN_GUARD_TILES: Array[Vector2i] = [Vector2i(6, 20), Vector2i(8, 20)]
+const GOBLIN_AMBUSH_TYPE_PATH := "res://resources/monsters/goblin_ambush.tres"
+const SHAMAN_SPAWN_TILE := Vector2i(7, 24)
+const SHAMAN_GUARD_TILES: Array[Vector2i] = [Vector2i(6, 24), Vector2i(8, 24)]
 
 # Sentinel for _pick_room_spawn_tile (F6 summon): out-of-bounds, so it can never collide with a real
 # free tile. Returned when a room has no free walkable tile at all, so the validator refuses cleanly.
@@ -1841,10 +1847,12 @@ func _spawn_goblins() -> void:
 	_spawn_monster_at(DUMMY_SPAWN_TILE, DUMMY_TYPE_PATH)
 
 	# Goblin Shaman support pack (v0.19.4) — room D, NOT counted against the goblin cap (like the dummy), so
-	# the heal demo always spawns. The shaman first, then its two flanking goblins adjacent to it.
+	# the heal demo always spawns. The shaman first, then its two flanking goblins adjacent to it. The flankers
+	# use the low-aggro `goblin_ambush.tres` variant (v0.19.6) so the whole pack holds until the party is in
+	# the room (see the SHAMAN_* consts above).
 	_spawn_monster_at(SHAMAN_SPAWN_TILE, SHAMAN_TYPE_PATH)
 	for tile in SHAMAN_GUARD_TILES:
-		_spawn_monster_at(tile, GOBLIN_TYPE_PATH)
+		_spawn_monster_at(tile, GOBLIN_AMBUSH_TYPE_PATH)
 
 
 ## Host-only per-tile monster spawn step (v0.17.2 extract), shared by _spawn_goblins (each map goblin +

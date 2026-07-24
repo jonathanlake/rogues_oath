@@ -6,14 +6,10 @@
 
 [resource]
 script = ExtResource("1_type")
-display_name = "Goblin Shaman"
-atlas_coords = Vector2i(6, 0)
-max_hp = 8
+display_name = "Goblin"
+atlas_coords = Vector2i(2, 0)
 weapon = ExtResource("2_club")
 bonus_windup_beats = 1.0
 bonus_recovery_beats = 1.0
 glide_speed = ExtResource("1_dekqg")
 aggro_range_tiles = 3
-heal_amount = 4
-heal_range_tiles = 14
-heal_cast_beats = 4.0

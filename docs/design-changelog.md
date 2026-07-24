@@ -10,6 +10,17 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.19.6 (2026-07-24) — TUNING: the south-room (D) pack holds until the party is inside (approachable).**
+  The v0.19.4 shaman pack sat at row 20 (the hallway mouth) with the goblins' default aggro range 5, so a party
+  coming down the hall woke it from the corridor — two goblins chased UP the hall and one peeled east, splitting
+  the fight before the party could even enter (Jon report). Two localized changes so you can file everyone into
+  the room and engage all three at once: (1) the pack moved to the SOUTH END of room D (row 24 — shaman (7,24),
+  flankers (6,24)/(8,24)), away from the hallway mouth; (2) TIGHT aggro range 3 for the pack only — the shaman
+  (`goblin_shaman.tres` aggro 5→3) and a new `goblin_ambush.tres` flanker variant (aggro 3, still displays
+  "Goblin") so the B/C/E map goblins keep aggro 5. The shaman's HEAL is independent of its aggro (it heals a
+  wounded ally whenever one is in range), so lowering aggro doesn't stop it healing once the fight starts. A
+  `.tres`/const tune of the disposable M3.5 fixture, not a systemic change. Compile-verified headless (clean
+  parse, pack spawns at 7/6/8,24). Ships for Jon+Jeff's session (supersedes v0.19.5).
 - **v0.19.5 (2026-07-24) — MAP: the A↔D hallway (to the south room) widened 1→2 tiles (anti-tunneling).**
   The vertical corridor connecting the starting room (A) to the south room (D) — `WorldGrid.ROOM_LAYOUT` col 7,
   rows 9–18 — was a single-file 1-wide chute, which read as a "tunneling" bottleneck (party + the shaman pack
