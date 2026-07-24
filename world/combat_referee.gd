@@ -112,6 +112,10 @@ func activate(players: Node2D, monsters: Node2D, move_referee: Node, pace: Node,
 	_monsters.child_entered_tree.connect(_on_entity_entered)
 	_monsters.child_exiting_tree.connect(_on_entity_exiting)
 	NetEvents.register_handler("shoot", _validate_shoot)
+	# Host-only: the ACTIVE ABILITY validator (v0.20.0). ANY peer submits use_ability {index}; this validates the
+	# sender's class ability at that index server-side, commits it, and resolves a melee strike + stun on an
+	# adjacent enemy — the 1-5 hotbar. Registered like "shoot" (the other combat intent this referee owns).
+	NetEvents.register_handler("use_ability", _validate_use_ability)
 	# Misconfiguration guard (v0.17.1 review #2), host-only: warn ONCE at session start if any roster weapon
 	# (global or per-class) is missing from weapon_catalog — such a weapon resolves to null on peers and
 	# desyncs a swap/equip SILENTLY at runtime. Runs here (not _ready) because activate is host-only and fires
@@ -175,6 +179,7 @@ func apply_stun(target_id: int, stun_beats: float) -> void:
 	# overhead icon exactly the stun window on every peer.
 	NetEvents.post_event("status_applied", {
 		"entity_id": target_id,
+		"name": _name_of(_node_of_id(target_id)),
 		"status": "stun",
 		"duration_sec": stun_sec,
 	})
@@ -202,7 +207,7 @@ func find_monster_by_name(name: String) -> int:
 ## decision 2); free/windup pass 0. The event carries target_max so every peer renders "hp/max"
 ## with no query. On a lethal hit, death is resolved SYNCHRONOUSLY here (decision 7) — no frame
 ## window where a stale record blocks another mover.
-func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, duration_sec: float = 0.0) -> bool:
+func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, duration_sec: float = 0.0, verb: String = "") -> bool:
 	# Defensive: a caller should have gated on is_alive, but never damage a dead/untracked target
 	# (it would post a spurious event and could double-resolve death).
 	if not is_alive(target_id):
@@ -263,7 +268,7 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 	# Author the hit on the shared pipe (as_peer = attacker, positive for a player or negative for a
 	# monster — negative ids are fine on the wire). Posted BEFORE any `died` so hp_after 0 lands first.
 	# `tags` rides the event only when non-empty (see _build_attack_data), so a plain hit is unchanged.
-	var attack_data := _build_attack_data(attacker, attacker_id, target, target_id, amount, new_hp, kind, duration_sec, false, tags)
+	var attack_data := _build_attack_data(attacker, attacker_id, target, target_id, amount, new_hp, kind, duration_sec, false, tags, verb)
 	NetEvents.post_event("attack", attack_data, attacker_id)
 	var died := new_hp <= 0
 	# Passive after_attack dispatch (v0.11.0): post-broadcast observation with the lethal flag. Fired
@@ -619,6 +624,129 @@ func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int, recovery
 	}, caster_id)
 
 
+# ── Active abilities (v0.20.0, the 1-5 hotbar — a player-triggered melee strike + stun) ──────
+
+## The "use_ability" validator (host-only; registered on the shared pipe in activate()). A player submits
+## use_ability {index}; the host resolves that class ability server-side and, if a hostile is adjacent, commits
+## the player for the ability's occupied window (Q9: no cooldown — the beats ARE the cost) and resolves a melee
+## strike that deals damage + applies a stun. Distinct §2.2.8 rejects (dead / stunned / busy / no ability /
+## no target). Returns a DEFERRED accept on success — the `attack` + `status_applied` events ARE the outcome.
+func _validate_use_ability(sender_peer_id: int, data: Dictionary) -> Dictionary:
+	if not is_alive(sender_peer_id):
+		return { "ok": false, "reason": "dead" }
+	if is_stunned(sender_peer_id):
+		return { "ok": false, "reason": "stunned" }
+	if _move_referee.is_entity_moving(sender_peer_id):
+		return { "ok": false, "reason": "busy" }
+	var caster := _node_of_id(sender_peer_id)
+	var ability := _ability_of(caster, int(data.get("index", -1)))
+	if ability == null or not ability.is_valid_ability():
+		return { "ok": false, "reason": "no such ability" }
+	# Target: the first ADJACENT hostile (facing neighbour preferred). No target → a clean reject, not a whiff —
+	# a player-triggered ability shouldn't burn its window on empty air (unlike a monster's committed windup).
+	var my_tile: Vector2i = _move_referee.tile_of_entity(sender_peer_id)
+	var target_id := _adjacent_hostile(sender_peer_id, my_tile, caster)
+	if target_id == 0:
+		return { "ok": false, "reason": "no target" }
+	# Forcing window (§2.8.7): an ability is a hostile action, so the caster stamps + stays tactical.
+	if _pace != null:
+		_pace.report_hostile_action(sender_peer_id)
+	var beat := PaceReferee.beat_or_explore(_pace, sender_peer_id)
+	var windup_sec := maxf(0.0, ability.windup_beats) * beat
+	var recovery_sec := maxf(0.0, ability.recovery_beats) * beat
+	var target_tile: Vector2i = _move_referee.tile_of_entity(target_id)
+	_move_referee.set_facing(sender_peer_id, (target_tile - my_tile).sign())
+	# Instant strike (windup 0) — commit the recovery window and resolve now (mirrors the goblin instant strike).
+	if windup_sec <= 0.0:
+		if not _move_referee.commit_in_place(sender_peer_id, recovery_sec):
+			return { "ok": false, "reason": "busy" }
+		_resolve_ability(sender_peer_id, target_tile, ability.damage, ability.stun_beats, ability.log_verb, recovery_sec)
+		return { "ok": true, "deferred": true }
+	# Telegraphed (windup > 0) — commit the FULL window, resolve at windup end (dodgeable), like a monster windup.
+	if not _move_referee.commit_in_place(sender_peer_id, windup_sec + recovery_sec):
+		return { "ok": false, "reason": "busy" }
+	get_tree().create_timer(windup_sec).timeout.connect(
+			_resolve_ability.bind(sender_peer_id, target_tile, ability.damage, ability.stun_beats, ability.log_verb, recovery_sec))
+	return { "ok": true, "deferred": true }
+
+
+## Resolve an active-ability strike against its committed TILE (host-only). Caster alive-gated (killed mid-windup
+## = nothing). Whoever HOSTILE + LIVING occupies the tile NOW eats `damage` (kind "ability", carrying the verb for
+## the log) AND a `stun_beats` stun; a target that stepped off / died whiffs (a distinct §2.3.4 outcome). recovery_sec
+## rides the hit so the caster shows its spent tell. The strike is deterministic (RF baseline) — the stun is the ability's teeth.
+func _resolve_ability(attacker_id: int, target_tile: Vector2i, damage: int, stun_beats: float, verb: String, recovery_sec: float) -> void:
+	if not is_alive(attacker_id):
+		return
+	var attacker := _node_of_id(attacker_id)
+	var occ_id: int = _move_referee.entity_at(target_tile)
+	if occ_id != _NO_ENTITY:
+		var occ := _node_of_id(occ_id)
+		if occ != null and is_alive(occ_id) and attacker != null and attacker.is_hostile_to(occ):
+			apply_damage(attacker_id, occ_id, damage, "ability", recovery_sec, verb)
+			# Stun AFTER the damage (order matches the event stream: hit then status). Skipped if the hit
+			# killed the target (apply_stun is is_alive-gated, so a dead target is never stunned).
+			apply_stun(occ_id, stun_beats)
+			return
+	# Whiff — the target moved off / died. A distinct outcome (§2.3.4); kind "ability" + verb so the log reads
+	# "<verb> hits nothing". recovery_sec rides so the caster still shows its spent tell.
+	NetEvents.post_event("attack", {
+		"attacker_id": attacker_id,
+		"attacker_name": _name_of(attacker),
+		"target_id": _NO_ENTITY,
+		"target_name": "",
+		"target_tile": target_tile,
+		"damage": 0,
+		"hp_after": -1,
+		"target_max": 0,
+		"kind": "ability",
+		"whiff": true,
+		"duration_sec": recovery_sec,
+		"verb": verb,
+	}, attacker_id)
+
+
+## The ACTIVE ABILITY at `idx` on this node's class, or null (v0.20.0). Duck-typed off `player_class.active_abilities`
+## exactly as _passives_of reads `player_class.passives` — a monster / no-class / out-of-range node yields null.
+func _ability_of(node, idx: int) -> ActiveAbility:
+	if node == null or idx < 0:
+		return null
+	var pc = node.get("player_class")
+	if pc == null:
+		return null
+	var abilities = pc.get("active_abilities")
+	if abilities == null or idx >= abilities.size():
+		return null
+	return abilities[idx]
+
+
+## The FIRST adjacent hostile entity id to `attacker` from `my_tile` (v0.20.0): the FACING neighbour is preferred
+## (you bash who you're looking at), else the 8 neighbours are scanned in a fixed order. 0 = none adjacent.
+## Authoritative occupancy (entity_at) + server hostility (is_hostile_to) — never a rendered position.
+func _adjacent_hostile(attacker_id: int, my_tile: Vector2i, attacker: Node) -> int:
+	var facing: Vector2i = _move_referee.facing_of(attacker_id)
+	if facing != Vector2i.ZERO:
+		var fid := _hostile_at(my_tile + facing, attacker)
+		if fid != 0:
+			return fid
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+			Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]:
+		var id := _hostile_at(my_tile + d, attacker)
+		if id != 0:
+			return id
+	return 0
+
+
+## The living entity id on `tile` if it is HOSTILE to `attacker`, else 0 (v0.20.0 ability targeting helper).
+func _hostile_at(tile: Vector2i, attacker: Node) -> int:
+	var id: int = _move_referee.entity_at(tile)
+	if id == _NO_ENTITY or not is_alive(id):
+		return 0
+	var occ := _node_of_id(id)
+	if occ != null and attacker != null and attacker.is_hostile_to(occ):
+		return id
+	return 0
+
+
 ## Host-side stat accessors, read by MoveReferee for a bump/AoO so combat numbers live in ONE place
 ## (this referee). BASE + WIELDER MODIFIER (v0.19.0, DESIGN §2.3.7): the equipped weapon supplies the
 ## base damage and the wielder adds a signed bonus on top (floored at 0), so the SAME weapon hits for
@@ -949,7 +1077,7 @@ func _is_hostile_pair(shooter_id: int, occ_id: int) -> bool:
 ## normal hit's dict is byte-identical to the pre-dedup literal.
 func _build_attack_data(attacker: Node, attacker_id: int, target: Node, target_id: int,
 		damage: int, hp_after: int, kind: String, duration_sec: float, godded: bool,
-		tags: Array = []) -> Dictionary:
+		tags: Array = [], verb: String = "") -> Dictionary:
 	var data := {
 		"attacker_id": attacker_id,
 		"attacker_name": _name_of(attacker),
@@ -964,6 +1092,10 @@ func _build_attack_data(attacker: Node, attacker_id: int, target: Node, target_i
 	}
 	if godded:
 		data["godded"] = true
+	# Ability verb (v0.20.0): a kind "ability" hit rides its class-authored verb ("bashes"/"kicks") so game_log
+	# renders "%s <verb> %s"; present-only, so no other kind's dict changes.
+	if verb != "":
+		data["verb"] = verb
 	# Passive feedback tags (v0.11.0) ride the event ONLY when non-empty — a plain hit's dict stays
 	# byte-identical to the pre-tags shape (same present-only style as `godded`/`weapon`). Clients read
 	# these for the distinct per-outcome cue (§2.3.4), e.g. the backstab log line / popup / pitched sound.
@@ -975,7 +1107,9 @@ func _build_attack_data(attacker: Node, attacker_id: int, target: Node, target_i
 	# weapon (bump / windup / strike / free / arrow). EXCLUDE "kick" (v0.17.1): a ranged weapon's
 	# point-blank bump has no melee swing, so it must carry NO weapon field (the rig-swing tail is
 	# field-gated) — a kick renders like a bare-handed bump, never the bow slash arc.
-	if attacker is Entity and attacker.equipped_weapon != null and kind != "kick":
+	# EXCLUDE "ability" too (v0.20.0): a shield bash / kick is not a weapon swing, so it stamps no weapon field
+	# (no longsword rig arc over a bash) — the attacker's lunge in _handle_attack_event is its melee cue.
+	if attacker is Entity and attacker.equipped_weapon != null and kind != "kick" and kind != "ability":
 		data["weapon"] = attacker.equipped_weapon.display_name
 	return data
 

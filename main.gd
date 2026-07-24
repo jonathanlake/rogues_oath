@@ -686,10 +686,26 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("weapon_swap"):
 		NetEvents.submit_intent("swap_weapon", {})
 		get_viewport().set_input_as_handled()
-	# Item use / weapon equip is now LEFT-CLICK on the inventory slot (v0.19.x), NOT a number-key action bar
-	# (Jon: nothing auto-binds to a hotbar). The click path is _on_inventory_slot_activated, wired to the HUD's
-	# slot_activated signal in _ready — it routes by content type to a use_item or equip_item intent. The old
-	# use_slot_1..5 key bindings are retired here (kept in the InputMap harmlessly for the tap= harness).
+	# ACTIVE ABILITIES (v0.20.0): the 1-5 keys now trigger the local player's class ability at that slot (index
+	# 0-4). The host validates the sender's class ability server-side (never a client value) and resolves it. This
+	# REVERSES the v0.19.x "nothing auto-binds to a hotbar" note FOR ABILITIES — items moved to left-click in the
+	# backpack (§2.10 evolution). A held echo is filtered (is_action_pressed allow_echo=false); a no-ability /
+	# no-target slot rejects → the §2.2.8 bonk.
+	elif event.is_action_pressed("use_slot_1"):
+		NetEvents.submit_intent("use_ability", { "index": 0 })
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("use_slot_2"):
+		NetEvents.submit_intent("use_ability", { "index": 1 })
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("use_slot_3"):
+		NetEvents.submit_intent("use_ability", { "index": 2 })
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("use_slot_4"):
+		NetEvents.submit_intent("use_ability", { "index": 3 })
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("use_slot_5"):
+		NetEvents.submit_intent("use_ability", { "index": 4 })
+		get_viewport().set_input_as_handled()
 
 
 ## Detect and repair the ONE illegitimate window state: WINDOWED at (or beyond) the full screen size.

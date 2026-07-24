@@ -10,6 +10,23 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.20.1 (2026-07-24) — ACTIVE ABILITIES: the 1-5 hotbar (knight Shield Bash, rogue Kick) — MECHANICS (overnight).**
+  The active-ability MECHANIC (HUD visuals are the next slice). The 1-5 keys (the retired `use_slot_1..5` InputMap
+  actions) now submit a `use_ability {index}` intent; the host resolves the sender's class ability server-side and,
+  if a hostile is ADJACENT (facing neighbour preferred), commits the caster for the ability's beat window and
+  strikes for `damage` + a `stun_beats` STUN. NO cooldown — the committed window IS the cost (Q9). New
+  designer-editable `ActiveAbility` resource (`damage`/`stun_beats`/`windup_beats`/`recovery_beats`/`range_tiles`/
+  `log_verb`) + `PlayerClass.active_abilities`; abilities resolve off the class exactly as passives do (duck-typed).
+  Ships two as `.tres`: **knight Shield Bash** (2 dmg, 3-beat stun) on `knight.tres`, **rogue Kick** (1 dmg, 3-beat
+  stun) on `rogue.tres` — both instant strikes, 2-beat recovery. Resolved through the shared `apply_damage`
+  (kind "ability" + verb, no weapon-rig swing — the lunge is its cue) + `apply_stun`; distinct §2.2.8 rejects
+  (dead / stunned / busy / no ability / no target); "X bashes/kicks Y for N" + "Y is stunned!" log lines. Reuses
+  the tile-resolve shape so a telegraphed (windup>0) ability is dodgeable. New `ability=<index>` harness knob.
+  **Verified two-instance:** host (made a knight, goblin spawned adjacent) fires ability 0 — the CLIENT logs
+  `attack{kind:"ability", verb:"bashes", damage:2}` + `status_applied{stun}`, the goblin does NOTHING for the full
+  1.5s (3-beat) stun then resumes attacking the instant it expires, and the rogue-kick run mirrored it (verb
+  "kicks", 1 dmg). SHIPPED-SO-FAR: mechanics + two class abilities. NEXT: the HUD (hotbar shows ability icons +
+  1-5 keycaps, potion/club move to a left-click Backpack panel, the knight's off-hand shield socket).
 - **v0.20.0 (2026-07-24) — STATUS EFFECTS: the STUN mechanic (Commitment-safe) + overhead icon + /stun (overnight).**
   First slice of the active-ability push (Jon's overnight brief): the STATUS-EFFECT foundation, starting with STUN.
   Host-authoritative, folded into CombatReferee (every intent validator + the monster brain already holds a

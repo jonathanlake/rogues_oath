@@ -63,6 +63,11 @@ var _move_wait_sec: float = -1.0
 var _event_log_path := ""
 var _event_log_file: FileAccess = null
 
+# ability=<index> (v0.20.0): submit ONE use_ability intent (the 1-5 hotbar, 0-based index) through the real pipe
+# from either role, testing the active-ability flow end-to-end (like shoot=/swap=). abilitywait= its own delay.
+var _ability_index: int = -1
+var _ability_wait_sec: float = -1.0
+
 # Held-key harness (hold=/holdsec=): synthesizes a HELD move key via Input.action_press/release,
 # driving the GENUINE MoveInput sampler — key-held cadence, host/client symmetric — unlike move=,
 # which bypasses MoveInput by design and so can't catch input-layer bugs (e.g. a latch that only
@@ -304,6 +309,10 @@ func _ready() -> void:
 			_move_wait_sec = arg.trim_prefix("movewait=").to_float()
 		elif arg.begins_with("eventlog="):
 			_event_log_path = arg.trim_prefix("eventlog=")
+		elif arg.begins_with("ability="):
+			_ability_index = arg.trim_prefix("ability=").to_int()
+		elif arg.begins_with("abilitywait="):
+			_ability_wait_sec = arg.trim_prefix("abilitywait=").to_float()
 		elif arg.begins_with("beatsec="):
 			beat_override = arg.trim_prefix("beatsec=").to_float()
 		elif arg.begins_with("glidesec="):
@@ -526,6 +535,8 @@ func _schedule_input_knobs(default_anchor_sec: float) -> void:
 	var move_anchor := _move_wait_sec if _move_wait_sec >= 0.0 else default_anchor_sec
 	if _has_move:
 		_schedule_moves(move_anchor)
+	if _ability_index >= 0:
+		_schedule_ability(_ability_wait_sec if _ability_wait_sec >= 0.0 else move_anchor)
 	if _has_hold:
 		_schedule_hold(_hold_wait_sec if _hold_wait_sec >= 0.0 else move_anchor)
 	if _has_tap:
@@ -866,6 +877,15 @@ func _schedule_screenshot(path: String) -> void:
 	var err := image.save_png(path)
 	print("[Debug] viewport screenshot -> %s (%s)" % [path, error_string(err)])
 	get_tree().quit()
+
+
+## ability= (v0.20.0): fire ONE use_ability intent through the real pipe after a delay. Works from either role —
+## submit_intent is the single public entry, no role branch. The host validates the sender's class ability +
+## adjacency and resolves the strike + stun.
+func _schedule_ability(delay_sec: float) -> void:
+	await get_tree().create_timer(delay_sec).timeout
+	print("[Debug] ability: submitting use_ability index=%d" % _ability_index)
+	NetEvents.submit_intent("use_ability", { "index": _ability_index })
 
 
 ## eventlog= (v0.20.0 dev observe): open the log file and subscribe to the broadcast NetEvents stream. Flushed

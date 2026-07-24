@@ -36,6 +36,13 @@ extends Resource
 ## dropping a PassiveAbility .tres into this array, no code edit.
 @export var passives: Array[PassiveAbility] = []
 
+## The class's ACTIVE ABILITIES (v0.20.0) — the 1-5 hotbar actions this class can trigger (ActiveAbility .tres,
+## resources/active_ability.gd). Index 0 = the "1" key, up to 5. EMPTY (default) = no active abilities (the key
+## does nothing). Host-adjudicated: the "use_ability" validator reads THIS list from the sender's class server-
+## side (never a client value), so a class grants an active ability by dropping a .tres here — no code edit.
+## knight → [shield_bash], rogue → [kick]. Ability sets swap with the class (the /class equip flow).
+@export var active_abilities: Array[ActiveAbility] = []
+
 ## The class's WEAPON ROSTER (v0.17.0) — the loadout this class carries and Tab-cycles through. EMPTY (the
 ## default) = use the GLOBAL GameConfig.weapon_roster fallback (the shipped dagger↔longsword cycle); NON-EMPTY
 ## overrides it, so the swap validator cycles THIS list and a host-side set_class equips its FIRST entry. The

@@ -308,6 +308,11 @@ func _on_event_received(event: Dictionary) -> void:
 			# of "winds up..."). The LAND is the `heal` line above. Names flow through add_line's sink escape.
 			add_line("%s channels a heal toward %s..." % [
 				str(data.get("caster_name", "Someone")), str(data.get("target_name", "an ally"))])
+		"status_applied":
+			# A status effect landed (§2.3.4, v0.20.0 — stun). A distinct line so "it's stunned" is legible in the
+			# log, not only the overhead icon. Name is server-resolved; still escaped at the add_line sink.
+			if str(data.get("status", "")) == "stun":
+				add_line("%s is stunned!" % str(data.get("name", "Someone")))
 		"smite_cast":
 			# A monster's SMITE channel starting (§2.3.4, v0.19.10 — the offensive twin of the heal channel). The
 			# RED danger tile is the real telegraph; this line names whoever's standing on it at cast start (empty
@@ -370,6 +375,13 @@ func _log_attack(data: Dictionary) -> void:
 		# A landed SMITE (v0.19.10): a ranged spell hit — a DISTINCT verb ("smites"), same running-HP readout.
 		add_line("%s smites %s for %d (%d/%d)." % [
 			attacker_name, target_name, damage,
+			int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
+		return
+	if str(data.get("kind", "")) == "ability":
+		# A landed ACTIVE ABILITY (v0.20.0): the class-authored verb ("bashes"/"kicks"), same running-HP readout.
+		# The stun (if any) is its own "X is stunned!" line off the status_applied event.
+		add_line("%s %s %s for %d (%d/%d)." % [
+			attacker_name, str(data.get("verb", "hits")), target_name, damage,
 			int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
 		return
 	# A landed bump or wind-up hit, with the target's running HP after the blow.
