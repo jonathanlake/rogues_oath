@@ -63,6 +63,9 @@ decision.
   plays to completion once started; no system — including UI — may cancel, interrupt-by-input,
   or redirect a committed action. Test every mechanic AND every implementation shortcut
   against: *"does this let a player back out of a decision for free?"* If yes, redesign.
+  ONE sanctioned exception: an opponent-imposed **STUN** interrupts an enemy's in-flight
+  attack/cast (crowd control, not a self-take-back — the rule guards a player's OWN
+  commitment, not an enemy's). See DESIGN §2.11.
 
 - **Networking: server-authoritative intent → verdict, event-sync only** (DESIGN §2.5).
   Clients send commit requests; the server adjudicates and stamps duration/outcome. Gameplay

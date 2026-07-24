@@ -516,6 +516,9 @@ func heal_cast(caster_id: int, target_id: int, amount: int, cast_beats: float, r
 func _resolve_heal_cast(caster_id: int, target_id: int, amount: int) -> void:
 	if not is_alive(caster_id):
 		return
+	# INTERRUPT (v0.20.2): a healer stunned mid-cast heals nothing — stunning the shaman mid-channel cancels it.
+	if is_stunned(caster_id):
+		return
 	apply_heal(target_id, amount, _name_of(_node_of_id(caster_id)))
 
 
@@ -597,6 +600,9 @@ func _expire_stun(entity_id: int, gen: int) -> void:
 func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int, recovery_sec: float) -> void:
 	if not is_alive(caster_id):
 		return
+	# INTERRUPT (v0.20.2): a caster stunned mid-smite deals nothing — stunning the shaman mid-cast cancels it.
+	if is_stunned(caster_id):
+		return
 	var caster := _node_of_id(caster_id)
 	var occ_id: int = _move_referee.entity_at(target_tile)
 	if occ_id != _NO_ENTITY:
@@ -676,6 +682,10 @@ func _validate_use_ability(sender_peer_id: int, data: Dictionary) -> Dictionary:
 ## rides the hit so the caster shows its spent tell. The strike is deterministic (RF baseline) — the stun is the ability's teeth.
 func _resolve_ability(attacker_id: int, target_tile: Vector2i, damage: int, stun_beats: float, verb: String, recovery_sec: float) -> void:
 	if not is_alive(attacker_id):
+		return
+	# INTERRUPT (v0.20.2): a caster stunned mid-windup ability deals nothing — same interrupt rule as a monster
+	# windup (a telegraphed ability, windup > 0, can be interrupted by stunning its user).
+	if is_stunned(attacker_id):
 		return
 	var attacker := _node_of_id(attacker_id)
 	var occ_id: int = _move_referee.entity_at(target_tile)
@@ -1130,6 +1140,12 @@ func _build_attack_data(attacker: Node, attacker_id: int, target: Node, target_i
 ## it (the attack commits to ground, not a name). No occupant / no hostile / dead → a WHIFF event.
 func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, recovery_sec: float) -> void:
 	if not is_alive(attacker_id):
+		return
+	# INTERRUPT (v0.20.2): an attacker STUNNED mid-windup deals NOTHING — the stun cancels the in-flight strike
+	# (Jon: stun interrupts an attack, not just blocks the next one). The committed busy record still clears on
+	# its own timer; only the DAMAGE fizzles. Legit crowd-control — the interrupt is imposed by an attacker's
+	# committed action (the bash), not a free self-take-back, so the Commitment Rule's intent holds (§2.11).
+	if is_stunned(attacker_id):
 		return
 	var attacker := _node_of_id(attacker_id)
 	var occ_id: int = _move_referee.entity_at(target_tile)

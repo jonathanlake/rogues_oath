@@ -10,6 +10,18 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.20.2 (2026-07-24) — STUN now INTERRUPTS + a dizzy visual (Jon feel-test fix).** Jon's test: the bash showed
+  the stun icon + damage, but the goblin's attack still LANDED and it barely paused — because v0.20.0 stun was
+  Commitment-SAFE (blocked the next action, let the in-flight one complete). Jon's call: stun should INTERRUPT.
+  Now a stunned actor's RESOLVE fizzles — `_resolve_windup` / `_resolve_smite` / `_resolve_heal_cast` /
+  `_resolve_ability` each early-return on `is_stunned(attacker_id)`, so a goblin stunned mid-windup deals NOTHING
+  (verified: a windup at T produced NO attack resolve after a stun landed 0.4s into its 0.5s telegraph), a shaman
+  stunned mid-cast heals/smites nothing. Movement isn't interrupted (a glide finishes — only the offensive resolve
+  is cancelled). VISUAL: `Entity.play_stunned` now drops the attack pose (kills the coil/lunge tween + hides the
+  weapon rig) and adds a WoW-style dizzy sprite WOBBLE alongside the spinning icon; `hide_stun` straightens it.
+  DESIGN §2.11 + CLAUDE.md updated: this is the ONE sanctioned exception to "never interrupt a committed action" —
+  the rule guards a player's OWN commitment (no free self-take-back), and an opponent-imposed stun interrupting an
+  ENEMY is crowd control, not a take-back (the stunning player still can't un-bash). Verified two-instance.
 - **v0.20.1 (2026-07-24) — ACTIVE ABILITIES: the 1-5 hotbar (knight Shield Bash, rogue Kick) — MECHANICS (overnight).**
   The active-ability MECHANIC (HUD visuals are the next slice). The 1-5 keys (the retired `use_slot_1..5` InputMap
   actions) now submit a `use_ability {index}` intent; the host resolves the sender's class ability server-side and,

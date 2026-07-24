@@ -494,13 +494,20 @@ ability by dropping a `.tres` into a class's `active_abilities`. A telegraphed a
 model as the goblin wind-up and the smite); an instant one (0) strikes now. This is NOT an active
 DODGE/BLOCK (§2.1.3 forbids those): the SHIELD is an offensive committed BASH, never a hold-to-block.
 
-**Stun is an imposed status, Commitment-safe.** A stunned entity cannot START a new committed action —
-every intent validator (glide / shoot / use_item / equip_item / use_ability) rejects "stunned" at ENTRY
-and the monster brain skips its think — but the gate NEVER touches the busy/`_gliding` record, so an
-action already in flight plays to completion (§2.1). Duration is in BEATS (scales with tempo);
-host-authoritative (folded into CombatReferee), broadcast as `status_applied`/`status_expired` events
-with an overhead icon on every peer. A stun imposed ON you is not an escape valve you spend — it is the
-enemy's teeth, resolved server-side; that's why it fits the pillar where an active dodge button would not.
+**Stun INTERRUPTS and locks (Jon's call, v0.20.2).** A stun does two things: (1) it BLOCKS a new committed
+action — every intent validator (glide / shoot / use_item / equip_item / use_ability) rejects "stunned" at
+ENTRY and the monster brain skips its think; and (2) it INTERRUPTS the in-flight action — a stunned actor's
+attack/cast RESOLVE fizzles (the damage/heal/smite is gated on `is_stunned` at the resolve point, so a
+goblin stunned mid-windup deals nothing, a shaman stunned mid-cast heals nothing). Movement is not
+interrupted (a glide finishes; only the offensive resolve is cancelled). The entity also visibly drops its
+attack pose and reels (dizzy wobble) on every peer. **This is the ONE sanctioned exception to "no system may
+interrupt a committed action":** the Commitment Rule protects a player from backing out of THEIR OWN
+decision for free — a stun is the OPPONENT's committed action (the bash) imposing an interrupt on an enemy,
+which is crowd control, not a self-take-back. The stunning player still can't un-bash; the victim is just
+disrupted. Duration is in BEATS (scales with tempo); host-authoritative (folded into CombatReferee),
+broadcast as `status_applied`/`status_expired` with an overhead icon. A stun imposed ON you is not an escape
+valve you spend — it is the enemy's teeth, resolved server-side; that's why it fits the pillar where an
+active dodge button would not.
 
 **The 1-5 bar is for abilities; items are left-click.** The number bar (which §2.10 had deliberately
 left unbound) is now the ability hotbar; consumables/weapons live in a left-click Backpack panel.

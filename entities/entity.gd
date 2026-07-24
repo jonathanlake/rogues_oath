@@ -139,6 +139,8 @@ var _cast_fx_gen: int = 0
 var _stun_fx: Node2D = null
 var _stun_fx_tween: Tween = null
 var _stun_fx_gen: int = 0
+# The dizzy SPRITE wobble while stunned (v0.20.2), on its own slot; reset by hide_stun.
+var _stun_wobble_tween: Tween = null
 
 
 func _ready() -> void:
@@ -405,6 +407,13 @@ func _clear_cast_fx(gen: int = -1) -> void:
 ## status_applied (hold_sec = the stun window); status_expired (hide_stun) clears it, a local timer backs that up.
 func play_stunned(hold_sec: float) -> void:
 	hide_stun()
+	# INTERRUPT the visual (v0.20.2): drop any in-flight ATTACK pose so a stunned entity visibly STOPS attacking
+	# (Jon: stun interrupts, not just blocks-next). The coil/lunge share _shake_tween; the weapon rig is the swing.
+	# Killing them mirrors the host-side gameplay interrupt (the damage resolve fizzles for a stunned actor).
+	if _shake_tween != null and _shake_tween.is_valid():
+		_shake_tween.kill()
+	if _weapon_rig != null:
+		_weapon_rig.hide_draw()
 	_stun_fx_gen += 1
 	var gen := _stun_fx_gen
 	var burst := Polygon2D.new()
@@ -422,6 +431,13 @@ func play_stunned(hold_sec: float) -> void:
 	# Slow spin reads as "dizzy" for the whole window.
 	_stun_fx_tween = create_tween().set_loops()
 	_stun_fx_tween.tween_property(burst, "rotation", TAU, 0.9).from(0.0)
+	# Dizzy WOBBLE (v0.20.2, WoW-style): rock the SPRITE back and forth for the window, on its own slot.
+	if _stun_wobble_tween != null and _stun_wobble_tween.is_valid():
+		_stun_wobble_tween.kill()
+	_sprite.rotation = 0.0
+	_stun_wobble_tween = create_tween().set_loops()
+	_stun_wobble_tween.tween_property(_sprite, "rotation", 0.22, 0.18).from(-0.22)
+	_stun_wobble_tween.tween_property(_sprite, "rotation", -0.22, 0.18)
 	if hold_sec > 0.0:
 		get_tree().create_timer(hold_sec).timeout.connect(hide_stun.bind(gen))
 
@@ -437,6 +453,12 @@ func hide_stun(gen: int = -1) -> void:
 	if _stun_fx != null and is_instance_valid(_stun_fx):
 		_stun_fx.queue_free()
 	_stun_fx = null
+	# Stop the dizzy wobble + straighten the sprite (v0.20.2).
+	if _stun_wobble_tween != null and _stun_wobble_tween.is_valid():
+		_stun_wobble_tween.kill()
+	_stun_wobble_tween = null
+	if _sprite != null:
+		_sprite.rotation = 0.0
 
 
 # ── Private methods ───────────────────────────────────────────────────────────
