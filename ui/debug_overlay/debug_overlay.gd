@@ -30,11 +30,24 @@ extends CanvasLayer
 var _samples: Array[float] = []
 var _refresh_elapsed: float = 0.0
 
+# LAST AI DECISION per monster (v0.22.0): entity_id -> the `ai_decision` event's data dict (name,
+# personality, chosen, scores). Only ever populated while the HOST has `/ai` on — the events simply do not
+# exist otherwise, so this stays empty and costs nothing in normal play. Every peer collects them (the
+# events broadcast), which is what lets a two-instance tuning session watch the same weights.
+# KNOWN LIMIT (accepted, v0.22.0): entries for a monster that has since died or despawned PERSIST until the
+# overlay is reset — a decision line is a diagnostic snapshot, not live state, and dropping them would mean
+# subscribing this presentation-only node to death/despawn events for no tuning benefit. Turning /ai off and
+# on again does not clear them either; a session restart does.
+var _ai_decisions: Dictionary = {}
+
 
 func _ready() -> void:
 	# Collect always (hidden included) — see header. Overlay is per-instance; only the local
 	# MoveInput emits, so these are this window's own verdicts.
 	GameEvents.verdict_latency_measured.connect(_on_latency_measured)
+	# The shared event pipe carries the dev-gated `ai_decision` events (v0.22.0). Subscribed always, like the
+	# latency samples above: while /ai is off nothing is ever posted, so the handler never runs.
+	NetEvents.event_received.connect(_on_net_event)
 	# Harness knob: overlay=1 (debug.gd, either role) flips this flag before the scene loads.
 	if GameManager.debug_overlay_start_visible:
 		visible = true
@@ -82,6 +95,15 @@ func _exit_tree() -> void:
 
 # ── Private methods ───────────────────────────────────────────────────────────
 
+## Keep the LAST utility-AI decision per monster (v0.22.0). Every other action on the pipe is ignored here —
+## this overlay is a diagnostics surface, not a game-state consumer (main.gd and game_log own playback).
+func _on_net_event(event: Dictionary) -> void:
+	if str(event.get("action", "")) != "ai_decision":
+		return
+	var data: Dictionary = event.get("data", {})
+	_ai_decisions[int(data.get("entity_id", 0))] = data
+
+
 func _on_latency_measured(latency_sec: float) -> void:
 	_samples.append(latency_sec)
 	if _samples.size() > max_samples:
@@ -100,7 +122,32 @@ func _compose_stats() -> String:
 		text += "\nverdict ms last/med/p95: %.1f / %.1f / %.1f (n=%d)" % [
 			_samples.back() * 1000.0, _percentile(0.5) * 1000.0,
 			_percentile(0.95) * 1000.0, _samples.size()]
+	# One line per utility-AI monster that has decided something since `/ai` was turned on. Absent entirely
+	# in normal play (nothing is ever posted with the toggle off), so the overlay's usual two lines stand.
+	for entity_id in _ai_decisions:
+		text += "\n" + _compose_ai_line(int(entity_id), _ai_decisions[entity_id])
 	return text
+
+
+## Render one AI decision: "Goblin Shaman -6 [supportive]: HEAL 72.0* smite 41.0 melee 0.0". The CHOSEN action
+## is upper-cased and starred so the decision reads at a glance against the also-rans (the zero-score entries
+## are deliberately shown — why it did NOT do a thing is half of what a tuner needs). Scores arrive in
+## post-sort order (chosen first), so the line already reads best-to-worst.
+func _compose_ai_line(entity_id: int, data: Dictionary) -> String:
+	var chosen := str(data.get("chosen", ""))
+	var line := "%s %d [%s]:" % [
+		str(data.get("name", "?")), entity_id, str(data.get("personality", "neutral"))]
+	var scores: Dictionary = data.get("scores", {})
+	for action in scores:
+		# action_name, not `name`: a bare `name` local would shadow Node.name on this CanvasLayer.
+		var action_name := str(action)
+		if action_name == chosen:
+			line += " %s %.1f*" % [action_name.to_upper(), float(scores[action])]
+		else:
+			line += " %s %.1f" % [action_name, float(scores[action])]
+	if chosen.is_empty():
+		line += " (idle)"
+	return line
 
 
 ## Percentile over a sorted copy of the ring (upper-index convention — exact interpolation is

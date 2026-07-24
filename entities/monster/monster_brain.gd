@@ -73,6 +73,12 @@ var _monster_type: MonsterType = null
 # beat, matching the referee's tactical stamp of its glide). Untyped, same reason as _referee. Null on
 # a client's inert brain.
 var _pace = null
+# This instance's rolled AI PERSONALITY (v0.22.0 weighted utility AI), or null = neutral (all multipliers
+# 1.0). Rolled ONCE at activate() from _monster_type.personalities and kept for this monster's whole life.
+# It lives HERE, on the brain, and never on the MonsterType: a type is a SHARED cached resource, so writing
+# per-instance state onto it would make every shaman in the room share one personality (and /m-reset it).
+# Read only by the utility path; a legacy-cascade monster rolls one harmlessly and never consults it.
+var _personality: AiPersonality = null
 
 
 # ── Public methods ────────────────────────────────────────────────────────────
@@ -90,6 +96,11 @@ func activate(referee: Node, combat: Node, entity_id: int, monster_type: Monster
 	# re-activated monster must never inherit a previous life's latch and skip the acquire gate. (The
 	# leash target is now a per-think local in _update_engagement — no field to reset.)
 	_aggroed = false
+	# Fresh life, fresh disposition (v0.22.0): roll this instance's personality now, before the first think,
+	# so every decision it ever makes is scored through the same lens. Host-only — activate() is only called
+	# inside Main's is_server() branch, so this uses the same global RNG the host already owns for
+	# pick_smite_tile (no new RNG plumbing; reproducibility was not asked for).
+	_roll_personality()
 	_active = true
 	_think.call_deferred()
 
@@ -111,7 +122,13 @@ func on_boundary() -> void:
 func notify_attacked() -> void:
 	if not _active:
 		return
+	# PACK RALLY (v0.22.0): being hit is an ORGANIC entry into combat, so it drags the neighbours in. Fired
+	# only on the LATCHING edge (was not aggroed, now is) — an already-fighting monster taking another hit
+	# must not re-fan the bubble every time it is struck.
+	var was_aggroed := _aggroed
 	_aggroed = true
+	if not was_aggroed:
+		_rally_pack()
 	# Already committed to an action (glide or attack)? Latch aggro ONLY — do NOT schedule an early think.
 	# The referee holds this monster busy for its whole action window (v0.19.0: a telegraphed attack now
 	# commits windup+recovery), and the end-of-window think already re-decides targeting. Rescheduling here
@@ -120,6 +137,28 @@ func notify_attacked() -> void:
 	# bought the goblin a bonus attack). Gating on busy makes this "the early think was wrong while committed,"
 	# and it covers any future damage source (DoT/trap) that calls notify_attacked. Commitment Rule intact:
 	# this never interrupts the in-flight action — the next boundary/window-end think handles retargeting.
+	if _referee.is_entity_moving(_entity_id):
+		return
+	_reschedule()
+
+
+## PACK RALLY receiver (v0.22.0, Jon's directive — "all the other goblins in there attack"). Called host-side by
+## CombatReferee.rally_pack when an allied monster inside its tactical bubble entered combat: this brain joins the
+## fight without having seen a player itself. Applies to EVERY brain, legacy cascade included — it is a shared
+## aggro source, not a utility-AI feature.
+##
+## ONE HOP: this latch deliberately does NOT fan out again (no _rally_pack call here), so overlapping bubbles can
+## never chain-react a whole map awake from a single proximity trip. An ALREADY-aggroed brain returns immediately:
+## it is fighting already, and re-waking it mid-cadence would just churn timers.
+##
+## Commitment Rule intact, mirroring notify_attacked's busy guard: a rally never interrupts an in-flight glide or
+## cast — a busy brain latches only, and its end-of-window think picks the fight up with aggro already set.
+func notify_rallied() -> void:
+	if not _active:
+		return
+	if _aggroed:
+		return
+	_aggroed = true
 	if _referee.is_entity_moving(_entity_id):
 		return
 	_reschedule()
@@ -195,7 +234,12 @@ func _think() -> void:
 	# first. This runs even with no players present (allies can already be hurt). No valid ally, or a declined
 	# cast → fall through to the normal chase/attack below (an ARMED healer still fights). An ordinary monster
 	# (no authored heal ability) skips the whole branch.
-	if _monster_type != null and _monster_type.has_heal_ability():
+	#
+	# v0.22.0: a UTILITY-AI monster skips this branch entirely — heal is one of its SCORED candidates, and
+	# letting the hardcoded pre-gate fire first would mean the scorer never got a say on it. The extra
+	# `not utility_ai` term is inert for every existing monster (the flag defaults false), so the legacy
+	# cascade below stays byte-for-byte what it was.
+	if _monster_type != null and _monster_type.has_heal_ability() and not _monster_type.utility_ai:
 		var heal_target: int = _combat.pick_heal_target(_entity_id, my_tile, _monster_type.heal_range_tiles)
 		if heal_target != 0:
 			var heal_wait: float = _combat.heal_cast(
@@ -219,6 +263,15 @@ func _think() -> void:
 		# bubble/leash (and its own tactical pace) while it idle-waits.
 		_report_engagement(false, 0)
 		_reschedule()
+		return
+
+	# WEIGHTED UTILITY AI (v0.22.0, Jeff's spec — DESIGN §2.12). The one branch point: an opted-in monster
+	# hands its decision to the scorer, every other monster falls through to the legacy priority cascade
+	# below, untouched. Placed HERE deliberately — after the stun gate, the busy/pipeline gate, the
+	# wall-sentinel guard and the no-targets guard — so the utility path inherits ALL of the Commitment-Rule
+	# and think-at-own-boundary machinery above verbatim and only ever decides WHAT to commit, never when.
+	if _monster_type != null and _monster_type.utility_ai:
+		_think_utility(my_tile, targets)
 		return
 
 	# Aggro acquisition + persistence + engagement report (Tactical Zones v1, §2.8.7): _update_engagement
@@ -303,6 +356,12 @@ func _try_pipeline_next_step() -> bool:
 	# A KITER never chases (v0.19.10), so it must never pipeline a chase step — fall to the backstop so the
 	# next boundary re-decides flee/smite/hold via _act_as_kiter.
 	if _monster_type != null and _monster_type.flees_players:
+		return false
+	# A UTILITY-AI monster never pipelines either (v0.22.0): the scorer decides EVERY action this brain
+	# takes, and a pipelined chase step is a chase committed without a score. Falling to the backstop costs
+	# it the zero-gap open-field parity a legacy chaser gets — the deliberate trade for "one decision maker"
+	# — and today's only utility monster (the shaman) is a kiter that already returned above.
+	if _monster_type != null and _monster_type.utility_ai:
 		return false
 	# Pipelining only exists under conga; the referee refuses a held-origin pipeline anyway, but gate
 	# here too so we fall straight to the backstop rather than eating a guaranteed-refused submit.
@@ -415,6 +474,274 @@ func _flee_candidates(away: Vector2i) -> Array:
 	return list
 
 
+# ── Weighted utility AI (v0.22.0, Jeff's spec — the opt-in replacement for the cascade above) ──
+
+## ONE think for a utility_ai monster: snapshot the situation, score every candidate, apply this instance's
+## personality, sort, tie-break, and commit the best thing that will actually accept. Called from _think
+## AFTER all the shared gates (stun / busy / wall / no-targets), so everything about WHEN this brain may act
+## is still owned by the machinery above — this decides only WHAT.
+##
+## Engagement: _update_engagement is called here exactly as the legacy path calls it, so aggro latching, the
+## leash, the pack-rally fan-out and the pace-referee report all behave identically for a utility monster.
+## NOT engaged narrows the CANDIDATE LIST to heal only (an out-of-combat healer still tops up its pack, which
+## is what the pre-gate heal did before this branch existed) — it never changes a formula: there is exactly
+## one heal curve in the scorer, engaged or not.
+##
+## Commitment Rule: at most ONE action is committed per think and nothing here can cancel or redirect a
+## committed one. A move candidate commits a SINGLE tile step, and the brain re-scores at every glide
+## boundary, so an approaching caster re-decides per tile and can never chase past its preferred range.
+func _think_utility(my_tile: Vector2i, targets: Array) -> void:
+	var engaged := _update_engagement(my_tile, targets)
+	var candidates: Array = UtilityScorer.score_candidates(_build_utility_context(my_tile, targets, engaged))
+	if not engaged:
+		var heal_only: Array = []
+		for c in candidates:
+			if str(c["action"]) == UtilityScorer.ACTION_HEAL:
+				heal_only.append(c)
+		candidates = heal_only
+	# Personality FIRST, then sort (the plan's deliberate ordering): the multipliers scale whole composite
+	# scores, so they decide the final ranking AND what counts as a close call for the tie-break below.
+	UtilityScorer.apply_personality(candidates, _heal_weight_mult(), _smite_weight_mult())
+	UtilityScorer.sort_by_score(candidates)
+	_apply_tiebreak(candidates)
+	_post_ai_decision(candidates)
+	# DECLINE FALL-THROUGH: executors are the same ones the legacy cascade uses and may DECLINE (-1.0 / false)
+	# when the referee re-validates — a target vanished, a step is blocked, the caster went busy. Walk the
+	# candidates in score order and take the first that actually commits. Zero-score candidates are skipped
+	# outright (they are the "not available" entries the debug overlay still wants to see). Nothing viable —
+	# empty list, all zeros, or every candidate declining — falls back to the normal re-think cadence.
+	for c in candidates:
+		if float(c["score"]) <= 0.0:
+			continue
+		if _execute_candidate(c, my_tile, targets):
+			return
+	_reschedule()
+
+
+## Build the scorer's context: ONE snapshot of this monster's situation, read from AUTHORITATIVE referee state
+## at this instant (occupancy, HP, busy records) and the SHARED MonsterType (never a client value, never a
+## rendered position). The type itself rides in the dict rather than 13 copied floats, so a live `/m
+## utility_smite_weight 80` retune is picked up on the very next think — the same live-read contract the
+## rest of the brain's tuning has.
+func _build_utility_context(my_tile: Vector2i, targets: Array, engaged: bool) -> Dictionary:
+	var nearest := _nearest_target(my_tile, targets)
+	var nearest_dist := maxi(absi(nearest.x - my_tile.x), absi(nearest.y - my_tile.y))
+	var allies := _scan_allies(my_tile)
+	# HEAL target: the referee's existing argmax (lowest-HP living BRAINED ally in range) still picks WHO
+	# gets tended; the scan above supplies the numbers the curve is priced from.
+	var heal_target_id := 0
+	if _monster_type.has_heal_ability():
+		heal_target_id = _combat.pick_heal_target(_entity_id, my_tile, _monster_type.heal_range_tiles)
+	# SMITE ground: pick_smite_tile answers with a random in-range player's tile (host owns that RNG) and
+	# already skips tiles another caster has doomed; the wall sentinel (0,0) means "no target in range".
+	# has_pending_smite_at is re-checked here so the scorer's rule reads as its own guard rather than an
+	# implicit side effect of the picker.
+	var smite_tile := Vector2i.ZERO
+	var smite_tile_valid := false
+	var smite_target_moving := false
+	if _monster_type.has_smite_ability():
+		smite_tile = _combat.pick_smite_tile(_entity_id, my_tile, _monster_type.smite_range_tiles)
+		smite_tile_valid = not WorldGrid.is_wall(smite_tile) and not _combat.has_pending_smite_at(smite_tile)
+		if smite_tile_valid:
+			# "Standing still" = the referee holds no commit record for the occupant. A committed body cannot
+			# dodge off the doomed tile, which is exactly why it is worth the standstill bonus.
+			var occupant: int = _referee.entity_at(smite_tile)
+			smite_target_moving = occupant != 0 and _referee.is_entity_moving(occupant)
+	return {
+		"type": _monster_type,
+		"engaged": engaged,
+		"heal_available": heal_target_id != 0,
+		"heal_target_id": heal_target_id,
+		"heal_worst_frac": allies["worst_frac"],
+		"heal_injured_count": allies["injured_count"],
+		"smite_available": _monster_type.has_smite_ability(),
+		"smite_tile": smite_tile,
+		"smite_tile_valid": smite_tile_valid,
+		"smite_target_moving": smite_target_moving,
+		# A weaponless monster deals NOTHING (unarmed is a future natural weapon, not a fallback), so it must
+		# never score a swing — read from the authored type, the same source the referee's damage math uses.
+		"melee_available": _monster_type.weapon != null,
+		"player_adjacent": nearest_dist <= 1,
+		"player_in_flee_range": _monster_type.flee_range_tiles > 0 and nearest_dist <= _monster_type.flee_range_tiles,
+		"nearest_tile": nearest,
+		"has_backup": allies["has_backup"],
+	}
+
+
+## ONE pass over allied monsters for the two things the scorer asks about them: BACKUP (courage — is there a
+## living, BRAINED ally within backup_radius_tiles?) and the INJURED picture inside heal_range_tiles (how many,
+## and the worst hp fraction). Both walk the same authoritative chain: MoveReferee.monster_tiles (occupancy,
+## self excluded) → entity_at(tile) → id → CombatReferee.is_alive / has_brain_of / hp_of / max_hp_of, because
+## occupancy answers with an entity ID rather than a node.
+##
+## The training dummy and any other has_brain=false prop is excluded from BOTH counts: a destructible barrel is
+## not backup, and it is not a comrade worth a cast (it was a heal magnet once — the v0.19.10 fix). Returns
+## { has_backup, injured_count, worst_frac } with worst_frac 1.0 meaning "nobody is hurt".
+func _scan_allies(my_tile: Vector2i) -> Dictionary:
+	var has_backup := false
+	var injured_count := 0
+	var worst_frac := 1.0
+	var backup_radius: int = _monster_type.backup_radius_tiles
+	var heal_radius: int = _monster_type.heal_range_tiles
+	for tile in _referee.monster_tiles(_entity_id):
+		var cheb := maxi(absi(tile.x - my_tile.x), absi(tile.y - my_tile.y))
+		if cheb > backup_radius and cheb > heal_radius:
+			continue
+		var id: int = _referee.entity_at(tile)
+		# monster_tiles yields negative ids by construction; anything else is a race with a despawn (0) and
+		# is skipped rather than trusted.
+		if id >= 0 or not _combat.is_alive(id) or not _combat.has_brain_of(id):
+			continue
+		if cheb <= backup_radius:
+			has_backup = true
+		if cheb <= heal_radius:
+			var ally_max: int = _combat.max_hp_of(id)
+			# A 0 max means the node is gone — never divide by it.
+			if ally_max > 0:
+				var frac := float(_combat.hp_of(id)) / float(ally_max)
+				if frac < 1.0:
+					injured_count += 1
+					worst_frac = minf(worst_frac, frac)
+	return { "has_backup": has_backup, "injured_count": injured_count, "worst_frac": worst_frac }
+
+
+## TIE-BREAK (Jeff: close calls shouldn't be robotic). If the top two candidates land within
+## utility_tiebreak_margin of each other, flip a coin between THOSE TWO ONLY by swapping them in place;
+## otherwise the sort already put the argmax first. Operates in POST-personality space deliberately — a
+## personality changes which pairs are genuinely close. Uses the global RNG the host already owns (host-only
+## code; no new RNG plumbing — reproducibility was not asked for).
+##
+## Documented limits: a THIRD candidate inside the band is ignored (revisit if a future monster has a crowded
+## top set), and a second candidate scoring 0 never enters the coin flip — "not available" must never win a
+## toss just because a designer set a wide margin.
+func _apply_tiebreak(candidates: Array) -> void:
+	if candidates.size() < 2:
+		return
+	var second := float(candidates[1]["score"])
+	if second <= 0.0:
+		return
+	if float(candidates[0]["score"]) - second > _monster_type.utility_tiebreak_margin:
+		return
+	if randi() % 2 == 1:
+		var swapped = candidates[0]
+		candidates[0] = candidates[1]
+		candidates[1] = swapped
+
+
+## Commit ONE scored candidate through the EXISTING executors — the same referee calls the legacy cascade
+## makes, with the same contracts: a cast/attack returns the seconds until this monster is free (or -1.0
+## DECLINED) and a move returns accepted/refused. Returns true when something was actually committed (the
+## caller then stops walking the list), false on a decline so the next candidate gets its turn.
+##
+## Pacing is unchanged from the cascade: a committed CAST or attack ends its busy record without a
+## glide_finished, so the brain wakes ITSELF just past it (think-at-own-boundary); a committed STEP is woken
+## by its own glide_finished through on_boundary, so it schedules nothing here.
+func _execute_candidate(candidate: Dictionary, my_tile: Vector2i, targets: Array) -> bool:
+	var data: Dictionary = candidate["data"]
+	var action := str(candidate["action"])
+	if action == UtilityScorer.ACTION_HEAL:
+		var heal_wait: float = _combat.heal_cast(
+				_entity_id, int(data.get("target_id", 0)), _monster_type.heal_amount,
+				_monster_type.heal_cast_beats, _monster_type.heal_recovery_beats)
+		if heal_wait < 0.0:
+			return false
+		_reschedule_after(heal_wait + windup_rethink_epsilon_sec)
+		return true
+	if action == UtilityScorer.ACTION_SMITE:
+		var smite_wait: float = _combat.smite_cast(
+				_entity_id, data.get("tile", Vector2i.ZERO), _monster_type.smite_damage,
+				_monster_type.smite_cast_beats, _monster_type.smite_recovery_beats)
+		if smite_wait < 0.0:
+			return false
+		_reschedule_after(smite_wait + windup_rethink_epsilon_sec)
+		return true
+	if action == UtilityScorer.ACTION_MELEE:
+		# The referee owns instant-strike vs telegraphed wind-up (the weapon's dial) and returns the whole
+		# committed window either way — the brain only asks for the swing at that tile.
+		var melee_wait: float = _combat.wind_up(_entity_id, data.get("tile", Vector2i.ZERO))
+		if melee_wait < 0.0:
+			return false
+		_reschedule_after(melee_wait + windup_rethink_epsilon_sec)
+		return true
+	if action == UtilityScorer.ACTION_FLEE:
+		# _flee_step tries the pure away-vector then its fallbacks, submits through the referee's validator,
+		# and reports false when every away-step is blocked (cornered) — exactly the decline this loop wants.
+		return _flee_step(my_tile, data.get("tile", Vector2i.ZERO))
+	if action == UtilityScorer.ACTION_APPROACH:
+		var dir := _first_step_toward(my_tile, targets)
+		if dir == Vector2i.ZERO:
+			return false
+		# Remember the step's shape for the busy gate's settle math (a diagonal window carries the multiplier).
+		_last_step_was_diagonal = dir.x != 0 and dir.y != 0
+		return _referee.submit_monster_intent(_entity_id, dir)
+	return false
+
+
+## Broadcast this decision on the shared event pipe for the F3 debug overlay (v0.22.0) — DEV-GATED: nothing is
+## posted unless the host has turned scores on with `/ai`, so normal play carries zero extra wire traffic. It
+## is a broadcast rather than a host-local print so EVERY peer can watch the weights during a two-instance
+## tuning session, which is the whole point of the overlay. Host-only by construction (this brain only runs on
+## the host, and post_event refuses off-server). Scores ride in post-sort order, chosen first.
+func _post_ai_decision(candidates: Array) -> void:
+	if not GameManager.debug_ai_decisions:
+		return
+	var scores := {}
+	for c in candidates:
+		scores[str(c["action"])] = snappedf(float(c["score"]), 0.1)
+	# A chosen of "" means every candidate scored 0 — the monster is about to idle on its cadence, and the
+	# overlay showing "none" with the zeros beside it is exactly the diagnostic a tuner wants.
+	var chosen := ""
+	if not candidates.is_empty() and float(candidates[0]["score"]) > 0.0:
+		chosen = str(candidates[0]["action"])
+	NetEvents.post_event("ai_decision", {
+		"entity_id": _entity_id,
+		"name": _monster_type.display_name,
+		"personality": _personality_name(),
+		"chosen": chosen,
+		"scores": scores,
+	})
+
+
+## Fan the PACK RALLY out through the combat referee (v0.22.0). Called ONLY on an ORGANIC aggro-latching edge
+## (a proximity acquire in _update_engagement, or notify_attacked) — never from notify_rallied, which is what
+## keeps the rally one hop deep. The radius is this monster's own resolved tactical bubble (§2.8.7): "the
+## fight I am in" is exactly the set of allies that should hear about it, and it is already a designer dial.
+func _rally_pack() -> void:
+	if _combat == null or _monster_type == null:
+		return
+	_combat.rally_pack(_entity_id, _monster_type.resolved_tactical_radius())
+
+
+## Roll this instance's AI personality at activation (v0.22.0), host-only. Uniform pick over the authored pool;
+## an EMPTY pool (every monster today except the shaman) leaves _personality null = neutral, all multipliers
+## 1.0. A null slot in the array is a misauthored .tres — treated as neutral rather than crashed on. The roll
+## prints to the host log so a session can tell two same-named shamans apart with no new UI.
+func _roll_personality() -> void:
+	_personality = null
+	if _monster_type == null or _monster_type.personalities.is_empty():
+		return
+	_personality = _monster_type.personalities[randi() % _monster_type.personalities.size()]
+	if _personality == null:
+		return
+	print("[Brain] %s %d personality: %s" % [_monster_type.display_name, _entity_id, _personality.display_name])
+
+
+## This instance's HEAL score multiplier (1.0 when it rolled no personality). Read fresh each think so a
+## live-edited personality .tres retunes without a respawn.
+func _heal_weight_mult() -> float:
+	return _personality.heal_weight_mult if _personality != null else 1.0
+
+
+## This instance's SMITE score multiplier (1.0 when it rolled no personality). Twin of _heal_weight_mult.
+func _smite_weight_mult() -> float:
+	return _personality.smite_weight_mult if _personality != null else 1.0
+
+
+## The rolled personality's name for logs / the debug event — "neutral" when none was rolled.
+func _personality_name() -> String:
+	return _personality.display_name if _personality != null else "neutral"
+
+
 ## Aggro acquire + leash decision (monster_type.aggro_range_tiles + aggro_persists, DESIGN §2.8),
 ## with the _aggroed latch side effect. aggro_range_tiles <= 0 (or a null type — a client's inert
 ## brain, which never reaches here) = UNLIMITED aggro, so the gate is skipped and we always chase.
@@ -445,7 +772,13 @@ func _update_engagement(my_tile: Vector2i, targets: Array) -> bool:
 	# here — the aggro decision and the leash-target id both key off the SAME pick, no twin scans.
 	var nearest := _nearest_target(my_tile, targets)
 	var nearest_dist := maxi(absi(nearest.x - my_tile.x), absi(nearest.y - my_tile.y))
+	# PACK RALLY (v0.22.0): _should_chase latches _aggroed on a proximity ACQUIRE. Capture the pre-state so
+	# the rally fires on that LATCHING EDGE only — this runs every think (and the busy pipeline calls
+	# _should_chase too), so an unguarded fan-out would re-rally the whole bubble several times a second.
+	var was_aggroed := _aggroed
 	var chasing := _should_chase(nearest_dist)
+	if _aggroed and not was_aggroed:
+		_rally_pack()
 	# The leash target is the id occupying that nearest tile (authoritative occupancy, not a rendered
 	# position). Cleared to 0 when not chasing. A LOCAL, not a field: it is written and read only within
 	# this call (reported straight to the pace referee) — no think ever reads a previous think's value.

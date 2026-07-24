@@ -25,9 +25,17 @@ const DEV_MONSTER_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_til
 	"bonus_windup_beats", "bonus_recovery_beats", "bonus_damage",
 	# Spell-casting params (v0.19.10) — ALL live-tunable via /m, not just the heal (Jon's ask).
 	"heal_amount", "heal_range_tiles", "heal_cast_beats", "heal_recovery_beats",
-	"smite_damage", "smite_range_tiles", "smite_cast_beats", "smite_recovery_beats", "flee_range_tiles"]
+	"smite_damage", "smite_range_tiles", "smite_cast_beats", "smite_recovery_beats", "flee_range_tiles",
+	# Weighted utility AI weights (v0.22.0). Live-tuning these mid-fight IS the balancing loop: `/ai` shows
+	# the running scores in the F3 overlay, `/m shaman utility_smite_weight 80` moves them. All floats
+	# except backup_radius_tiles (which also joins the INT list below).
+	"utility_tiebreak_margin", "utility_heal_weight", "utility_heal_per_injured_bonus",
+	"utility_smite_weight", "utility_standstill_bonus", "utility_smite_adjacent_penalty",
+	"utility_melee_weight", "utility_melee_alone_bonus", "utility_flee_weight",
+	"utility_alone_move_factor", "utility_approach_weight", "backup_radius_tiles"]
 const DEV_MONSTER_INT_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles", "bonus_damage",
-	"heal_amount", "heal_range_tiles", "smite_damage", "smite_range_tiles", "flee_range_tiles"]
+	"heal_amount", "heal_range_tiles", "smite_damage", "smite_range_tiles", "flee_range_tiles",
+	"backup_radius_tiles"]
 const DEV_MONSTER_CLAMPS := {
 	"max_hp": [1, 99999],
 	"aggro_range_tiles": [0, 30],
@@ -48,6 +56,24 @@ const DEV_MONSTER_CLAMPS := {
 	"smite_cast_beats": [0.0, 30.0],
 	"smite_recovery_beats": [0.0, 30.0],
 	"flee_range_tiles": [0, 30],
+	# Utility-AI weights (v0.22.0). Scores live on a loose 0-100 scale and only their RELATIVE order matters,
+	# so [0, 200] is "any sane weight, plus headroom to make one dominate" — a value outside it is a typo, not
+	# a tuning. The three odd ones out: the tie-break margin is a score DISTANCE (a band wider than ~50 would
+	# make the coin flip the decision, which is not what the AI is for), the alone-move factor is a
+	# MULTIPLIER that must stay in [0,1] (above 1 it would turn courage into cowardice), and the backup radius
+	# is a TILE COUNT sharing the [0,30] range every other radius here uses.
+	"utility_tiebreak_margin": [0.0, 50.0],
+	"utility_heal_weight": [0.0, 200.0],
+	"utility_heal_per_injured_bonus": [0.0, 200.0],
+	"utility_smite_weight": [0.0, 200.0],
+	"utility_standstill_bonus": [0.0, 200.0],
+	"utility_smite_adjacent_penalty": [0.0, 200.0],
+	"utility_melee_weight": [0.0, 200.0],
+	"utility_melee_alone_bonus": [0.0, 200.0],
+	"utility_flee_weight": [0.0, 200.0],
+	"utility_alone_move_factor": [0.0, 1.0],
+	"utility_approach_weight": [0.0, 200.0],
+	"backup_radius_tiles": [0, 30],
 }
 
 ## Dev CONFIG PRESETS (v0.19.7): `/config <alias>` applies a whole BUNDLE of /w + /m tunings in one command, so
@@ -159,6 +185,15 @@ var debug_windup_override_sec: float = 0.0
 ## `overlay=1` arg (either role, before the main scene loads) for scripted screenshots. The
 ## in-session toggle is always F3 regardless; gameplay code never reads this.
 var debug_overlay_start_visible: bool = false
+
+## DEBUG ONLY. When true, every utility-AI monster BROADCASTS its decision (`ai_decision`: the chosen action
+## plus every candidate's score) after each think, and the F3 diagnostics overlay renders the last one per
+## monster. Default OFF, so normal play carries zero extra wire traffic — this is a tuning instrument, not a
+## feature. Toggled at RUNTIME by the host-adjudicated `/ai` dev command (unlike the debug_* knobs above,
+## which debug.gd sets before the scene loads); read HOST-side only, in MonsterBrain, because only the host
+## has a brain to report. A client's copy of this flag is never read and never written — the events arrive
+## from the host either way, so both peers see the same overlay when the host turns it on.
+var debug_ai_decisions: bool = false
 
 ## DEBUG ONLY. When true, the F7 range overlay (aggro/tactical radii) starts VISIBLE — set by
 ## debug.gd's `rangeoverlay=1` arg (either role, before the main scene loads) for scripted

@@ -74,6 +74,8 @@ func validate(sender_peer_id: int, data: Dictionary) -> Dictionary:
 			return _dev_cmd_config(args, by)
 		"stun":
 			return _dev_cmd_stun(sender_peer_id, args, by)
+		"ai":
+			return _dev_cmd_ai(by)
 		_:
 			# Bare-weapon alias: "/longsword 5" arrives as cmd "longsword", args ["5"]. Reachable ONLY when
 			# cmd resolves to a real weapon (table precedence is handled by the match above). Re-dispatch as
@@ -167,6 +169,20 @@ func _dev_tune_resource(res: Resource, fields: Array, int_fields: Array, clamps:
 func _dev_cmd_god(sender_peer_id: int, by: String) -> Dictionary:
 	var now_godded: bool = _combat.toggle_godded(sender_peer_id)
 	var line := ("%s is invulnerable." % by) if now_godded else ("%s is mortal again." % by)
+	return { "ok": true, "data": { "line": line } }
+
+
+## /ai — toggle the utility-AI SCORE BROADCAST (v0.22.0), the /god pattern applied to a diagnostic. Flips the
+## host's GameManager.debug_ai_decisions and returns the log line from the NEW state. Host-authoritative by
+## construction: this validator only ever runs on the host, and the host is the only peer with monster brains,
+## so a client can neither turn the firehose on for itself nor off for everyone. While ON, every utility-AI
+## monster posts an `ai_decision` event after each think and the F3 overlay renders the last one per monster on
+## EVERY peer — which is the point: a two-instance tuning session watches the same weights. Default off, so
+## normal play pays nothing.
+func _dev_cmd_ai(by: String) -> Dictionary:
+	GameManager.debug_ai_decisions = not GameManager.debug_ai_decisions
+	var line := ("%s turned AI score debug ON (F3 overlay)." % by) if GameManager.debug_ai_decisions \
+			else ("%s turned AI score debug off." % by)
 	return { "ok": true, "data": { "line": line } }
 
 

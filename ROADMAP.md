@@ -279,6 +279,17 @@ Not scheduled — pulled in when their moment comes:
   right column's whole 5×4 grid is the bag now). REMAINING: an equippable off-hand shield item (the `[Off]`
   socket — now gated on §2.10's EQUIPMENT slot model below), clickable ability slots, telegraphed/ranged
   abilities, more status effects (slow/poison/shield).
+- **Monster AI — weighted utility** → a CAPABILITY TRACK: design + "complete when" live in **DESIGN §2.12**;
+  stage status here. v0.22.0 shipped the opt-in `UtilityScorer` with the Goblin Shaman as the first brain on
+  it (weighted Heal/Smite/Melee/Flee/Approach, tie-break margin, supportive/aggressive personalities rolled
+  per spawn), PACK RALLY for ALL brains (one-hop tactical-bubble aggro sharing — how the shaman joins fights
+  with aggro still 3 and its own spell ranges 8/5), and the `/ai` F3 score overlay. **DEFERRED FUNCTION
+  items** (time-boxed release, Jon 2026-07-24 — parse+review verified only): the `eventlog=` behaviour
+  assertions — rally pull-in, smite-at-8 once engaged, dying-ally triage over scratches, personality
+  divergence, alone-courage flip, one-hop no-cascade — belong to the next harness session or overnight loop.
+  Tendencies read ("this shaman usually heals dying allies") = Jon+Jeff FEEL item, watched live via `/ai`.
+  REMAINING beyond that: positional movement objectives (behind-ally kiting), plain-goblin migration, threat
+  memory, crowded-top-set tie-break.
 - **Equipment slot model** (v0.21.0 opened the door, deliberately didn't walk through it): the
   `EQUIPMENT` item category and the HUD's 9 equipment sockets exist, but no armour/shield/boot/ring
   resources do and nothing equips into a socket — the sockets are cosmetic. Its own milestone when

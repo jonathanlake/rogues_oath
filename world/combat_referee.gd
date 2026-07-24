@@ -56,6 +56,17 @@ var _stunned: Dictionary = {}
 # icon window) is not cut short by the earlier stun's timer. Same idiom as the round/cast generation tokens.
 var _stun_gen: Dictionary = {}
 
+# PENDING SMITES (v0.22.0, weighted utility AI): the set of GROUND TILES with a smite already committed and
+# still in flight (tile -> true). Set at smite_cast, erased at the TOP of _resolve_smite (before every early
+# return, so a caster killed or stunned mid-cast still releases its tile) and cleared by reset_round().
+# WHY TILE-KEYED, not caster- or victim-keyed: _resolve_smite damages whatever LIVING hostile occupies the
+# tile at resolution — a smite is a ground hazard, not a homing missile. Keying by tile means two casters
+# never root themselves in long telegraphs aimed at the same square (the thing this exists to prevent),
+# while a player who dodges OFF a doomed tile is still fully re-smiteable at their NEW tile, which is the
+# legitimate follow-up an entity-keyed set would wrongly block. Read by the utility scorer's smite candidate
+# (through has_pending_smite_at) and by pick_smite_tile, which skips already-doomed tiles outright.
+var _pending_smites: Dictionary = {}
+
 # The Players / Monsters containers, handed in by Main via activate() on the HOST only. Read for
 # node resolution + HP seeding; never reached up from. Null on clients (activate never runs there).
 var _players: Node2D = null
@@ -133,6 +144,34 @@ func activate(players: Node2D, monsters: Node2D, move_referee: Node, pace: Node,
 ## never a valid attacker OR target. An untracked id (never seeded / already dead) reads not-alive.
 func is_alive(entity_id: int) -> bool:
 	return _hp.has(entity_id) and int(_hp[entity_id]) > 0
+
+
+## Current HP for an entity, or 0 for an untracked/dead id (v0.22.0, the utility AI's ally scan). Public
+## read beside is_alive: the scorer needs the NUMBER, not just liveness, to price its quadratic heal curve.
+## The brain's scan is monster_tiles() → entity_at(tile) → id → hp_of/max_hp_of, because MoveReferee's
+## occupancy answers with an entity ID, not a node — so the numbers have to be readable by id from here,
+## the one place that owns them. Host-only truth, never trusted from the wire.
+func hp_of(entity_id: int) -> int:
+	return int(_hp.get(entity_id, 0))
+
+
+## The authored MAXIMUM HP for an entity id (v0.22.0), or 0 if the node is gone. Thin id→node wrapper over
+## the existing _max_hp_of so the brain can compute an ally's hp FRACTION without a node reference. Pairs
+## with hp_of above; a 0 return means "unknown" and the caller must not divide by it.
+func max_hp_of(entity_id: int) -> int:
+	return _max_hp_of(_node_of_id(entity_id))
+
+
+## Does this entity id belong to a BRAINED monster (v0.22.0)? The utility AI's "do I have backup?" and
+## injured-ally scans must exclude the training dummy (has_brain=false) — a prop with HP is not a
+## comrade-in-arms and was already a heal magnet once (the v0.19.10 pick_heal_target fix). Same predicate,
+## exposed by id for the brain, which has no container reference of its own. A player id, a missing node
+## or a monster with no MonsterType all read false.
+func has_brain_of(entity_id: int) -> bool:
+	var node := _node_of_id(entity_id)
+	if not (node is Monster):
+		return false
+	return node.monster_type != null and node.monster_type.has_brain
 
 
 ## Is this entity currently invulnerable (the /god dev command toggled it on)? Host-only truth beside
@@ -536,12 +575,62 @@ func pick_smite_tile(caster_id: int, caster_tile: Vector2i, range_tiles: int) ->
 		if not is_alive(id):
 			continue
 		var tile: Vector2i = _move_referee.tile_of_entity(id)
+		# Already doomed (v0.22.0): another caster has a smite in flight at this exact tile. Skip it, so a
+		# second shaman spends its telegraph somewhere useful instead of stacking two casts on one square
+		# (the first one's resolution damages whoever is standing there anyway). With every in-range player
+		# already targeted the list empties and the caller reads the no-target sentinel — correct: there is
+		# genuinely nothing new worth committing to.
+		if _pending_smites.has(tile):
+			continue
 		var cheb := maxi(absi(tile.x - caster_tile.x), absi(tile.y - caster_tile.y))
 		if cheb <= range_tiles:
 			in_range.append(tile)
 	if in_range.is_empty():
 		return Vector2i.ZERO  # (0,0) is always a border wall → a safe "no target" sentinel
 	return in_range[randi() % in_range.size()]
+
+
+## Is a smite ALREADY committed and in flight at this ground tile (v0.22.0)? The public read over the
+## pending-smite set, used by the utility scorer's smite candidate so a second caster scores 0 for a square
+## that is already doomed rather than burning its own telegraph on it. Mirrors is_alive's shape (an
+## untracked tile reads false). Host-only truth — this whole referee is inert on clients.
+func has_pending_smite_at(tile: Vector2i) -> bool:
+	return _pending_smites.has(tile)
+
+
+## PACK RALLY (v0.22.0, Jon's directive): one monster entering combat drags its neighbours in with it —
+## "all the other goblins in there attack". Called HOST-side by a MonsterBrain the moment it latches aggro
+## ORGANICALLY (proximity acquire, or being attacked), never on a rally-induced latch. Every LIVING, BRAINED
+## allied monster whose authoritative tile is within `radius_tiles` CHEBYSHEV of the rallier is told through
+## Monster.notify_rallied() -> MonsterBrain.notify_rallied(), the same relay shape notify_attacked uses.
+##
+## ONE HOP BY CONSTRUCTION: notify_rallied latches aggro but never calls back here, so overlapping tactical
+## bubbles cannot chain-react the whole map awake from one proximity trip. An already-aggroed brain ignores
+## the rally entirely (it is already fighting), which also makes a rally cheap and idempotent.
+##
+## Allies = every OTHER monster (v1's only factions are players-vs-monsters, matching Monster.is_hostile_to).
+## Tiles are read from the MOVE referee (authoritative occupancy), never a rendered position. A 0/negative
+## radius (a monster projecting no tactical bubble) rallies nobody.
+func rally_pack(rallier_id: int, radius_tiles: int) -> void:
+	if radius_tiles <= 0 or _monsters == null:
+		return
+	var origin: Vector2i = _move_referee.tile_of_entity(rallier_id)
+	# tile_of_entity answers with the wall sentinel for an untracked id (despawned between the brain's
+	# decision and here) — no live body rests on a wall, so this is the unambiguous "gone" read.
+	if WorldGrid.is_wall(origin):
+		return
+	for child in _monsters.get_children():
+		if not (child is Monster) or child.entity_id == rallier_id:
+			continue
+		if not is_alive(child.entity_id):
+			continue
+		# Brainless props (the training dummy) have nothing to rally — and a null type is a spawn-config bug.
+		if child.monster_type == null or not child.monster_type.has_brain:
+			continue
+		var tile: Vector2i = _move_referee.tile_of_entity(child.entity_id)
+		if maxi(absi(tile.x - origin.x), absi(tile.y - origin.y)) > radius_tiles:
+			continue
+		child.notify_rallied()
 
 
 ## A smiter MonsterBrain requests a telegraphed SMITE on a chosen TILE (v0.19.10). Host-only. Same committed-cast
@@ -576,6 +665,10 @@ func smite_cast(caster_id: int, target_tile: Vector2i, damage: int, cast_beats: 
 		"target_name": occ_name,
 		"cast_sec": cast_sec,
 	}, caster_id)
+	# Mark the ground DOOMED for the length of the cast (v0.22.0). Recorded only AFTER the commit succeeded,
+	# so a declined cast never leaves a phantom entry; _resolve_smite erases it before every one of its exit
+	# paths, so the tile is released even when the caster dies or is stunned mid-channel.
+	_pending_smites[target_tile] = true
 	get_tree().create_timer(cast_sec).timeout.connect(
 			_resolve_smite.bind(caster_id, target_tile, maxi(0, damage), recovery_sec))
 	return cast_sec + recovery_sec
@@ -598,6 +691,11 @@ func _expire_stun(entity_id: int, gen: int) -> void:
 
 
 func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int, recovery_sec: float) -> void:
+	# Release the doomed tile FIRST, above every early return (v0.22.0): a cast that fizzles because its
+	# caster died or was stunned mid-channel must still free the ground, or the tile would stay permanently
+	# un-targetable for the rest of the session. Erasing an absent key is a no-op, so a post-reset_round
+	# straggler is harmless here.
+	_pending_smites.erase(target_tile)
 	if not is_alive(caster_id):
 		return
 	# INTERRUPT (v0.20.2): a caster stunned mid-smite deals nothing — stunning the shaman mid-cast cancels it.
@@ -839,6 +937,9 @@ static func is_attack_from_behind(attacker_tile: Vector2i, target_tile: Vector2i
 func reset_round() -> void:
 	_round_gen += 1
 	_projectiles.clear()
+	# Doomed-ground bookkeeping dies with the round too (v0.22.0) — the fresh round's casters must see a
+	# clean board. Any straggler _resolve_smite from the old round just erases an absent key (no-op).
+	_pending_smites.clear()
 
 
 # ── Private methods ───────────────────────────────────────────────────────────

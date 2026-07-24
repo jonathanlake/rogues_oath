@@ -582,6 +582,50 @@ gear as well as class.
 **Complete when** a non-coder can author a class ability + a status effect via `.tres` alone, the hotbar
 reads as the ability bar, and abilities compose with the build system (§2.7). *(Stage in ROADMAP.)*
 
+### 2.12 Monster AI — Weighted Utility (v1 in progress — v0.22.0)
+
+**The model (Jeff's spec, 2026-07-24):** a monster brain decides by *scoring*, not by walking a hardcoded
+if/else tree. At each think moment it enumerates its currently-available actions, computes a desirability
+weight for each, multiplies by its personality, and takes the top score. **Weights are desirability, NOT
+probabilities** — the AI almost always does the obviously right thing; only when the top two scores land
+within a designer-set margin (`utility_tiebreak_margin`) does a coin flip pick between them, so close calls
+aren't robotic but nothing is ever random for randomness' sake. Players should be able to learn tendencies
+("this shaman usually heals dying allies") without every fight replaying identically.
+
+**Real-time mapping:** there are no "AI turns" — the scorer runs at the brain's existing think moments
+(activation, glide boundaries, self-reschedule, on being attacked), and a committed action still plays to
+completion (§2.1). The scorer replaces only the *choice*; all commitment/timing machinery is unchanged.
+
+**Architecture:** opt-in per MonsterType (`utility_ai` flag) — monsters that don't opt in keep the legacy
+cascade untouched. Scoring lives in a pure static `UtilityScorer` (context in, ranked candidates out); the
+brain owns all timing and execution; every weight/bonus/penalty is a designer-editable MonsterType `@export`
+live-tunable via `/m`. Personalities are `AiPersonality` resources (whole-score multipliers), rolled once
+per spawned instance — two exist: **supportive** (heal ×1.5, smite ×0.85) and **aggressive** (heal ×0.8,
+smite ×1.3). The `/ai` dev toggle broadcasts each decision's full score table to the F3 overlay so a
+session can watch the weights live.
+
+**Pack rally (all brains, not just utility):** a goblin entering combat — proximity aggro or being hit —
+rallies every allied brain inside its own tactical bubble (`resolved_tactical_radius()`); rallied brains
+latch aggro but do NOT re-rally (one hop, no map-wide cascade). This is how the shaman joins fights beyond
+its own 3-tile aggro: the frontline aggros, the pack wakes, the shaman opens at its spell ranges (smite 8,
+heal 5 — per-spell exports, deliberately decoupled from aggro).
+
+**Shipped so far (v0.22.0):** the scorer + opt-in flag; the Goblin Shaman on utility AI with
+Heal (quadratic missing-HP curve — scratches score ~nothing, a dying ally dominates), Smite (standstill
+bonus, adjacent penalty, pending-smite tile exclusion so two casts never stack one tile), Melee (armed with
+a club now — it drops on death like any monster weapon), Flee/Approach movement scored by backup-courage
+(backed → kite freely; alone → fleeing decays, stand and fight); the two personalities; pack rally; the
+`/ai` score overlay.
+
+**Still envisioned:** positional movement objectives (move *behind* allied melee, formation kiting,
+heal-range approach as its own scored candidate); more personalities; a crowded-top-set tie-break (today
+only the top two enter the coin flip); utility AI for the plain goblin chassis once the shaman proves the
+model; threat memory (who hurt me, how recently) as a scoring input.
+
+**Complete when** every brained monster runs the scorer, a non-coder can author a new monster's action
+weights + personality set via `.tres` alone, and the tendencies read is confirmed at a Jon+Jeff table
+(FEEL). *(Stage in ROADMAP.)*
+
 ## Part 3 — Appendix: Why (short version)
 
 Why commitment instead of turns? What makes a roguelike turn tactical isn't the pause — it's

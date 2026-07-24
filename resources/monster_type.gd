@@ -185,3 +185,93 @@ func has_heal_ability() -> bool:
 ## predicate the brain gates on, mirroring has_heal_ability.
 func has_smite_ability() -> bool:
 	return smite_damage > 0 and smite_range_tiles > 0 and smite_cast_beats > 0.0
+
+
+## WEIGHTED UTILITY AI (v0.22.0, Jeff's spec). With utility_ai ON this monster's brain stops running the
+## hardcoded priority cascade and instead ENUMERATES its available actions each think, SCORES each for
+## desirability from the weights below, multiplies by its rolled personality, and commits the top score
+## (with a small tie-break band so close calls aren't robotic). Scores are DESIRABILITY, not probability —
+## the AI should almost always do the obviously right thing; the weights decide what "right" means.
+##
+## OPT-IN by design: every existing monster keeps the legacy cascade byte-for-byte (zero regression
+## surface), and a new utility monster is a .tres that flips this flag and authors weights — no code.
+## Read HOST-side by MonsterBrain (the brain is host-only, DESIGN §2.5.3); the wire never carries a score.
+##
+## Scale: the weights below are floats on a loose 0-100 scale, and ONLY THEIR RELATIVE ORDER MATTERS —
+## doubling every weight changes nothing. All of them are live-tunable mid-fight through `/m <monster>
+## <field> <value>` (they are in GameManager's DEV_MONSTER_FIELDS allowlist), which is how a fight gets
+## balanced: turn on `/ai` to watch the scores in the F3 overlay, then nudge a weight and watch it move.
+##
+## Authoring note (see the file header): a .tres stores only values that DIFFER from these defaults, so
+## the defaults ARE the authored baseline for every utility monster that doesn't override them. Retune
+## them as deliberately as a .tres value.
+
+## Master switch: run the weighted utility scorer instead of the legacy priority cascade. false (default)
+## = every existing monster is untouched. All the utility_* weights below are inert while this is false.
+@export var utility_ai: bool = false
+
+## TIE-BREAK band in SCORE POINTS (post-personality). When the top two candidates land within this margin
+## of each other, the brain flips a coin between THOSE TWO ONLY (Jeff: "close calls shouldn't be robotic").
+## 0 = strict argmax, always the highest score. Deliberately compared in POST-multiplier space: a
+## personality changes which pairs are genuinely close calls. A third candidate inside the band is
+## ignored — a documented limit of the generic scorer.
+@export var utility_tiebreak_margin: float = 8.0
+
+## HEAL base weight — the score a heal earns for an ally at 0% HP. The actual score is
+## `utility_heal_weight × (1 - hp_fraction)²`, a QUADRATIC on the worst injured ally's missing HP: an ally
+## at 90% scores ~1 and one at 25% scores ~56, so healing is "only a very high priority when significantly
+## injured" (Jeff) as a curve rather than a threshold. 0 = never heal by choice.
+@export var utility_heal_weight: float = 100.0
+
+## Flat bonus ADDED to the heal score per ADDITIONAL injured ally in heal range (the first injured ally is
+## already priced by the curve above). A pack that is broadly hurt is worth tending sooner than one hurt
+## body. 0 = injured-ally count doesn't matter, only the worst one.
+@export var utility_heal_per_injured_bonus: float = 8.0
+
+## SMITE base weight — the score an available offensive cast earns before situational adjustments. No
+## explicit "allies are healthy" term is needed: when allies are hurt the heal curve simply outscores this.
+@export var utility_smite_weight: float = 60.0
+
+## Bonus ADDED to the smite score when the chosen target is STANDING STILL (not mid-commit). A committed
+## ground-target cast is dodgeable, so a stationary victim is a much better bet than a moving one.
+@export var utility_standstill_bonus: float = 15.0
+
+## Penalty SUBTRACTED from the smite score when a player is ADJACENT (Chebyshev 1) — that is melee's or
+## the retreat's moment, not the moment to root yourself in a long telegraphed cast. The composite score
+## is floored at 0, so an over-large penalty just disables the cast rather than going negative.
+@export var utility_smite_adjacent_penalty: float = 25.0
+
+## MELEE base weight — the score for swinging at an ADJACENT player. Requires an equipped weapon (a
+## weaponless monster deals nothing, so it never scores melee at all).
+@export var utility_melee_weight: float = 50.0
+
+## COURAGE, cornered edition: bonus ADDED to melee when this monster has NO living brained ally within
+## backup_radius_tiles. Alone and in contact, a caster stops pretending it has a frontline and fights.
+@export var utility_melee_alone_bonus: float = 20.0
+
+## FLEE (kiting step) base weight — the score for stepping AWAY when a player is inside flee_range_tiles.
+## Only ever scores for a flees_players monster. High by default: with a frontline alive, a caster's job
+## is to keep its distance.
+@export var utility_flee_weight: float = 70.0
+
+## COURAGE, the other half: the flee score is MULTIPLIED by this when the monster is ALONE (no living
+## brained ally within backup_radius_tiles). < 1 decays kiting into fighting — with the pack alive the
+## shaman kites, alone it turns and casts/swings (Jeff's backup-courage behaviour). 1.0 = alone changes
+## nothing; 0 = never flee alone.
+@export var utility_alone_move_factor: float = 0.25
+
+## APPROACH (chase step) base weight — the score for stepping TOWARD the nearest player. Scores ONLY when
+## engaged AND nothing is in range of any cast/melee, so movement always serves another tactical objective
+## (Jeff's rule) and the monster never wanders for wandering's sake. Deliberately below the cast weights.
+@export var utility_approach_weight: float = 40.0
+
+## BACKUP radius in CHEBYSHEV (king-move) tiles: "do I have a frontline?" is "is there a living, BRAINED
+## allied monster within this many tiles" (the training dummy, has_brain=false, never counts as backup).
+## Feeds the alone/backed terms of the melee and flee weights above. 0 = always considered alone.
+@export var backup_radius_tiles: int = 6
+
+## The personality pool this monster rolls from at spawn (v0.22.0). The brain picks ONE uniformly at
+## activation and keeps it for that instance's life — the roll is stored on the BRAIN, never here, because
+## a MonsterType is a SHARED cached resource and must never carry per-instance state. Empty (default) =
+## neutral: every multiplier is 1.0. Add a personality by dropping an AiPersonality .tres in this list.
+@export var personalities: Array[AiPersonality] = []

@@ -9,6 +9,38 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.22.0 (2026-07-24) — MONSTER AI: the Goblin Shaman thinks in WEIGHTS (Jeff's utility-AI spec), the
+  pack rallies, and `/ai` shows the numbers.** The first cut of DESIGN §2.12 — enemy decisions by scored
+  desirability instead of a hardcoded cascade. (1) **The utility scorer.** Opt-in per MonsterType
+  (`utility_ai`); a pure static `UtilityScorer` ranks the currently-available actions each think — the brain
+  keeps all commitment/timing machinery, so §2.1 is untouched and non-opted monsters run the legacy cascade
+  byte-identically. Heal scores on a QUADRATIC missing-HP curve (an ally at 90% ≈ nothing, at 25% it
+  dominates — Jeff's "only heal when it matters" as a curve, not a threshold) + a per-injured-ally bonus;
+  Smite adds a standstill bonus and an adjacent penalty (melee's moment) and refuses a tile with a smite
+  already inbound (new referee-level pending-smite tracking, TILE-keyed because a smite is a tile hazard —
+  resolution damages whoever stands there); Melee needs adjacency + a weapon; Flee/Approach are scored
+  movement — backed by living allies the shaman kites freely, ALONE its flee weight decays
+  (`utility_alone_move_factor`) so it stands and fights (Jeff's courage rule). Top score wins ALWAYS unless
+  the top TWO land within `utility_tiebreak_margin` — then a coin flip (weights are desirability, NOT
+  probabilities). All 13 knobs are MonsterType `@export`s, `/m`-tunable live. (2) **Personalities.**
+  `AiPersonality` resources multiply the whole composite score; supportive (heal ×1.5 / smite ×0.85) and
+  aggressive (×0.8 / ×1.3) ship; each shaman ROLLS one at spawn (per-instance, on the brain — never on the
+  shared MonsterType) and announces it in the host log. (3) **Pack rally — ALL brains, legacy included** (Jon):
+  a goblin entering combat (proximity aggro or getting hit) rallies every allied brain in its own tactical
+  bubble via `CombatReferee.rally_pack` → `Monster.notify_rallied` (the notify_attacked relay shape); rallied
+  brains latch WITHOUT re-rallying — one hop, no map-wide cascade. This is how the shaman fights at range now:
+  aggro stays 3 (Jon: don't touch it), spell ranges are their own knobs retuned to smite 8 / heal 5, and the
+  frontline's rally is what wakes the shaman. (4) **The shaman got a club** — its melee did 0 damage
+  (weaponless); gameplay change, not just data: monsters drop their weapon, so dead shamans now leave a club
+  for a G pickup. (5) **`/ai` score overlay** — a dev toggle broadcasts each utility decision
+  (`ai_decision`: full score table + personality + chosen action) to every peer's F3 panel, one line per
+  monster, so a testing session watches the weights live. Default off, zero wire noise in normal play.
+  **Verification (time-boxed, Jon's call):** parse-clean import + plan-conformance diff review; the
+  behaviour assertions (rally pull-in, smite-at-8, dying-ally triage, personality divergence, courage flip,
+  one-hop rally) are DEFERRED to the next harness session as `eventlog=` FUNCTION items — `heal_cast`/
+  `smite_cast` are already in the allowlist, and `/ai` exists precisely to watch it live; the tendencies
+  read is a Jon+Jeff FEEL item.
+
 
 - **v0.21.0 (2026-07-24) — INVENTORY: the ability bar moves to the bottom, the bag grows to 20, and picking
   things up becomes a DECISION (G).** Four coupled changes plus the bug the last one exposed. (1) **The ability

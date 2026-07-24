@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="AiPersonality" format=3]
+
+[ext_resource type="Script" path="res://resources/ai_personality.gd" id="1_pers"]
+
+[resource]
+script = ExtResource("1_pers")
+display_name = "supportive"
+heal_weight_mult = 1.5
+smite_weight_mult = 0.85

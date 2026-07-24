@@ -108,6 +108,16 @@ func notify_attacked() -> void:
 		_brain.notify_attacked()
 
 
+## Host-only forwarder for the PACK RALLY (v0.22.0): an allied monster inside its tactical bubble just entered
+## combat, so this one joins the fight too — "all the other goblins in there attack" (Jon). Called by the combat
+## referee's rally_pack fan-out; the exact relay shape notify_attacked uses above (null-guarded, and the brain's
+## own _active gate makes a client / brainless-dummy call inert). Like an aggro hit it never interrupts a
+## committed action — the brain only latches aggro and, if idle, brings its next think forward (Commitment Rule).
+func notify_rallied() -> void:
+	if _brain != null:
+		_brain.notify_rallied()
+
+
 ## Hostility test (DESIGN §2.2.6, plan decision 6), read HOST-side. A monster is hostile to any
 ## player and never to another monster; the debug-only GameManager.all_hostile flag ORs on top so
 ## the AoO/combat wiring can be demoed with the harness. Symmetric with Player.is_hostile_to.
