@@ -23,12 +23,15 @@ extends Resource
 @export var tempo_max_sec: float = 1.00
 @export var tempo_step_sec: float = 0.05
 
-## The TACTICAL beat (seconds) — the second tempo dial (DESIGN §2.8.3 groundwork, v0.9.2). Stored,
-## adjustable ([ / ] keys → set_tactical_tempo) and displayed today, but NOT yet read for stamping:
-## which pace applies when (mode entry/exit, per-player combat state, healer rules) is still an open
-## design discussion with Jeff, so this is groundwork only — gameplay keeps stamping from beat_sec.
+## The TACTICAL beat (seconds) — the second tempo dial (DESIGN §2.8.3, v0.9.2). Stored, adjustable
+## ([ / ] keys → set_tactical_tempo, or a /config preset row since v0.22.1) and displayed — and, since
+## Tactical Zones v1 (§2.8.7), READ FOR STAMPING: every stamp site resolves through
+## PaceReferee.beat_or_explore, which returns this beat for any entity the referee has resolved TACTICAL
+## (comment corrected v0.22.1 — the old "not yet read for stamping / groundwork only" note predated that
+## and had gone stale). So this is the fight tempo: lowering it speeds up glides, wind-ups, casts, stuns
+## and item use in combat while explore pace is untouched.
 ## Its clamp/snap bounds are DELIBERATELY SHARED with the explore dial (tempo_min_sec / tempo_max_sec /
-## tempo_step_sec above) pending that mode design; when tactical earns its own band, split them here.
+## tempo_step_sec above); when tactical earns its own band, split them here.
 ## Seeded into GameManager.tactical_beat_sec at session start on every peer. Default 0.50s (120 BPM).
 @export var tactical_beat_sec: float = 0.5
 

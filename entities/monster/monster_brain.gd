@@ -51,6 +51,10 @@ var _last_step_was_diagonal: bool = false
 # skipped so the chase never leash-drops. With aggro_persists false it tracks current in-range
 # state (legacy leash). Unused by unlimited-range monsters (aggro_range_tiles <= 0 skip the gate).
 var _aggroed: bool = false
+# ONE-pending-re-think latch (v0.22.1): true while a _reschedule/_reschedule_after timer is booked and
+# not yet fired. Cleared at _think entry, checked in _reschedule_after — collapses the historical double
+# timer chain (activation think + seed-glide boundary think, each self-perpetuating) to a single chain.
+var _rethink_pending: bool = false
 # The host's MoveReferee, handed in by the parent at activation. The brain reads occupancy truth
 # and submits monster intents through it (host-local — no RPC; monsters have no RTT). It never
 # reaches up to Main or the monster; the referee is its one injected dependency. Untyped so its
@@ -169,6 +173,10 @@ func notify_rallied() -> void:
 ## Decide and submit at most ONE step (or log the adjacent-attack seam). Gated on not-busy and on
 ## authoritative referee state read live at this instant.
 func _think() -> void:
+	# Clear the re-think booking FIRST (v0.22.1, see _reschedule_after): this think is the booked one
+	# firing (or an on_boundary/notify wake superseding it) — either way the slot is free again, and any
+	# reschedule THIS think decides on gets to book anew.
+	_rethink_pending = false
 	if not _active:
 		return
 	# STUNNED (v0.20.0): a stunned monster cannot act — skip this think and re-poll on the cadence until the
@@ -504,16 +512,21 @@ func _think_utility(my_tile: Vector2i, targets: Array) -> void:
 	UtilityScorer.apply_personality(candidates, _heal_weight_mult(), _smite_weight_mult())
 	UtilityScorer.sort_by_score(candidates)
 	_apply_tiebreak(candidates)
-	_post_ai_decision(candidates)
 	# DECLINE FALL-THROUGH: executors are the same ones the legacy cascade uses and may DECLINE (-1.0 / false)
 	# when the referee re-validates — a target vanished, a step is blocked, the caster went busy. Walk the
 	# candidates in score order and take the first that actually commits. Zero-score candidates are skipped
-	# outright (they are the "not available" entries the debug overlay still wants to see). Nothing viable —
-	# empty list, all zeros, or every candidate declining — falls back to the normal re-think cadence.
+	# outright. Nothing viable — empty list, all zeros, or every candidate declining — falls back to the
+	# normal re-think cadence.
+	# The ai_decision post happens AFTER the walk, naming what actually COMMITTED (v0.22.1 battle-run fix):
+	# posting the pre-execution top pick lied whenever it declined and a lower candidate fell through — the
+	# r2 trace showed "chosen: flee" stamped the same instant as a smite_cast (a cornered shaman's flee was
+	# blocked by the south wall). Idle thinks (every candidate zero) and fully-declined walks post nothing —
+	# the same fix silences the ~4+ no-op posts per second per idle monster that drowned the r1 trace.
 	for c in candidates:
 		if float(c["score"]) <= 0.0:
 			continue
 		if _execute_candidate(c, my_tile, targets):
+			_post_ai_decision(candidates, str(c["action"]))
 			return
 	_reschedule()
 
@@ -682,17 +695,16 @@ func _execute_candidate(candidate: Dictionary, my_tile: Vector2i, targets: Array
 ## is a broadcast rather than a host-local print so EVERY peer can watch the weights during a two-instance
 ## tuning session, which is the whole point of the overlay. Host-only by construction (this brain only runs on
 ## the host, and post_event refuses off-server). Scores ride in post-sort order, chosen first.
-func _post_ai_decision(candidates: Array) -> void:
+func _post_ai_decision(candidates: Array, chosen: String) -> void:
 	if not GameManager.debug_ai_decisions:
 		return
 	var scores := {}
 	for c in candidates:
 		scores[str(c["action"])] = snappedf(float(c["score"]), 0.1)
-	# A chosen of "" means every candidate scored 0 — the monster is about to idle on its cadence, and the
-	# overlay showing "none" with the zeros beside it is exactly the diagnostic a tuner wants.
-	var chosen := ""
-	if not candidates.is_empty() and float(candidates[0]["score"]) > 0.0:
-		chosen = str(candidates[0]["action"])
+	# `chosen` is the action that actually COMMITTED (v0.22.1) — passed in by the execute walk, never
+	# inferred from the sorted order, so a decline fall-through is reported truthfully (the score table
+	# still shows the declined top pick's higher number beside it, which is exactly the diagnostic:
+	# "flee 70 was ranked first but smite committed" reads as a blocked flee at a glance).
 	NetEvents.post_event("ai_decision", {
 		"entity_id": _entity_id,
 		"name": _monster_type.display_name,
@@ -843,4 +855,15 @@ func _reschedule() -> void:
 ## (despawn) before it fires, Godot drops the connection to the freed method — no stale call. Used
 ## both for the normal back-off cadence and, with a longer span, to wake just past a wind-up's end.
 func _reschedule_after(sec: float) -> void:
+	# ONE pending re-think, ever (v0.22.1 battle-run fix). Pre-existing since the brain's first version and
+	# affecting EVERY monster: activate()'s deferred think starts one self-perpetuating timer chain, and the
+	# spawn seed-glide's glide_finished -> on_boundary starts a SECOND — leaving every idle monster thinking
+	# at ~2x the authored cadence for its whole life (observed as 0.06s-apart doublets in the /ai battle
+	# traces; invisible before because an idle think is a silent no-op). Deduping here collapses the chains:
+	# a think that is already booked absorbs any further request. Safe with the long post-commit waits: if a
+	# short idle timer preempts a _reschedule_after(cast_sec) booking, the early think lands in the BUSY gate,
+	# which re-schedules the settle backstop from the live busy record — the wake-at-free contract self-heals.
+	if _rethink_pending:
+		return
+	_rethink_pending = true
 	get_tree().create_timer(sec).timeout.connect(_think)

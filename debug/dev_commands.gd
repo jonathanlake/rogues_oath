@@ -315,6 +315,11 @@ func _dev_cmd_item(sender_peer_id: int, args: Array[String], by: String) -> Dict
 ## (rows before it were already set host-side — a preset is author-controlled, so this is a defensive path, not
 ## a rollback need). On success one host-composed summary line broadcasts to every peer (like /w). Values apply
 ## to the SHARED resources adjudication reads live, so the loadout takes effect from the next stamp.
+##
+## v0.22.1 adds the GAME-LEVEL row kind "g" (GameManager.DEV_GAME_FIELDS), handled BEFORE the w/m dispatch
+## because it resolves no resource at all: a game-level value lives on GameManager (per-peer) or behind a
+## host-adjudicated broadcast, so it is dispatched PER FIELD here rather than through _dev_tune_resource.
+## The bundle's summary line names the tempo it set, so the outcome is legible without reading the table.
 func _dev_cmd_config(args: Array[String], by: String) -> Dictionary:
 	var known := ", ".join(PackedStringArray(GameManager.CONFIG_PRESETS.keys()))
 	if args.is_empty():
@@ -323,11 +328,23 @@ func _dev_cmd_config(args: Array[String], by: String) -> Dictionary:
 	if not GameManager.CONFIG_PRESETS.has(alias):
 		return { "ok": false, "reason": "unknown config '%s' (known: %s)" % [alias, known] }
 	var rows: Array = GameManager.CONFIG_PRESETS[alias]
+	# Extra clauses appended to the bundle's summary line by the game-level rows (a "w"/"m" row is already
+	# summarized by the row count). Empty for a preset with no "g" rows.
+	var game_notes: Array[String] = []
 	for row in rows:
 		var kind: String = str(row[0])
 		var res_name: String = str(row[1])
 		var field: String = str(row[2])
 		var value_token: String = str(row[3])
+		# GAME-LEVEL row (v0.22.1) — BEFORE the w/m dispatch, since there is no resource to resolve.
+		if kind == "g":
+			var game_verdict := _dev_config_game_row(alias, field, value_token, by)
+			if not bool(game_verdict.get("ok", false)):
+				return game_verdict
+			var note := str(game_verdict.get("note", ""))
+			if not note.is_empty():
+				game_notes.append(note)
+			continue
 		var res: Resource = null
 		var fields: Array
 		var int_fields: Array
@@ -350,7 +367,45 @@ func _dev_cmd_config(args: Array[String], by: String) -> Dictionary:
 		var verdict := _dev_tune_resource(res, fields, int_fields, clamps, tune_args, by, str(res.get("display_name")))
 		if not bool(verdict.get("ok", false)):
 			return { "ok": false, "reason": "config %s @ %s.%s: %s" % [alias, res_name, field, str(verdict.get("reason", "failed"))] }
-	return { "ok": true, "data": { "line": "%s applied config %s (%d settings)." % [by, alias, rows.size()] } }
+	var line := "%s applied config %s (%d settings)." % [by, alias, rows.size()]
+	if not game_notes.is_empty():
+		line += " " + ", ".join(PackedStringArray(game_notes)) + "."
+	return { "ok": true, "data": { "line": line } }
+
+
+## One GAME-LEVEL ("g") preset row (v0.22.1). Validates `field` against GameManager.DEV_GAME_FIELDS (an unknown
+## field REJECTS the bundle naming the field, mirroring the resource path's unknown-field reject), then
+## dispatches PER FIELD — each game-level value has its own authority story, so there is deliberately no generic
+## "set a GameManager member" path here. Returns { ok, reason } like the tune pipeline, plus an optional `note`
+## clause the caller appends to the bundle's summary line.
+##
+## tactical_beat_sec: snapped + clamped EXACTLY as main.gd's _validate_set_tactical_tempo does (snappedf to
+## config.tempo_step_sec, clamped to [tempo_min_sec, tempo_max_sec]) — the shared GameConfig band is the sole
+## authority on the grid, read here server-side, so a preset can't set a beat the [ / ] keys couldn't. The value
+## is then published as a normal set_tactical_tempo EVENT rather than written onto GameManager: the beat is a
+## PER-PEER variable, so a host-side write would leave every client's dial (and its readout) stale. Posting the
+## event means every peer — host included, via call_local — adopts through the ONE _apply_tactical_tempo
+## chokepoint (main.gd), exactly as a [ / ] nudge does, and game_log prints its usual "Tactical: …" line.
+## Precedent: /class posts its own class_changed event instead of relying on the generic dev_command line.
+##
+## NO "no change" REJECT (unlike the host validator, which refuses an unchanged beat so the display/log don't
+## churn): a preset is a LOADOUT, and applying config 1 twice in a session must be idempotent, not a failure —
+## a re-apply that hit the reject would fail the whole bundle mid-way. Re-posting the same beat is harmless
+## (every adopt path is idempotent); one duplicate log line is the whole cost.
+func _dev_config_game_row(alias: String, field: String, value_token: String, by: String) -> Dictionary:
+	if not (field in GameManager.DEV_GAME_FIELDS):
+		return { "ok": false, "reason": "config %s: unknown game field '%s'" % [alias, field] }
+	if not value_token.is_valid_float():
+		return { "ok": false, "reason": "config %s @ %s: '%s' is not a number" % [alias, field, value_token] }
+	match field:
+		"tactical_beat_sec":
+			var cfg := GameManager.config
+			var beat := clampf(snappedf(value_token.to_float(), cfg.tempo_step_sec), cfg.tempo_min_sec, cfg.tempo_max_sec)
+			NetEvents.post_event("set_tactical_tempo", { "beat_sec": beat, "by": by })
+			return { "ok": true, "note": "tactical beat → %.2fs/beat" % beat }
+	# Unreachable while DEV_GAME_FIELDS and this match stay in step — but a field added to the allowlist
+	# without its branch must fail LOUDLY here, not silently no-op into a "success" line.
+	return { "ok": false, "reason": "config %s: game field '%s' has no handler" % [alias, field] }
 
 
 ## /stun [me|<monster>] [beats] — apply a STUN (v0.20.0 dev tool, for testing the status effect before abilities

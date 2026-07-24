@@ -76,6 +76,17 @@ const DEV_MONSTER_CLAMPS := {
 	"backup_radius_tiles": [0, 30],
 }
 
+## Dev GAME-LEVEL preset fields (v0.22.1) — the allowlist for CONFIG_PRESETS' third row kind, "g". Unlike the
+## weapon/monster allowlists above, these are NOT resource fields fed through the shared clamp/mutate pipeline:
+## a game-level value lives on GameManager (per-peer) or behind a host-adjudicated broadcast, so each field is
+## DISPATCHED PER-FIELD in _dev_cmd_config — this is a per-field switch, not a generic pipeline, and adding a
+## field here means writing its branch too. Deliberately so: each one needs its own authority story, and a
+## generic setter that wrote GameManager members directly would leave every client stale. The ONLY field today
+## is the TACTICAL BEAT, routed through the existing set_tactical_tempo broadcast (snap/clamp exactly as the
+## host validator does, then post the event) so every peer adopts it through the one _apply_tactical_tempo
+## chokepoint. Lives here beside the other allowlists so /help can derive the list from one source.
+const DEV_GAME_FIELDS := ["tactical_beat_sec"]
+
 ## Dev CONFIG PRESETS (v0.19.7): `/config <alias>` applies a whole BUNDLE of /w + /m tunings in one command, so
 ## a repeated test loadout is a single keystroke instead of five. Lives HERE (beside the DEV_* allowlists) so
 ## both the DevCommands validator (which applies it) and game_log's /help (which lists the aliases) read the ONE
@@ -85,6 +96,10 @@ const DEV_MONSTER_CLAMPS := {
 ## /w and /m use, so a preset can never poison a resource past its clamp. ADD A NEW LOADOUT by adding an alias
 ## entry — no code change. Values are read live by adjudication at the next stamp (weapons/monster bonuses);
 ## a max_hp-style spawn-seeded field would only affect NEW spawns, same caveat as /m.
+## v0.22.1 adds a THIRD kind, "g" = game-level (DEV_GAME_FIELDS above): the `name` column is a LABEL only (no
+## resource to resolve) and the row is dispatched per-field rather than through the resource tune pipeline.
+## A preset CLOBBERS live values by design — re-applying an alias restamps every row from this table, including
+## a tempo a player had nudged with [ / ]. That is what a loadout is for: one keystroke = a known state.
 const CONFIG_PRESETS := {
 	"1": [
 		["w", "longsword", "windup_beats", 1.0],
@@ -92,6 +107,12 @@ const CONFIG_PRESETS := {
 		["w", "club", "windup_beats", 1.0],
 		["w", "club", "attack_beats", 3.0],
 		["m", "goblin", "bonus_windup_beats", 1.0],
+		# The fight-feel row (v0.22.1): halve the TACTICAL beat from its 0.50s default so this preset's
+		# cadence (windup 1 beat / attack 3 beats) lands at 0.25s telegraphs and 0.75s swings for anyone
+		# the pace referee has resolved TACTICAL. Game-level kind "g" — routed through the
+		# set_tactical_tempo broadcast, never a direct GameManager write (see DEV_GAME_FIELDS above);
+		# "tempo" is a label, not a resource name.
+		["g", "tempo", "tactical_beat_sec", 0.25],
 	],
 }
 
@@ -112,11 +133,15 @@ var config: GameConfig = _load_config()
 ## cadence); all adjudication is host-side. Seeded inline from config so it is never 0 before a session opens.
 var explore_beat_sec: float = config.beat_sec
 
-## The session's live TACTICAL beat (seconds) — the second tempo dial (DESIGN §2.8.3 groundwork,
-## v0.9.2). Seeded from GameConfig.tactical_beat_sec at session start by main.gd, on EVERY peer, and
-## nudged live by the [ / ] keys via the set_tactical_tempo intent (host-adjudicated like set_tempo).
-## GROUNDWORK ONLY: adjustable and displayed, but NOTHING reads it for stamping yet — the mode design
-## (when tactical pace applies) is still open with Jeff. Seeded inline from config so it is never 0.
+## The session's live TACTICAL beat (seconds) — the second tempo dial (DESIGN §2.8.3, v0.9.2). Seeded
+## from GameConfig.tactical_beat_sec at session start by main.gd, on EVERY peer, and nudged live by the
+## [ / ] keys via the set_tactical_tempo intent (host-adjudicated like set_tempo) or set wholesale by a
+## /config preset row (v0.22.1) — both land through the same broadcast.
+## LIVE, NOT GROUNDWORK (comment corrected v0.22.1 — it had gone stale at Tactical Zones v1): every
+## stamp site now routes PaceReferee.beat_or_explore, which returns THIS beat for any entity the pace
+## referee resolves tactical (§2.8.7). Glides, wind-ups, casts, stuns and item use all stamp from it in
+## a fight, so a change here has real teeth from the next verdict onward (stamp-and-bake, §2.8.2 — never
+## re-derived mid-commit). Seeded inline from config so it is never 0.
 var tactical_beat_sec: float = config.tactical_beat_sec
 
 ## CLIENT-SIDE presentation / pacing MIRROR of the local player's broadcast pace (Tactical Zones v1,

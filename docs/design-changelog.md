@@ -9,7 +9,40 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
-- **v0.22.0 (2026-07-24) — MONSTER AI: the Goblin Shaman thinks in WEIGHTS (Jeff's utility-AI spec), the
+- **v0.22.1 (2026-07-24) — `/config 1` sets the tactical beat + the room-D battle got PLAYED (and it
+  found three bugs).** (1) **Game-level preset rows.** `/config` grows a third row kind `g` beside `w`/`m`,
+  allowlisted by `GameManager.DEV_GAME_FIELDS` and dispatched per-field (a per-field switch, not a generic
+  pipeline); the one field today is `tactical_beat_sec`, snapped/clamped to the shared tempo band and
+  published as a normal `set_tactical_tempo` broadcast so every peer adopts it exactly as a `[`/`]` nudge
+  (never a host-side write, which would leave client dials stale). Preset `1` now carries
+  `["g","tempo","tactical_beat_sec",0.25]` — halving the 0.5s default so the preset's 1-beat windup /
+  3-beat swing lands at 0.25s/0.75s. Re-apply is idempotent (the g-row deliberately skips the validator's
+  "no change" reject so a bundle re-run can't fail; VERIFIED: host applied, client re-applied identical,
+  both accepted). Also fixed six stale "GROUNDWORK ONLY — nothing stamps from the tactical beat" comments
+  that had been false since Tactical Zones v1. (2) **The Zorbus-inspired battle observation** (research
+  §G.4's AUTOPLAY, done small): scripted two-instance runs walked a player from spawn into room D with
+  `/ai` + `eventlog=` recording every utility decision. OBSERVED: pack rally (one aggro → all three
+  monsters activate the same instant), shaman opening at range, live personality divergence (same
+  geometry: supportive chose flee 70 > smite 51 and kited-then-cast; aggressive chose smite 78 vs flee 70
+  inside the tie-break band), the adjacent penalty ((60+15−25)×1.3 = 65 in the trace), a cornered shaman's
+  flee DECLINING at the south wall and falling through to a rooted cast, and — at config-1 tempo — an
+  aggressive shaman killing the host, then crossing the map on `approach 40` thinks to execute the idle
+  client at spawn. Aggro persistence also sent the last flanker 18 tiles to kill an AFK client. FINDING
+  (structural, for the §2.12 track): heal-triage almost never fires in this fight — a 6-beat cast keeps
+  the shaman committed through the whole window in which an ally is wounded-but-alive (flankers die to two
+  longsword hits ~1.1s apart), and above ~35% ally HP the quadratic curve correctly loses to smite (live
+  numbers: ally at 50% → heal 20-37.5 vs smite 51-97.5). The curve is right; the fight shape starves it —
+  candidate remedies are shorter casts, tankier flankers, or the config-1 tempo (which the traces show
+  making the shaman genuinely dangerous). (3) **Three fixes the runs forced** (the battle-observation
+  method earning its keep): idle utility thinks no longer broadcast `ai_decision` (r1: 190+ no-op posts
+  drowned 2 real decisions; now only a COMMITTED decision posts); the `chosen` field now names what
+  actually committed, not the pre-execution top pick (r2 stamped "chosen: flee" the same instant as a
+  smite_cast when the cornered flee declined — the declined pick's higher score stays visible beside it,
+  which is the diagnostic); and a PRE-EXISTING all-monster bug — every brain ran TWO self-perpetuating
+  re-think timer chains its whole life (activation think + spawn-seed-glide boundary think), doubling the
+  idle think rate forever, visible as 0.06s doublets in the traces — collapsed to one chain by a
+  one-pending-re-think latch (`_rethink_pending`), with the busy-gate backstop keeping the wake-at-free
+  contract self-healing. Harness: `ai_decision` joined the `eventlog=` allowlist. — MONSTER AI: the Goblin Shaman thinks in WEIGHTS (Jeff's utility-AI spec), the
   pack rallies, and `/ai` shows the numbers.** The first cut of DESIGN §2.12 — enemy decisions by scored
   desirability instead of a hardcoded cascade. (1) **The utility scorer.** Opt-in per MonsterType
   (`utility_ai`); a pure static `UtilityScorer` ranks the currently-available actions each think — the brain

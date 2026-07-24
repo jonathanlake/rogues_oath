@@ -292,9 +292,10 @@ func _ready() -> void:
 	# value on host and client at start (same authored config, same build), so client-side pacing matches
 	# until the knob ships.
 	GameManager.explore_beat_sec = GameManager.debug_beat_override_sec if GameManager.debug_beat_override_sec > 0.0 else GameManager.config.beat_sec
-	# Seed the TACTICAL beat (the second dial, DESIGN §2.8.3 groundwork, v0.9.2) from config on EVERY
-	# peer, alongside the explore beat. No debug override for it (no gameplay reads it yet — groundwork
-	# only); the [ / ] keys nudge it live via set_tactical_tempo, a late joiner adopts it via sync_tempo.
+	# Seed the TACTICAL beat (the second dial, DESIGN §2.8.3, v0.9.2) from config on EVERY peer, alongside
+	# the explore beat. No debug override knob for it (v0.22.1 note: not because nothing reads it — every
+	# stamp site does, via PaceReferee — but because `/config` and the [ / ] keys already set it live);
+	# the [ / ] keys nudge it via set_tactical_tempo, a late joiner adopts it via sync_tempo.
 	GameManager.tactical_beat_sec = GameManager.config.tactical_beat_sec
 	# Seed the always-on tempo readout from those values, on EVERY peer, so it is correct before any
 	# set_tempo event (§2.8.3). A late joiner's host-supplied beats (sync_tempo below) refresh it.
@@ -510,10 +511,11 @@ func _ready() -> void:
 		# a set_tempo event (intent-name == event-name, like "chat") that every peer adopts. Gameplay only
 		# ever reads GameManager.explore_beat_sec (via PaceReferee), which no client can write (§2.5 stands).
 		NetEvents.register_handler("set_tempo", _validate_set_tempo)
-		# Host-only: the tactical-tempo referee (DESIGN §2.8.3 groundwork, v0.9.2). Mirrors set_tempo
-		# exactly — ANY peer submits set_tactical_tempo, this validator clamps/snaps against the SAME
-		# tempo band and broadcasts, every peer adopts. Groundwork: it stores GameManager.tactical_beat_sec
-		# and refreshes the readout, but no verdict reads it for stamping yet (the mode design is open).
+		# Host-only: the tactical-tempo referee (DESIGN §2.8.3, v0.9.2). Mirrors set_tempo exactly — ANY
+		# peer submits set_tactical_tempo, this validator clamps/snaps against the SAME tempo band and
+		# broadcasts, every peer adopts. It stores GameManager.tactical_beat_sec and refreshes the readout,
+		# and since Tactical Zones v1 that beat IS read for stamping — for every entity PaceReferee resolves
+		# tactical (comment corrected v0.22.1). A /config "g" row publishes this same event (v0.22.1).
 		NetEvents.register_handler("set_tactical_tempo", _validate_set_tactical_tempo)
 		# Host-only: the F6 dev-summon referee (v0.9.2). ANY peer submits dev_spawn_goblin; this
 		# validator resolves the SENDER's room, picks a free tile in it, and spawns a goblin
@@ -669,10 +671,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("tempo_down"):
 		_request_tempo(GameManager.config.tempo_step_sec)
 		get_viewport().set_input_as_handled()
-	# Tactical tempo dial ([ / ], v0.9.2 groundwork): ] = faster, [ = slower, from ANY peer. Same
-	# host-adjudicated request shape as the explore keys above, stepping by the SHARED tempo_step_sec
-	# (the tactical dial reuses the explore band pending the mode design). Groundwork — no gameplay
-	# reads the tactical beat for stamping yet; this only stores/displays it.
+	# Tactical tempo dial ([ / ], v0.9.2): ] = faster, [ = slower, from ANY peer. Same host-adjudicated
+	# request shape as the explore keys above, stepping by the SHARED tempo_step_sec (the tactical dial
+	# reuses the explore band pending its own). NOT groundwork any more (comment corrected v0.22.1):
+	# since Tactical Zones v1 every stamp site routes PaceReferee.beat_or_explore, so nudging this dial
+	# retimes glides/wind-ups/casts for anyone the referee has resolved TACTICAL, from the next verdict on.
 	elif event.is_action_pressed("tactical_tempo_up"):
 		_request_tactical_tempo(-GameManager.config.tempo_step_sec)
 		get_viewport().set_input_as_handled()
@@ -1284,11 +1287,14 @@ func _handle_tempo_changed_event(event: Dictionary) -> void:
 	_apply_tempo(float(data.get("beat_sec", GameManager.explore_beat_sec)))
 
 
-## All peers: adopt a host-stamped TACTICAL tempo change (§2.8.3 groundwork, v0.9.2). The exact twin of
+## All peers: adopt a host-stamped TACTICAL tempo change (§2.8.3, v0.9.2). The exact twin of
 ## _handle_tempo_changed_event for the second dial — route the stamped beat through the _apply_tactical_tempo
-## chokepoint so the display updates. GROUNDWORK: no verdict reads tactical_beat_sec for stamping yet; this
-## only stores + displays it. On the HOST this also runs (call_local), re-applying the validator's value
-## (idempotent). The log line is added by game_log off this same event.
+## chokepoint so the display updates. The tactical beat IS read for stamping (comment corrected v0.22.1):
+## since Tactical Zones v1 every stamp site resolves through PaceReferee.beat_or_explore, so this adoption
+## retimes a tactical entity's FUTURE verdicts (in-flight commits keep their baked seconds, §2.8.2). On the
+## HOST this also runs (call_local), re-applying the validator's value (idempotent) — and it is how a
+## /config "g" row's tempo lands on the host too, since that row posts the event instead of writing the
+## per-peer variable. The log line is added by game_log off this same event.
 func _handle_tactical_tempo_changed_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
 	_apply_tactical_tempo(float(data.get("beat_sec", GameManager.tactical_beat_sec)))
@@ -1515,10 +1521,12 @@ func _apply_tempo(beat_sec: float) -> void:
 	_update_tempo_display()
 
 
-## The adopt-beat chokepoint for the TACTICAL dial (§2.8.3 groundwork, v0.9.2), the twin of _apply_tempo:
-## set the LOCAL GameManager.tactical_beat_sec, then refresh the readout. BOTH tactical-adoption paths
-## route through here — the broadcast set_tactical_tempo event and a late joiner's sync_tempo — so the
-## dial is never adopted without its display updating. GROUNDWORK: no adjudication reads this beat yet.
+## The adopt-beat chokepoint for the TACTICAL dial (§2.8.3, v0.9.2), the twin of _apply_tempo: set the
+## LOCAL GameManager.tactical_beat_sec, then refresh the readout. BOTH tactical-adoption paths route
+## through here — the broadcast set_tactical_tempo event and a late joiner's sync_tempo — so the dial is
+## never adopted without its display updating. On the HOST this beat is also what the stamp sites read
+## through PaceReferee for any tactical entity (comment corrected v0.22.1 — the old "no adjudication
+## reads this yet" note went stale at Tactical Zones v1); on a client it is display/pacing only.
 func _apply_tactical_tempo(beat_sec: float) -> void:
 	GameManager.tactical_beat_sec = beat_sec
 	_update_tempo_display()
@@ -2179,8 +2187,11 @@ func _validate_set_tempo(sender_peer_id: int, data: Dictionary) -> Dictionary:
 ## MIRROR of _validate_set_tempo for the second dial: same type/range guard, the SAME clamp/snap band
 ## (cfg.tempo_step_sec / tempo_min_sec / tempo_max_sec — deliberately shared pending the mode design), the
 ## same no-op reject, the same server-resolved sender name and broadcast. The ONLY differences: it reads and
-## writes GameManager.tactical_beat_sec, not explore_beat_sec. GROUNDWORK: this stores the value and every
-## peer displays it, but no verdict reads the tactical beat for stamping — that awaits the open mode design.
+## writes GameManager.tactical_beat_sec, not explore_beat_sec. Since Tactical Zones v1 the stamped beat has
+## real teeth (comment corrected v0.22.1): every stamp site routes PaceReferee.beat_or_explore, which returns
+## this dial for any entity resolved TACTICAL, so an accepted change retimes their next verdicts.
+## The no-op reject is this validator's alone — a /config "g" row (v0.22.1) deliberately posts the event
+## WITHOUT it, so re-applying a preset stays idempotent instead of failing the bundle.
 func _validate_set_tactical_tempo(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# Type/range guard first — the wire is never trusted (mirrors _validate_set_tempo).
 	var raw = data.get("beat_sec")

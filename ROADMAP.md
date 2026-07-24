@@ -283,13 +283,23 @@ Not scheduled — pulled in when their moment comes:
   stage status here. v0.22.0 shipped the opt-in `UtilityScorer` with the Goblin Shaman as the first brain on
   it (weighted Heal/Smite/Melee/Flee/Approach, tie-break margin, supportive/aggressive personalities rolled
   per spawn), PACK RALLY for ALL brains (one-hop tactical-bubble aggro sharing — how the shaman joins fights
-  with aggro still 3 and its own spell ranges 8/5), and the `/ai` F3 score overlay. **DEFERRED FUNCTION
-  items** (time-boxed release, Jon 2026-07-24 — parse+review verified only): the `eventlog=` behaviour
-  assertions — rally pull-in, smite-at-8 once engaged, dying-ally triage over scratches, personality
-  divergence, alone-courage flip, one-hop no-cascade — belong to the next harness session or overnight loop.
-  Tendencies read ("this shaman usually heals dying allies") = Jon+Jeff FEEL item, watched live via `/ai`.
-  REMAINING beyond that: positional movement objectives (behind-ally kiting), plain-goblin migration, threat
-  memory, crowded-top-set tie-break.
+  with aggro still 3 and its own spell ranges 8/5), and the `/ai` F3 score overlay. **v0.22.1 battle runs
+  CLEARED most of the deferred FUNCTION list** (scripted room-D fights, `/ai` + `eventlog=` traces — see the
+  changelog entry): rally pull-in ✓, smite-at-range ✓, personality divergence ✓ (supportive kited where
+  aggressive cast, same geometry), tie-break band ✓, config-1 tempo stamps ✓. STILL OPEN: the alone-courage
+  flee-decay was only indirectly observed (the shaman kept dying or winning before isolation) and
+  **heal-triage is structurally starved in this fight** — 6-beat casts keep the shaman committed through
+  the window an ally is wounded-but-alive, so the curve (correct per the live numbers) rarely gets a shot;
+  candidate remedies: shorter casts, tankier flankers, or config-1 tempo. That retune decision is
+  Jon+Jeff's. Tendencies read = FEEL item, watched live via `/ai`. REMAINING beyond that: positional
+  movement objectives (behind-ally kiting), plain-goblin migration, threat memory, crowded-top-set
+  tie-break.
+- **AUTOPLAY bot** (Zorbus "Behind the Scenes", research doc §G.4 — promoted to a real bullet v0.22.1): a
+  player-policy driver in debug.gd (`bot=1` — approach, attack, drink when low, through the REAL intent
+  pipe) looped headless overnight, grepping for invariant violations (stuck busy records, desyncs,
+  unresolved fights). The v0.22.1 scripted room-D battle runs are the manual prototype of exactly this —
+  they found three real bugs in one session; the bot is that method running unattended. Slot into
+  docs/overnight-runbook.md when built.
 - **Equipment slot model** (v0.21.0 opened the door, deliberately didn't walk through it): the
   `EQUIPMENT` item category and the HUD's 9 equipment sockets exist, but no armour/shield/boot/ring
   resources do and nothing equips into a socket — the sockets are cosmetic. Its own milestone when
