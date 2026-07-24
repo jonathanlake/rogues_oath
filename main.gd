@@ -856,9 +856,11 @@ func _handle_attack_event(event: Dictionary) -> void:
 	if whiff:
 		# Whiff cues are Monster surface (only a wind-up whiffs in M3) — deliberate narrow cast.
 		var whiffer := attacker as Monster
-		if whiffer != null:
+		if whiffer != null and kind != "smite":
+			# SMITE whiff (v0.19.10) skips the melee lunge — a dodged ground-spell has no swing; the grey
+			# "miss" popup over the vacated tile below is its cue.
 			whiffer.play_whiff(dir)
-		else:
+		elif whiffer == null:
 			# Whiffs are structurally monster-only today (only _resolve_windup emits them, only
 			# brains wind up), so a non-Monster whiffer is a future-shape break — §2.3.4 forbids an
 			# outcome being silently swallowed, so name the unhandled attacker instead of dropping it.
@@ -1201,9 +1203,13 @@ func _handle_smite_cast_event(event: Dictionary) -> void:
 		return
 	var target_tile: Vector2i = data.get("target_tile", caster.tile)
 	caster.face_toward(signi(target_tile.x - caster.tile.x))
+	var cast_sec := float(data.get("cast_sec", 0.0))
+	# RED danger tile (Rogue-Fable style) — the whole point: step off it before the cast ends to dodge.
+	_fx.danger_tile(target_tile, cast_sec)
+	# Orange-red overhead sparkle marks the caster (distinct from the green heal channel).
 	var caster_monster := caster as Monster
 	if caster_monster != null:
-		caster_monster.play_spell_cast(float(data.get("cast_sec", 0.0)), Color(1.0, 0.5, 0.2))
+		caster_monster.play_spell_cast(cast_sec, Color(1.0, 0.5, 0.2))
 
 
 ## All peers: adopt a host-stamped tempo change (§2.8.3). Apply it to the LOCAL GameManager beat so the

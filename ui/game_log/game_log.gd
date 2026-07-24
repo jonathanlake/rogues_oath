@@ -308,10 +308,14 @@ func _on_event_received(event: Dictionary) -> void:
 			add_line("%s channels a heal toward %s..." % [
 				str(data.get("caster_name", "Someone")), str(data.get("target_name", "an ally"))])
 		"smite_cast":
-			# A monster's SMITE channel starting (§2.3.4, v0.19.10 — the offensive twin of the heal channel).
-			# The LAND is the "smites" attack line below. Names flow through add_line's sink escape.
-			add_line("%s begins to smite %s..." % [
-				str(data.get("caster_name", "Someone")), str(data.get("target_name", "someone"))])
+			# A monster's SMITE channel starting (§2.3.4, v0.19.10 — the offensive twin of the heal channel). The
+			# RED danger tile is the real telegraph; this line names whoever's standing on it at cast start (empty
+			# = bare ground). The LAND is the "smites" attack line; a dodge is the "fizzles" whiff line. Escaped at sink.
+			var smite_victim := str(data.get("target_name", ""))
+			if smite_victim != "":
+				add_line("%s begins to smite %s..." % [str(data.get("caster_name", "Someone")), smite_victim])
+			else:
+				add_line("%s begins channeling a smite..." % str(data.get("caster_name", "Someone")))
 
 
 ## Compose the combat-log line for one `attack` event, one distinct phrasing per outcome (§2.3.4):
@@ -320,7 +324,11 @@ func _on_event_received(event: Dictionary) -> void:
 func _log_attack(data: Dictionary) -> void:
 	var attacker_name := str(data.get("attacker_name", ""))
 	if bool(data.get("whiff", false)):
-		add_line("%s's attack hits nothing." % attacker_name)
+		# A dodged SMITE (v0.19.10) gets its own line — the player stepped off the red tile in time (§2.3.4).
+		if str(data.get("kind", "")) == "smite":
+			add_line("%s's smite fizzles — dodged!" % attacker_name)
+		else:
+			add_line("%s's attack hits nothing." % attacker_name)
 		return
 	var target_name := str(data.get("target_name", ""))
 	# God-mode no-op (v0.10.0): a hit that landed on an invulnerable target. A DISTINCT line (§2.3.4 —

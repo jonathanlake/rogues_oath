@@ -10,6 +10,18 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.19.11 (2026-07-24) — SMITE = a DODGEABLE ground-target (red tile telegraph); shaman won't cast pre-aggro.**
+  Two fixes from the feel-test. (1) **Smite is now Rogue-Fable telegraphed ground**, not a homing hit: the shaman
+  picks a random in-range player's TILE, every peer paints that tile RED for the whole cast, and the hit resolves
+  against the TILE at cast END — so you get the full cast (6 beats) to step off it and DODGE (a distinct "smite
+  fizzles — dodged!" line + grey "miss" on the vacated tile), and a player who steps ONTO it eats it (commit to
+  ground, the same model as the melee wind-up). `CombatReferee.pick_smite_target`→`pick_smite_tile` (returns a
+  tile), `smite_cast`/`_resolve_smite` now tile-based (mirroring `_resolve_windup`); the smite_cast event carries
+  `target_tile`, and `FxLayer.danger_tile(tile, hold_sec)` draws the pulsing red square. The smite whiff suppresses
+  the melee lunge (ranged spell). (2) **The shaman no longer casts before it's aggroed** — its `aggro_range_tiles`
+  went 12 → 3 (matching the flanking goblins), so the whole pack holds until you approach; smite/flee run only
+  once engaged (acquired within 3), then it kites + smites from up to its 12-tile smite range. Compile-verified
+  headless (clean parse). Feel: red-tile lead time vs the 6-beat cast, and `flee_range_tiles`, are `/m` nudges.
 - **v0.19.10 (2026-07-24) — SHAMAN = a fleeing CASTER: adds SMITE, stops meleeing; + dummy-heal fix + /m spell tuning.**
   From the live observe pass (a joined event-log capture). THREE changes. (1) **Dummy-heal FIX:** the shaman was
   wasting casts healing the Training Dummy — a brainless monster sitting below its 1000 max HP counted as a

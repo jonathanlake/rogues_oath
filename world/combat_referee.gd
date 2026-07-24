@@ -456,12 +456,14 @@ func _resolve_heal_cast(caster_id: int, target_id: int, amount: int) -> void:
 	apply_heal(target_id, amount, _name_of(_node_of_id(caster_id)))
 
 
-## Pick the player a smiter should hit: a RANDOM living player within `range_tiles` CHEBYSHEV of `caster_tile`
-## (v0.19.10, "choose a player at random for now"). Host-only — the host owns the RNG, so the pick is
-## authoritative and rides the broadcast cast event (no client predicts it). Players are POSITIVE ids in _hp.
-## Returns the chosen player id, or 0 (never a real id) if none in range.
-func pick_smite_target(caster_id: int, caster_tile: Vector2i, range_tiles: int) -> int:
-	var in_range: Array[int] = []
+## Pick the GROUND TILE a smiter targets (v0.19.10, Rogue-Fable telegraphed-ground model): a RANDOM living
+## player's CURRENT tile, if any player is within `range_tiles` CHEBYSHEV of `caster_tile`. Host-only (host owns
+## the RNG, so the pick is authoritative and rides the broadcast cast event). The smite commits to this TILE, not
+## the player — a player can step OFF it during the cast to dodge, and one who steps ONTO it eats the hit (commit
+## to ground, the same model as the melee wind-up). Returns the tile, or the wall-sentinel (0,0) if no player is
+## in range (callers detect via WorldGrid.is_wall — no live body ever rests on a wall).
+func pick_smite_tile(caster_id: int, caster_tile: Vector2i, range_tiles: int) -> Vector2i:
+	var in_range: Array[Vector2i] = []
 	for id in _hp:
 		if id <= 0:  # players are positive; skip monsters (negative) and the 0 sentinel
 			continue
@@ -470,24 +472,22 @@ func pick_smite_target(caster_id: int, caster_tile: Vector2i, range_tiles: int) 
 		var tile: Vector2i = _move_referee.tile_of_entity(id)
 		var cheb := maxi(absi(tile.x - caster_tile.x), absi(tile.y - caster_tile.y))
 		if cheb <= range_tiles:
-			in_range.append(id)
+			in_range.append(tile)
 	if in_range.is_empty():
-		return 0
+		return Vector2i.ZERO  # (0,0) is always a border wall → a safe "no target" sentinel
 	return in_range[randi() % in_range.size()]
 
 
-## A smiter MonsterBrain requests a telegraphed SMITE on a chosen player (v0.19.10). Host-only. Same shape as
-## heal_cast: validate caster alive + not busy + target alive, commit cast + recovery as ONE busy record,
-## telegraph the channel (smite_cast event → §2.3.4 cue + log on every peer), resolve the DAMAGE at cast END via
-## the shared apply_damage pipe, and hold the caster spent through the recovery tail. `damage`/`cast_beats`/
-## `recovery_beats` come from the caller's MonsterType. Returns the whole cast + recovery seconds on success, or
-## -1.0 if DECLINED (caster dead/busy / target gone) so the brain distinguishes a cast from a back-off.
-func smite_cast(caster_id: int, target_id: int, damage: int, cast_beats: float, recovery_beats: float) -> float:
+## A smiter MonsterBrain requests a telegraphed SMITE on a chosen TILE (v0.19.10). Host-only. Same committed-cast
+## shape as heal_cast: validate caster alive + not busy, commit cast + recovery as ONE busy record, telegraph the
+## channel (smite_cast event carrying the target_tile → every peer paints it RED for the cast window), resolve
+## against the TILE at cast END (dodgeable), and hold the caster spent through the recovery tail. `damage`/
+## `cast_beats`/`recovery_beats` come from the caller's MonsterType. Returns the whole cast + recovery seconds on
+## success, or -1.0 if DECLINED (caster dead / busy) so the brain distinguishes a cast from a back-off.
+func smite_cast(caster_id: int, target_tile: Vector2i, damage: int, cast_beats: float, recovery_beats: float) -> float:
 	if not is_alive(caster_id):
 		return -1.0
 	if _move_referee.is_entity_moving(caster_id):
-		return -1.0
-	if not is_alive(target_id):
 		return -1.0
 	var beat := PaceReferee.beat_or_explore(_pace, caster_id)
 	var cast_sec := maxf(0.0, cast_beats) * beat
@@ -495,31 +495,55 @@ func smite_cast(caster_id: int, target_id: int, damage: int, cast_beats: float, 
 	if not _move_referee.commit_in_place(caster_id, cast_sec + recovery_sec):
 		return -1.0
 	var caster := _node_of_id(caster_id)
-	var target := _node_of_id(target_id)
-	# Face the victim (server truth; a ZERO dir no-ops).
-	_move_referee.set_facing(caster_id, (_move_referee.tile_of_entity(target_id) - _move_referee.tile_of_entity(caster_id)).sign())
-	# Telegraph on its OWN event — a distinct OFFENSIVE channel (§2.3.4), never confusable with heal or melee.
+	var caster_tile: Vector2i = _move_referee.tile_of_entity(caster_id)
+	# Face the targeted tile (server truth; a ZERO dir no-ops).
+	_move_referee.set_facing(caster_id, (target_tile - caster_tile).sign())
+	# Name the CURRENT occupant (best-effort, for the log line) — the real hit re-resolves at cast end, so a
+	# dodge turns this into a fizzle. An empty tile at cast start still telegraphs.
+	var occ_id: int = _move_referee.entity_at(target_tile)
+	var occ_name := _name_of(_node_of_id(occ_id)) if occ_id != _NO_ENTITY else ""
+	# Telegraph on its OWN event — a distinct OFFENSIVE channel (§2.3.4). target_tile drives the red danger-tile.
 	NetEvents.post_event("smite_cast", {
 		"caster_id": caster_id,
 		"caster_name": _name_of(caster),
-		"target_id": target_id,
-		"target_name": _name_of(target),
-		"target_tile": _move_referee.tile_of_entity(target_id),
+		"target_tile": target_tile,
+		"target_name": occ_name,
 		"cast_sec": cast_sec,
 	}, caster_id)
 	get_tree().create_timer(cast_sec).timeout.connect(
-			_resolve_smite.bind(caster_id, target_id, maxi(0, damage)))
+			_resolve_smite.bind(caster_id, target_tile, maxi(0, damage)))
 	return cast_sec + recovery_sec
 
 
-## Resolve a committed smite at cast END (host-only, from the cast timer). The caster must still be alive — a
-## smiter killed mid-cast deals NOTHING (the counterplay: rush it during the channel, mirroring heal-at-END). The
-## hit lands via the shared apply_damage pipe (kind "smite" → its own log verb + the target's hurt cues); a
-## target that died / despawned meanwhile no-ops inside apply_damage's liveness guard.
-func _resolve_smite(caster_id: int, target_id: int, damage: int) -> void:
+## Resolve a committed smite at cast END against its TILE (host-only, from the cast timer). Mirrors _resolve_windup:
+## the caster must still be alive (killed mid-cast = nothing, the rush-it counterplay); then whoever HOSTILE and
+## LIVING occupies the tile NOW eats `damage` (a player who stepped on eats it; the original target who stepped off
+## dodges). No hostile occupant → a WHIFF event (kind "smite", whiff true) so the dodge is a distinct §2.3.4 outcome.
+func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int) -> void:
 	if not is_alive(caster_id):
 		return
-	apply_damage(caster_id, target_id, damage, "smite", 0.0)
+	var caster := _node_of_id(caster_id)
+	var occ_id: int = _move_referee.entity_at(target_tile)
+	if occ_id != _NO_ENTITY:
+		var occ := _node_of_id(occ_id)
+		if occ != null and is_alive(occ_id) and caster != null and caster.is_hostile_to(occ):
+			apply_damage(caster_id, occ_id, damage, "smite", 0.0)
+			return
+	# Dodged / empty ground — a distinct WHIFF (the target moved off in time). target_tile rides so the miss
+	# cue lands on the committed tile; kind "smite" so the log reads "fizzles — dodged!" not a melee miss.
+	NetEvents.post_event("attack", {
+		"attacker_id": caster_id,
+		"attacker_name": _name_of(caster),
+		"target_id": _NO_ENTITY,
+		"target_name": "",
+		"target_tile": target_tile,
+		"damage": 0,
+		"hp_after": -1,
+		"target_max": 0,
+		"kind": "smite",
+		"whiff": true,
+		"duration_sec": 0.0,
+	}, caster_id)
 
 
 ## Host-side stat accessors, read by MoveReferee for a bump/AoO so combat numbers live in ONE place

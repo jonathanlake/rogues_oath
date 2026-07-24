@@ -46,3 +46,24 @@ func heal_burst(tile: Vector2i) -> void:
 	p.emitting = true
 	# Free just past the burst's lifetime (one-shot never re-emits). Host-tree timer, survives fine.
 	get_tree().create_timer(p.lifetime + 0.2).timeout.connect(p.queue_free)
+
+
+## Paint a RED DANGER tile over `tile` for `hold_sec` (v0.19.10, Rogue-Fable telegraph): a translucent red
+## square, pulsing so it reads as urgent, marking where a monster's ground-target spell (the shaman's smite) will
+## land — step off it before the cast ends to dodge. Drawn HERE in world space (a full TILE_PX square centred on
+## the tile), removed when the cast resolves. Parented to the FX layer so it never depends on the caster node.
+func danger_tile(tile: Vector2i, hold_sec: float) -> void:
+	var half := WorldGrid.TILE_PX / 2.0
+	var mark := Polygon2D.new()
+	mark.polygon = PackedVector2Array([
+		Vector2(-half, -half), Vector2(half, -half), Vector2(half, half), Vector2(-half, half)])
+	mark.color = Color(0.95, 0.2, 0.2, 0.5)  # translucent red
+	mark.position = WorldGrid.tile_to_world(tile)
+	add_child(mark)
+	# Pulse the alpha so the danger reads as active; killed + freed at hold_sec.
+	var t := create_tween().set_loops()
+	t.tween_property(mark, "modulate:a", 1.0, 0.3).from(0.55)
+	t.tween_property(mark, "modulate:a", 0.55, 0.3)
+	if hold_sec > 0.0:
+		get_tree().create_timer(hold_sec).timeout.connect(t.kill)
+		get_tree().create_timer(hold_sec).timeout.connect(mark.queue_free)

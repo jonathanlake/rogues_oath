@@ -357,11 +357,12 @@ func _act_as_kiter(my_tile: Vector2i, targets: Array) -> void:
 	if _monster_type.flee_range_tiles > 0 and nearest_dist <= _monster_type.flee_range_tiles:
 		if _flee_step(my_tile, nearest):
 			return
-	# (2) Smite a random player in range (host picks the target).
+	# (2) Smite the GROUND at a random in-range player's tile (host picks it; the player can dodge off it).
 	if _monster_type.has_smite_ability():
-		var smite_target: int = _combat.pick_smite_target(_entity_id, my_tile, _monster_type.smite_range_tiles)
-		if smite_target != 0:
-			var wait_sec: float = _combat.smite_cast(_entity_id, smite_target, _monster_type.smite_damage,
+		var smite_tile: Vector2i = _combat.pick_smite_tile(_entity_id, my_tile, _monster_type.smite_range_tiles)
+		# (0,0) sentinel = no player in range (it's a border wall — no live body rests there).
+		if not WorldGrid.is_wall(smite_tile):
+			var wait_sec: float = _combat.smite_cast(_entity_id, smite_tile, _monster_type.smite_damage,
 					_monster_type.smite_cast_beats, _monster_type.smite_recovery_beats)
 			if wait_sec >= 0.0:
 				# Cast committed — its busy record ends without waking us (no glide), so schedule our own
