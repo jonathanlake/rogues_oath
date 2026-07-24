@@ -915,10 +915,17 @@ func _handle_attack_event(event: Dictionary) -> void:
 	# occupied window; the rig normalizes the phase fractions inside it.
 	if attacker is Entity and data.has("weapon") and str(data.get("weapon", "")) != "":
 		attacker.play_weapon_swing(dir, float(data.get("duration_sec", 0.0)))
-	# Local attacker's swing-busy mirror for a bump OR kick (decision 2; v0.17.1 kick) — players only
-	# (positive id), so commit_in_place is Player surface: deliberate narrow cast, not cruft. A kick is a
-	# bump-shaped commit (a ranged weapon's point-blank strike), so it roots the local kicker identically.
-	if (kind == "bump" or kind == "kick") and attacker_id == multiplayer.get_unique_id():
+	# Local attacker's swing-busy mirror for a bump / kick / player WINDUP (decision 2; v0.17.1 kick; v0.19.3
+	# windup) — players only (positive id), so commit_in_place is Player surface: deliberate narrow cast, not
+	# cruft. A kick is a bump-shaped commit (a ranged weapon's point-blank strike). A player MELEE WINDUP
+	# (v0.19.2, opt-in) resolves through wind_up, so its landed/whiffed attack event carries kind "windup"
+	# (or "strike" on the instant wind_up path) instead of "bump" — WITHOUT this, the deferred verdict's input
+	# latch was never cleared by the event and fell through to the ~2s AWAITING safety timeout, locking the
+	# player for an extra beat AFTER recovery (only at windup > 0). Driving commit_in_place here clears the
+	# latch at the strike and roots the local player for exactly its recovery window, same as a bump. A
+	# MONSTER's windup (negative id) never matches the local-id gate, so this stays player-only.
+	if (kind == "bump" or kind == "kick" or kind == "windup" or kind == "strike") \
+			and attacker_id == multiplayer.get_unique_id():
 		var local_attacker := attacker as Player
 		if local_attacker != null:
 			local_attacker.commit_in_place(float(data.get("duration_sec", 0.0)))

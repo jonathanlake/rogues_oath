@@ -10,6 +10,19 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.19.3 (2026-07-24) — FIX: player-windup phantom lock after recovery (Jeff report).** With a player
+  weapon's `windup_beats > 0` (v0.19.2), control returned ~1 beat LATE — the player couldn't move for an extra
+  second after the swing's recovery, only at windup > 0. Root cause: a player bump adjudicates as a DEFERRED
+  verdict, so the `attack` event (not a `glide_to`) is what clears the local input latch and drives the
+  swing-busy window — but `main._handle_attack_event` only did that for `kind == "bump"/"kick"`. A player
+  MELEE WINDUP resolves through `wind_up`, whose event carries `kind == "windup"`, so the client's
+  `commit_in_place` never ran; the AWAITING latch fell through to its ~2.0s `verdict_timeout_sec` safety timeout
+  instead of the real `windup + recovery` window — the extra lock whenever `windup + recovery < 2.0s`. FIX: the
+  local attacker's `commit_in_place` now also fires for `kind == "windup"` (and the defensive `"strike"`),
+  gated as before on `attacker_id == our own peer id` (a monster's negative-id windup never matches, so this
+  stays player-only). The latch now clears at the strike and roots the player for exactly its recovery, same as
+  a bump. (Logic-verified against the client input state machine; not re-smoked because a live v0.19.2 session
+  held the test port.)
 - **v0.19.2 (2026-07-24) — COMBAT-FEEL TEST HOOKS: player windup, swing mirror, arriving gate (Jeff's 3 asks).**
   Three things Jeff needed to stress-test the beats-and-grid core himself (he tunes the beats via `/w` and `/m`
   live; these are the parts that needed code). LIGHTER verification by request — a boot smoke + GLM plan review,
