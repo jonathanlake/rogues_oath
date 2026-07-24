@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="MonsterType" format=3]
+
+[ext_resource type="Resource" path="res://resources/speed_tiers/speed_slow.tres" id="1_dekqg"]
+[ext_resource type="Script" uid="uid://cl3pdmosdok4g" path="res://resources/monster_type.gd" id="1_type"]
+[ext_resource type="Resource" uid="uid://b3cmct5a57xr8" path="res://resources/weapons/club.tres" id="2_club"]
+
+[resource]
+script = ExtResource("1_type")
+display_name = "Goblin Shaman"
+atlas_coords = Vector2i(6, 0)
+max_hp = 8
+weapon = ExtResource("2_club")
+bonus_windup_beats = 1.0
+bonus_recovery_beats = 1.0
+glide_speed = ExtResource("1_dekqg")
+aggro_range_tiles = 5
+heal_amount = 4
+heal_range_tiles = 14
+heal_cast_beats = 4.0

@@ -10,6 +10,26 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 ---
 
 
+- **v0.19.4 (2026-07-24) — NEW ENEMY: Goblin Shaman (heals its pack) + the first monster SUPPORT ability.**
+  A `goblin_shaman.tres` (goblin-mage sprite, `max_hp` 8, armed with the club so it still fights) that, before
+  it decides to chase/attack, scans allied monsters and heals the LOWEST-HP one within 14 Chebyshev tiles. The
+  heal is a **long telegraphed CAST**, not a cooldown: `heal_cast_beats` (4.0) commits the shaman as a from==to
+  busy record (`commit_in_place`) exactly like an attack's occupancy, so it self-limits via the Commitment Rule
+  with **no separate cooldown concept** (generalizes Part 4 Q9's unified-occupancy answer — Jon's call this
+  session). Authored in BEATS, so it rescales with the live tempo knob like every other duration. Killed or
+  interrupted mid-cast **wastes** the heal (`_resolve_heal_cast` re-checks caster liveness → resolves through
+  the shared `apply_heal` at cast END, the same heal-at-drink-END rule potions use). New `MonsterType` fields
+  `heal_amount` / `heal_range_tiles` / `heal_cast_beats` (all default 0 = not a healer; `has_heal_ability()` is
+  the one predicate), so a new healer is a `.tres`, not code. Host-authoritative throughout: `CombatReferee`
+  owns the target scan (`pick_heal_target`, off `_hp` + authoritative occupancy) and the cast commit/resolve;
+  the brain only asks. §2.3.4 feedback: a DISTINCT `heal_cast` event → green "+" channel tell over the shaman +
+  face-the-ally + a "Goblin Shaman channels a heal toward Goblin..." log line (never confusable with the WHITE
+  attack wind-up), then the existing `heal` land cue (green +N + "recovers N HP"). PLACEMENT: room D (south of
+  the starting room, previously empty) now holds the shaman flanked by two ordinary goblins it can heal —
+  spawned unconditionally (like the training dummy), so the demo always appears regardless of the `goblin=N`
+  cap. Feel/verification: implemented for a live Jon manual test (his call — no two-instance harness gate or GLM
+  pass this pass); the channel visual is a first-pass tell (facing + popup) that can gain richer held art if it
+  reads as too subtle.
 - **v0.19.3 (2026-07-24) — FIX: player-windup phantom lock after recovery (Jeff report).** With a player
   weapon's `windup_beats > 0` (v0.19.2), control returned ~1 beat LATE — the player couldn't move for an extra
   second after the swing's recovery, only at windup > 0. Root cause: a player bump adjudicates as a DEFERRED

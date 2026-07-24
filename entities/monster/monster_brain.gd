@@ -183,6 +183,24 @@ func _think() -> void:
 	if WorldGrid.is_wall(my_tile):
 		return
 
+	# SUPPORT (v0.19.4): a HEALER checks for a wounded ally BEFORE deciding to chase/attack. If one is within
+	# heal_range_tiles and below max HP, commit a telegraphed heal cast (Commitment Rule — self-limits via the
+	# busy record, no cooldown; §2.8 beats). Priority OVER chasing a player: a shaman keeps its pack alive
+	# first. This runs even with no players present (allies can already be hurt). No valid ally, or a declined
+	# cast → fall through to the normal chase/attack below (an ARMED healer still fights). An ordinary monster
+	# (no authored heal ability) skips the whole branch.
+	if _monster_type != null and _monster_type.has_heal_ability():
+		var heal_target: int = _combat.pick_heal_target(_entity_id, my_tile, _monster_type.heal_range_tiles)
+		if heal_target != 0:
+			var heal_wait: float = _combat.heal_cast(
+					_entity_id, heal_target, _monster_type.heal_amount, _monster_type.heal_cast_beats)
+			if heal_wait >= 0.0:
+				# The cast's busy record ends WITHOUT waking us (no glide_finished on a commit_in_place) —
+				# schedule our OWN re-think just past it, exactly like a wind-up (think-at-own-boundary).
+				_reschedule_after(heal_wait + windup_rethink_epsilon_sec)
+				return
+			# Declined (target vanished / went busy) — fall through to normal chase/attack this think.
+
 	# Explicit Array type: _referee is deliberately untyped (see its declaration), so := cannot
 	# infer through the dynamic call — and an untyped brain must still fail loudly if the referee
 	# ever returns a non-array.

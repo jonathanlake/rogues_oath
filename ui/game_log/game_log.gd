@@ -301,6 +301,11 @@ func _on_event_received(event: Dictionary) -> void:
 			add_line("%s recovers %d HP (%d/%d)." % [
 				str(data.get("name", "Someone")), int(data.get("amount", 0)),
 				int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
+		"heal_cast":
+			# A monster's heal CHANNEL starting (§2.3.4, v0.19.4 — a distinct telegraph line, the healer's twin
+			# of "winds up..."). The LAND is the `heal` line above. Names flow through add_line's sink escape.
+			add_line("%s channels a heal toward %s..." % [
+				str(data.get("caster_name", "Someone")), str(data.get("target_name", "an ally"))])
 
 
 ## Compose the combat-log line for one `attack` event, one distinct phrasing per outcome (§2.3.4):

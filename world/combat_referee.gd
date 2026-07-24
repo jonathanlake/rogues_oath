@@ -348,6 +348,105 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 	return windup_sec + recovery_sec
 
 
+# ── Monster heal cast (v0.19.4, the shaman — telegraphed support ability) ──────
+
+## Pick the ALLY MONSTER a healer should target: the lowest-current-HP living monster (other than the caster)
+## that is BELOW its max HP and within `range_tiles` CHEBYSHEV of `caster_tile`. Host-only, read straight off the
+## combat truth (_hp) + authoritative occupancy (MoveReferee.tile_of_entity) so the brain never adjudicates from
+## a rendered position. Returns the target's NEGATIVE entity id, or 0 (never a real id) when there is no valid
+## ally — the brain then falls through to chase/attack. Allies = other MONSTERS (negative ids): v1's only
+## factions are players-vs-monsters, so every OTHER monster is an ally (matches Monster.is_hostile_to). Tie on
+## HP: the FIRST encountered wins (dict insertion order — deterministic on the single-threaded host).
+func pick_heal_target(caster_id: int, caster_tile: Vector2i, range_tiles: int) -> int:
+	var best_id := 0
+	var best_hp := 0
+	for id in _hp:
+		# Players (positive) are not ally-healed; never heal self.
+		if id >= 0 or id == caster_id:
+			continue
+		if not is_alive(id):
+			continue
+		var node := _node_of_id(id)
+		if node == null:
+			continue
+		var hp := int(_hp[id])
+		# Already at (or above) max — nothing to heal.
+		if hp >= _max_hp_of(node):
+			continue
+		var tile: Vector2i = _move_referee.tile_of_entity(id)
+		var cheb := maxi(absi(tile.x - caster_tile.x), absi(tile.y - caster_tile.y))
+		if cheb > range_tiles:
+			continue
+		if best_id == 0 or hp < best_hp:
+			best_id = id
+			best_hp = hp
+	return best_id
+
+
+## A healer MonsterBrain requests a telegraphed HEAL CAST on a chosen ally (v0.19.4). Host-only. Mirrors
+## wind_up's shape: validate caster alive + not already busy + target still valid, commit the FULL cast window
+## as ONE beat-stamped busy record (Commitment Rule — the healer cannot move or re-cast while channeling; the
+## busy record IS the pacing, so there is no separate cooldown), telegraph the channel (heal_cast event →
+## §2.3.4 cue + log on every peer), and resolve the heal at cast END through the shared apply_heal pipe.
+## `amount`/`cast_beats` come from the caller's MonsterType (the brain owns its type), captured now. Returns
+## the seconds the brain should wait before its next think (the whole cast window) on success, or -1.0 if
+## DECLINED (caster not alive / already busy / target gone) so the brain distinguishes a cast from a back-off.
+func heal_cast(caster_id: int, target_id: int, amount: int, cast_beats: float) -> float:
+	if not is_alive(caster_id):
+		return -1.0
+	# The caster must be free — never overlap a cast with a glide/another commit (Commitment Rule backstop,
+	# owned by MoveReferee — is_entity_moving covers a glide AND a commit_in_place record).
+	if _move_referee.is_entity_moving(caster_id):
+		return -1.0
+	# Re-validate the target at commit (the brain picked it a think ago). Dead / vanished / already-full means
+	# don't burn a cast — decline so the brain re-decides (chase/attack) this think. Between the brain's pick
+	# and here nothing yields (single-threaded host), so this is belt-and-suspenders.
+	if not is_alive(target_id):
+		return -1.0
+	var target := _node_of_id(target_id)
+	if target == null or int(_hp[target_id]) >= _max_hp_of(target):
+		return -1.0
+	# Stamp the cast window at the CASTER's resolved pace (§2.8.7 — an engaged shaman channels at the tactical
+	# beat), authored in beats so it rescales with the live tempo knob like every other duration.
+	var cast_sec := maxf(0.0, cast_beats) * PaceReferee.beat_or_explore(_pace, caster_id)
+	# Commit the whole channel as a from==to busy record (shared with bump/windup). A miss means the caster
+	# went busy between the brain's gate and now (host single-threaded; defensive).
+	if not _move_referee.commit_in_place(caster_id, cast_sec):
+		return -1.0
+	var caster := _node_of_id(caster_id)
+	# Face the ally being tended (server truth; a ZERO dir no-ops). Purely so the tell points the right way.
+	_move_referee.set_facing(caster_id, (_move_referee.tile_of_entity(target_id) - _move_referee.tile_of_entity(caster_id)).sign())
+	# Telegraph the channel on its OWN event — never an attack/windup (a heal is a DISTINCT outcome, §2.3.4).
+	# as_peer = the caster (negative id, fine on the wire), mirroring wind_up. Carries the target tile so every
+	# peer can point the tell at the ally, and cast_sec so the on-screen channel holds exactly the window.
+	NetEvents.post_event("heal_cast", {
+		"caster_id": caster_id,
+		"caster_name": _name_of(caster),
+		"target_id": target_id,
+		"target_name": _name_of(target),
+		"target_tile": _move_referee.tile_of_entity(target_id),
+		"cast_sec": cast_sec,
+	}, caster_id)
+	# Resolve at cast END (heal-at-END, like a potion drink): host SceneTreeTimer (survives despawn by
+	# construction, same as _resolve_windup). Capture PRIMITIVES — a caster killed mid-cast wastes the heal
+	# (the resolve re-checks liveness). amount is baked at cast start (a live /m change mid-cast won't retune).
+	get_tree().create_timer(cast_sec).timeout.connect(
+			_resolve_heal_cast.bind(caster_id, target_id, maxi(0, amount)))
+	return cast_sec
+
+
+## Resolve a committed heal cast at its END (host-only, from the cast timer). The caster must still be alive —
+## a healer killed or despawned mid-cast heals NOTHING (the distinct outcome a slow telegraph buys, mirroring
+## _resolve_windup and heal-at-drink-END). The heal lands on the COMMITTED ally through the shared apply_heal
+## pipe (which re-guards liveness + clamps to max, and posts the `heal` event: green +N popup, HP readout, log
+## line). If that ally died during the channel, apply_heal's own is-alive guard no-ops cleanly — the ally's
+## `died` line already told the story. source_name is the healer's, so the heal's flavor names its caster.
+func _resolve_heal_cast(caster_id: int, target_id: int, amount: int) -> void:
+	if not is_alive(caster_id):
+		return
+	apply_heal(target_id, amount, _name_of(_node_of_id(caster_id)))
+
+
 ## Host-side stat accessors, read by MoveReferee for a bump/AoO so combat numbers live in ONE place
 ## (this referee). BASE + WIELDER MODIFIER (v0.19.0, DESIGN §2.3.7): the equipped weapon supplies the
 ## base damage and the wielder adds a signed bonus on top (floored at 0), so the SAME weapon hits for

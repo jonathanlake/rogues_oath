@@ -112,3 +112,33 @@ func resolved_tactical_radius() -> int:
 ## attacks — a training dummy / destructible prop that still seeds HP, shows a nameplate, takes
 ## damage, and dies through the normal referee path. Read HOST-side by Main's monster spawn gate.
 @export var has_brain: bool = true
+
+
+## SUPPORT — HEAL ABILITY (v0.19.4). A monster with all three fields below set (has_heal_ability) is a
+## HEALER: BEFORE it decides to chase/attack, its brain scans allied monsters and, if one within
+## heal_range_tiles is below its max HP, commits a telegraphed heal CAST that restores heal_amount to the
+## LOWEST-HP ally at cast END. The cast is a COMMITTED action (Commitment Rule) authored in BEATS — it
+## self-limits via the busy record exactly like an attack, so there is NO separate cooldown (this generalizes
+## Part 4 Q9's unified-occupancy answer), and it rescales with the live tempo knob like every other duration.
+## All three default to 0 = NOT a healer, so an ordinary monster is untouched and a new healer is a .tres,
+## never code. Read HOST-side: MonsterBrain runs the target scan through CombatReferee and requests the cast;
+## CombatReferee commits + resolves it. Killed / interrupted mid-cast wastes the heal (heal-at-END, the same
+## rule potions use). An ARMED healer still chases + attacks when it has no wounded ally to tend.
+
+## Hit points restored to the chosen ally at cast END (apply_heal clamps to the ally's max). 0 = no heal.
+@export var heal_amount: int = 0
+
+## Heal reach in CHEBYSHEV (king-move) tiles: the brain only heals an ally within this many tiles. Deliberately
+## DISTINCT from aggro_range_tiles — a healer can support from farther than it would engage a player. 0 = no heal.
+@export var heal_range_tiles: int = 0
+
+## The telegraphed CAST window in BEATS: the healer is BUSY (committed — cannot move or re-cast) for this long,
+## and the heal LANDS when it ends. Stamped at the caster's resolved pace (PaceReferee §2.8.7), so it scales
+## with tempo like every other duration. 0 = no heal (a heal must be telegraphed — there is no instant heal).
+@export var heal_cast_beats: float = 0.0
+
+
+## True when this monster is an authored HEALER (all three heal fields set). The ONE predicate both the brain
+## and the spawn/scan paths gate on, so "is a healer" can't drift between the target scan and the cast commit.
+func has_heal_ability() -> bool:
+	return heal_amount > 0 and heal_range_tiles > 0 and heal_cast_beats > 0.0

@@ -70,6 +70,15 @@ const GOBLIN_SPAWN_TILES: Array[Vector2i] = [
 	Vector2i(39, 21),  # room E
 ]
 
+# Goblin Shaman support pack (v0.19.4), room D (south of the starting room A, cols 2–13 / rows 19–25 —
+# previously EMPTY of monsters). A healer flanked by two ordinary goblins it can heal: damage a flanking
+# goblin and the shaman channels a heal onto the lowest-HP ally within 14 tiles. Spawned UNCONDITIONALLY
+# (like the training dummy), so the heal demo always appears regardless of the goblin=N cap. Each tile is
+# guarded (walkable + free) by _spawn_monster_at, so a future room edit that walls a tile skips that spawn.
+const SHAMAN_TYPE_PATH := "res://resources/monsters/goblin_shaman.tres"
+const SHAMAN_SPAWN_TILE := Vector2i(7, 20)
+const SHAMAN_GUARD_TILES: Array[Vector2i] = [Vector2i(6, 20), Vector2i(8, 20)]
+
 # Sentinel for _pick_room_spawn_tile (F6 summon): out-of-bounds, so it can never collide with a real
 # free tile. Returned when a room has no free walkable tile at all, so the validator refuses cleanly.
 const _NO_SPAWN_TILE := Vector2i(-1, -1)
@@ -779,6 +788,10 @@ func _on_net_event(event: Dictionary) -> void:
 			# A resolved heal (v0.18.0 chunk C, host-authored — the effect end of a drink). Every peer floats the
 			# green "+N" popup + refreshes HP; the healed player's HUD/party-frame mirrors it (log line from game_log).
 			_handle_heal_event(event)
+		"heal_cast":
+			# A monster's telegraphed heal CHANNEL starting (v0.19.4, host-authored — the shaman). Every peer
+			# floats a green channel tell over the caster; the LAND is the later `heal` event (log from game_log).
+			_handle_heal_cast_event(event)
 
 
 ## Play back an accepted glide. Resolve the mover by entity id: positive is a player, negative a
@@ -1142,6 +1155,21 @@ func _handle_heal_event(event: Dictionary) -> void:
 	# twin rather than adding a note_heal: a healed own-player's bar climbs with no new HUD surface. A non-own id
 	# is a no-op inside the HUD.
 	_hud.note_attack(entity_id, hp_after, target_max)
+
+
+## All peers: play back a monster's heal-CAST telegraph (§2.3.4, v0.19.4 — the shaman's channel). Rendered from
+## the authoritative event on every peer: the caster turns to face its ally and a GREEN "+" floats over it,
+## marking the channel window — deliberately DISTINCT from the WHITE attack wind-up so a heal is never confusable
+## with a strike. The LAND is the later `heal` event (green +N over the ally); the log line comes from game_log.
+## A first-pass tell (facing + popup); a richer held channel visual can follow if it feel-tests as too subtle.
+func _handle_heal_cast_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var caster := _node_for_peer(int(data.get("caster_id", 0)))
+	if caster == null:
+		return
+	var target_tile: Vector2i = data.get("target_tile", caster.tile)
+	caster.face_toward(signi(target_tile.x - caster.tile.x))
+	_fx.damage_popup("+", DamagePopup.HEAL_COLOR, caster.tile)
 
 
 ## All peers: adopt a host-stamped tempo change (§2.8.3). Apply it to the LOCAL GameManager beat so the
@@ -1811,6 +1839,12 @@ func _spawn_goblins() -> void:
 	# the goblin cap (it is a practice fixture, not a monster the goblin=N knob governs). Skipped with
 	# a warning if its tile is walled/occupied, exactly like a goblin.
 	_spawn_monster_at(DUMMY_SPAWN_TILE, DUMMY_TYPE_PATH)
+
+	# Goblin Shaman support pack (v0.19.4) — room D, NOT counted against the goblin cap (like the dummy), so
+	# the heal demo always spawns. The shaman first, then its two flanking goblins adjacent to it.
+	_spawn_monster_at(SHAMAN_SPAWN_TILE, SHAMAN_TYPE_PATH)
+	for tile in SHAMAN_GUARD_TILES:
+		_spawn_monster_at(tile, GOBLIN_TYPE_PATH)
 
 
 ## Host-only per-tile monster spawn step (v0.17.2 extract), shared by _spawn_goblins (each map goblin +
