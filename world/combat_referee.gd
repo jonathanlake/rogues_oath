@@ -754,7 +754,8 @@ func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int, recovery
 	}, caster_id)
 	# LAST, after the fizzle event is on the wire (same ordering rule as the other two release sites).
 	# `recovery_sec` is unused on this branch by design — it was baked into the one cast+recovery record.
-	_move_referee.finish_busy_early(caster_id)
+	if not _move_referee.finish_busy_early(caster_id):
+		push_warning("[CombatReferee] smite whiff for %d posted duration_sec 0 but no in-place record was released — client/server recovery tell may disagree" % caster_id)
 
 
 # ── Active abilities (v0.20.0, the 1-5 hotbar — a player-triggered melee strike + stun) ──────
@@ -843,7 +844,8 @@ func _resolve_ability(attacker_id: int, target_tile: Vector2i, damage: int, stun
 	}, attacker_id)
 	# LAST, for the same ordering reason as _resolve_windup's release: the miss event precedes any `glide_to`
 	# a promoted pipelined step posts. `recovery_sec` goes unused on this branch by design.
-	_move_referee.finish_busy_early(attacker_id)
+	if not _move_referee.finish_busy_early(attacker_id):
+		push_warning("[CombatReferee] ability whiff for %d posted duration_sec 0 but no in-place record was released — client/server recovery tell may disagree" % attacker_id)
 
 
 ## The ACTIVE ABILITY at `idx` on this node's class, or null (v0.20.0). Duck-typed off `player_class.active_abilities`
@@ -1346,6 +1348,8 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 	# expiry and is handed over BY play_swing — would stay parked raised forever after every miss. So
 	# the miss still animates its full arc (§2.3.4: a whiff is a visible outcome) while the attacker is
 	# mechanically free at once. Only this whiff carries it; the ability / smite whiffs stamp no weapon.
+	# NOTE the value coupling: the arc length IS `recovery_sec`, so tuning a weapon's recovery_beats
+	# down also shortens its whiff animation — deliberate (pre-v0.26.0 behavior), but not obvious.
 	if attacker is Entity and attacker.equipped_weapon != null:
 		whiff_data["weapon"] = attacker.equipped_weapon.display_name
 		whiff_data["swing_sec"] = recovery_sec
@@ -1357,7 +1361,8 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 	# exactly what "recovery only on contact" means. The CONTACT branches above return before this and keep
 	# the full record byte-identically. A stunned / dead attacker returned at the top and keeps its window
 	# too (the stun IS the punishment; a dead attacker's record was torn down by clear_entity).
-	_move_referee.finish_busy_early(attacker_id)
+	if not _move_referee.finish_busy_early(attacker_id):
+		push_warning("[CombatReferee] windup whiff for %d posted duration_sec 0 but no in-place record was released — client/server recovery tell may disagree" % attacker_id)
 
 
 ## Resolve a lethal hit SYNCHRONOUSLY (decision 7, Q1 placeholder). Erase HP, then erase the dead
