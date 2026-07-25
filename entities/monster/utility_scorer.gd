@@ -74,7 +74,11 @@ static func score_candidates(ctx: Dictionary) -> Array:
 	var flee := _score_flee(ctx, type)
 	# APPROACH is the only candidate that depends on the others: movement must serve another tactical
 	# objective (Jeff), so stepping toward a player scores ONLY when no cast/melee is available from here.
-	var in_range: bool = float(heal["score"]) > 0.0 or float(smite["score"]) > 0.0 or float(melee["score"]) > 0.0
+	# The heal candidate counts ONLY when it is actually CASTABLE from this tile (v0.23.3 review fix): the
+	# far-patient WALK form is itself movement, and letting it flip this gate suppressed player-approach
+	# whenever any distant ally had a scratch — the same reason FLEE is excluded (see SCOPE NOTE below).
+	var heal_castable: bool = float(heal["score"]) > 0.0 and bool(heal["data"].get("in_range", true))
+	var in_range: bool = heal_castable or float(smite["score"]) > 0.0 or float(melee["score"]) > 0.0
 	var approach := _score_approach(ctx, type, in_range)
 	out.append(heal)
 	out.append(smite)
@@ -122,21 +126,37 @@ static func sort_by_score(candidates: Array) -> Array:
 ## is in range, healed, or dead. An in-range patient always outranks the walk (the walk exists to CREATE
 ## the in-range case).
 static func _score_heal(ctx: Dictionary, type: MonsterType) -> Dictionary:
+	# UNIFORM data shape (v0.23.3 review fix): every heal candidate carries all three keys — target_id,
+	# in_range, approach_tile — so no consumer can read a key the other branch dropped, and a missing
+	# in_range can never silently take the cast path with target 0.
 	var candidate := { "action": ACTION_HEAL, "score": 0.0,
-			"data": { "target_id": int(ctx.get("heal_target_id", 0)), "in_range": true } }
+			"data": { "target_id": int(ctx.get("heal_target_id", 0)), "in_range": true,
+					"approach_tile": Vector2i.ZERO } }
+	# Score the NEAR (castable) and FAR (walk-to) patients INDEPENDENTLY and take the larger (v0.23.3
+	# review fix): the old early-return let a barely-scratched in-range ally fully preempt a dying ally
+	# one tile out of range — the exact inversion of the curve's "tend the dying, ignore scratches"
+	# contract. Same curve both sides, so the comparison is apples-to-apples; the near branch keeps its
+	# per-extra-injured bonus (many nearby wounded = casting here treats the group).
+	var near_score := 0.0
 	if bool(ctx.get("heal_available", false)):
 		# Clamped: an over-heal / bad max would otherwise push the fraction outside [0,1] and invert the curve.
 		var worst_frac := clampf(float(ctx.get("heal_worst_frac", 1.0)), 0.0, 1.0)
 		var missing := 1.0 - worst_frac
 		var extra_injured := maxi(0, int(ctx.get("heal_injured_count", 1)) - 1)
-		candidate["score"] = maxf(0.0, type.utility_heal_weight * missing * missing
+		near_score = maxf(0.0, type.utility_heal_weight * missing * missing
 				+ type.utility_heal_per_injured_bonus * float(extra_injured))
-		return candidate
-	var far_frac := clampf(float(ctx.get("heal_far_frac", 1.0)), 0.0, 1.0)
-	if far_frac < 1.0 and type.has_heal_ability():
-		var far_missing := 1.0 - far_frac
-		candidate["score"] = maxf(0.0, type.utility_heal_weight * far_missing * far_missing)
-		candidate["data"] = { "in_range": false, "approach_tile": ctx.get("heal_far_tile", Vector2i.ZERO) }
+	var far_score := 0.0
+	if type.has_heal_ability():
+		var far_frac := clampf(float(ctx.get("heal_far_frac", 1.0)), 0.0, 1.0)
+		if far_frac < 1.0:
+			var far_missing := 1.0 - far_frac
+			far_score = maxf(0.0, type.utility_heal_weight * far_missing * far_missing)
+	if far_score > near_score:
+		candidate["score"] = far_score
+		candidate["data"]["in_range"] = false
+		candidate["data"]["approach_tile"] = ctx.get("heal_far_tile", Vector2i.ZERO)
+	else:
+		candidate["score"] = near_score
 	return candidate
 
 

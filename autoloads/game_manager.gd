@@ -32,10 +32,10 @@ const DEV_MONSTER_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_til
 	"utility_tiebreak_margin", "utility_heal_weight", "utility_heal_per_injured_bonus",
 	"utility_smite_weight", "utility_standstill_bonus", "utility_smite_adjacent_penalty",
 	"utility_melee_weight", "utility_melee_alone_bonus", "utility_flee_weight",
-	"utility_alone_move_factor", "utility_approach_weight", "backup_radius_tiles"]
+	"utility_alone_move_factor", "utility_approach_weight", "backup_radius_tiles", "heal_seek_radius_tiles"]
 const DEV_MONSTER_INT_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles", "bonus_damage",
 	"heal_amount", "heal_range_tiles", "smite_damage", "smite_range_tiles", "flee_range_tiles",
-	"backup_radius_tiles"]
+	"backup_radius_tiles", "heal_seek_radius_tiles"]
 const DEV_MONSTER_CLAMPS := {
 	"max_hp": [1, 99999],
 	"aggro_range_tiles": [0, 30],
@@ -74,6 +74,7 @@ const DEV_MONSTER_CLAMPS := {
 	"utility_alone_move_factor": [0.0, 1.0],
 	"utility_approach_weight": [0.0, 200.0],
 	"backup_radius_tiles": [0, 30],
+	"heal_seek_radius_tiles": [0, 30],
 }
 
 ## Dev GAME-LEVEL preset fields (v0.22.1) — the allowlist for CONFIG_PRESETS' third row kind, "g". Unlike the

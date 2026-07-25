@@ -9,6 +9,26 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.23.3 (2026-07-24) — REVIEW PASS: /code-review found 9 issues in the evening's solo work; 8 fixed,
+  1 declined with cause.** A high-effort review of v0.23.1+v0.23.2 (the un-red-teamed commits) before
+  closing the session. Fixed: (1) FOUR changelog entries (v0.22.0→v0.23.1) had lost their `- **vX.Y.Z**`
+  header lines — each session edit's anchor consumed the previous entry's header; all restored, history
+  legible again. (2-6) The v0.23.2 heal-approach feature had five interacting defects, now rebuilt: the
+  far-patient WALK candidate no longer flips the `in_range` gate (it suppressed player-approach whenever
+  any distant ally had a scratch); the near/far branches now score INDEPENDENTLY and take the larger (a
+  99%-HP near ally no longer preempts a dying ally one tile out of range); the awareness band gets its own
+  `heal_seek_radius_tiles` export (default 12, `/m`-tunable) — the v0.23.2 reuse of backup radius 6 vs heal
+  range 5 had collapsed it to a ONE-TILE ring; the walk step now sets `_last_step_was_diagonal` like every
+  other step site (settle-backstop timing); and `_first_step_toward` removes its targets from the avoid set
+  (find_path temp-solids avoid tiles, so a monster-tile destination made the sibling-avoiding attempt
+  always fail to the naive retry). (7) The per-think ally-HP scan is gated on `has_heal_ability()` — plain
+  chasers no longer pay it. (8) The heal candidate's `data` dict is shape-uniform (target_id + in_range +
+  approach_tile always) and `_scan_allies`' docstring matches its 5-key return. DECLINED: the rare
+  double-pathfind on a declined heal-walk think — caching A* across candidates costs more plumbing than
+  the nanoseconds it saves at ≤6 monsters. VERIFICATION: parse-clean import; the heal-approach behaviour
+  trace was BLOCKED tonight (Jon's live session holds port 3000) — the exact goblinat=7,15 recipe is
+  recorded in ROADMAP's §2.12 FUNCTION-debt entry, first thing next harness session.
+
 - **v0.23.2 (2026-07-24) — `/config 2`, faster smites, the Mender WALKS to its patient, and the F3 AI
   table clears on F5.** Four quick items from Jon's testing. (1) **Preset `2`** — the heavier-telegraph
   loadout: longsword/club `windup 3`/`recovery 4`, dagger `windup 2`/`recovery 4` (the fast option keeps a
@@ -26,7 +46,9 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
   logic-reviewed) — the next `/ai` session will show it as `chosen: heal` while the Mender glides, the
   unambiguous tell. (4) **F3 stale rows** — the overlay's per-monster decision table now clears on the
   `dev_reset_round` broadcast; it previously kept last round's monsters beside the fresh spawns' (their
-  negative ids get reused, so the stale rows even looked plausible). — `attack_beats` → `recovery_beats` (Jon's rename), and ranged becomes ADDITIVE.**
+  negative ids get reused, so the stale rows even looked plausible).
+
+- **v0.23.1 (2026-07-24) — `attack_beats` → `recovery_beats` (Jon's rename), and ranged becomes ADDITIVE.**
   Jon, from play: "windup_beats fits its name; attack_beats feels like a recovery animation after the swing"
   — and the code agreed: the strike has been INSTANT at the window's start since v0.7.0 (the field was
   always the after-strike tail), the referee's own helper was already named `_recovery_duration_of`, and
@@ -38,7 +60,9 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
   deleted because the bad state is unrepresentable. Behavior-identical by construction and by trace
   (post-rename longsword bump stamps `duration_sec 1.0`, same as every pre-rename log); the bow's
   arithmetic is identical (loose at 2 beats, busy 3) but was not re-run — no harness knob equips a bow,
-  noted honestly. `/w <weapon> attack_beats` no longer exists; use `recovery_beats`. — THE WARREN: room D becomes the utility-AI showcase battle (designed, then
+  noted honestly. `/w <weapon> attack_beats` no longer exists; use `recovery_beats`.
+
+- **v0.23.0 (2026-07-24) — THE WARREN: room D becomes the utility-AI showcase battle (designed, then
   PLAYED into shape).** Jon asked for a fight that demonstrates the AI and is actually fun; this is it,
   calibrated across ~8 scripted two-instance battles that reshaped the design three times. (1) **The cast**
   (all data): the GOBLIN BRUTE — a real 32rogues brute cell (7,0), 28 HP, club, aggro 4 — anchors the wall
@@ -67,7 +91,9 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
   double artillery — red-tile dodging is the survival skill and its feel is exactly the Jon+Jeff session's
   question (with `/ai` + F3 live); the config-1-tempo Warren and the full focus-fire/healer-first profile
   matrix are queued for that session. `main.gd`'s `WARREN_SPAWNS` table replaces the old shaman-pack
-  consts; spawns still route through the guarded, warn-on-bad-tile path outside the goblin=N cap. — `/config 1` sets the tactical beat + the room-D battle got PLAYED (and it
+  consts; spawns still route through the guarded, warn-on-bad-tile path outside the goblin=N cap.
+
+- **v0.22.1 (2026-07-24) — `/config 1` sets the tactical beat + the room-D battle got PLAYED (and it
   found three bugs).** (1) **Game-level preset rows.** `/config` grows a third row kind `g` beside `w`/`m`,
   allowlisted by `GameManager.DEV_GAME_FIELDS` and dispatched per-field (a per-field switch, not a generic
   pipeline); the one field today is `tactical_beat_sec`, snapped/clamped to the shared tempo band and
@@ -100,7 +126,9 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
   re-think timer chains its whole life (activation think + spawn-seed-glide boundary think), doubling the
   idle think rate forever, visible as 0.06s doublets in the traces — collapsed to one chain by a
   one-pending-re-think latch (`_rethink_pending`), with the busy-gate backstop keeping the wake-at-free
-  contract self-healing. Harness: `ai_decision` joined the `eventlog=` allowlist. — MONSTER AI: the Goblin Shaman thinks in WEIGHTS (Jeff's utility-AI spec), the
+  contract self-healing. Harness: `ai_decision` joined the `eventlog=` allowlist.
+
+- **v0.22.0 (2026-07-24) — MONSTER AI: the Goblin Shaman thinks in WEIGHTS (Jeff's utility-AI spec), the
   pack rallies, and `/ai` shows the numbers.** The first cut of DESIGN §2.12 — enemy decisions by scored
   desirability instead of a hardcoded cascade. (1) **The utility scorer.** Opt-in per MonsterType
   (`utility_ai`); a pure static `UtilityScorer` ranks the currently-available actions each think — the brain

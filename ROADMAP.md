@@ -298,11 +298,14 @@ Not scheduled — pulled in when their moment comes:
   separate `rally_radius_tiles` export is wanted before any monster needs them to differ more than the
   Warren brute's does; (2) the chase model inverts tank order (a slow anvil arrives LAST — fast allies
   lead every charge), so a hold-position/guard-post behavior is prerequisite for heavy frontliners; the
-  authored-but-unused `speed_lumbering` tier (1.5 glide-beats) waits on it. **FUNCTION debt (v0.23.2,
-  first thing next harness session):** the Mender's heal-approach walk shipped parse-clean but NOT
-  trace-verified — assert `chosen: heal` in an `ai_decision` while the Mender is gliding toward an
-  out-of-range wounded ally, then the cast once in range (an isolated god-host run with the patient
-  pre-pulled beyond heal range 5 does it). **FEEL queue (next Jon+Jeff session, `/ai` + F3 live):**
+  authored-but-unused `speed_lumbering` tier (1.5 glide-beats) waits on it. **FUNCTION debt (v0.23.3,
+  first thing next harness session — blocked tonight on Jon's live session holding port 3000):** the
+  heal-approach walk (rebuilt in v0.23.3 after /code-review found 6 defects in the v0.23.2 cut) is
+  parse-clean but NOT trace-verified. Recipe, ready to run: host `goblin=1 goblinat=7,15 cmd=/ai
+  move=s,s,s,e,e,e,e,s,s,s,s,s,s,s,s,s,n,n,n eventlog=<f>` + idle client — the host wounds the (7,15)
+  goblin once (Chebyshev 9 from the Mender: beyond heal 5, inside seek 12) and retreats; assert Mender
+  `ai_decision chosen: heal` interleaved with its own `glide_to`s (the walk, routing AROUND the brute —
+  also exercises the avoid fix), then `heal_cast`+`heal` on the patient once within range 5. **FEEL queue (next Jon+Jeff session, `/ai` + F3 live):**
   red-tile dodge cadence vs double artillery (scripted non-dodgers wipe — dodging IS the survival
   skill), the Warren at config-1/config-2 tempo, whether the brute-trap reads, the 4-beat smite window.
 - **AUTOPLAY bot** (Zorbus "Behind the Scenes", research doc §G.4 — promoted to a real bullet v0.22.1): a

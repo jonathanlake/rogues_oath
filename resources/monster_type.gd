@@ -270,6 +270,13 @@ func has_smite_ability() -> bool:
 ## Feeds the alone/backed terms of the melee and flee weights above. 0 = always considered alone.
 @export var backup_radius_tiles: int = 6
 
+## How far (Chebyshev tiles) a HEALER notices a wounded brained ally BEYOND its heal range and scores the
+## walk-to-heal form of the HEAL candidate (v0.23.3 — the v0.23.2 walk feature reused backup_radius_tiles,
+## which with backup 6 / heal 5 collapsed the awareness band to a single tile). Read only when
+## has_heal_ability(); 12 covers a room. The walk itself is one committed step per decision — the per-step
+## re-think re-scores, so a longer seek never means a blind cross-map march.
+@export var heal_seek_radius_tiles: int = 12
+
 ## The personality pool this monster rolls from at spawn (v0.22.0). The brain picks ONE uniformly at
 ## activation and keeps it for that instance's life — the roll is stored on the BRAIN, never here, because
 ## a MonsterType is a SHARED cached resource and must never carry per-instance state. Empty (default) =

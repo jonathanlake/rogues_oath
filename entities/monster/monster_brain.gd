@@ -583,15 +583,19 @@ func _build_utility_context(my_tile: Vector2i, targets: Array, engaged: bool) ->
 	}
 
 
-## ONE pass over allied monsters for the two things the scorer asks about them: BACKUP (courage — is there a
-## living, BRAINED ally within backup_radius_tiles?) and the INJURED picture inside heal_range_tiles (how many,
-## and the worst hp fraction). Both walk the same authoritative chain: MoveReferee.monster_tiles (occupancy,
-## self excluded) → entity_at(tile) → id → CombatReferee.is_alive / has_brain_of / hp_of / max_hp_of, because
-## occupancy answers with an entity ID rather than a node.
+## ONE pass over allied monsters for the three things the scorer asks about them: BACKUP (courage — is there
+## a living, BRAINED ally within backup_radius_tiles?), the INJURED picture inside heal_range_tiles (how
+## many, and the worst hp fraction), and — healers only — the worst WOUNDED PATIENT beyond heal range but
+## inside heal_seek_radius_tiles (the walk-to-heal destination, v0.23.2/v0.23.3). All walk the same
+## authoritative chain: MoveReferee.monster_tiles (occupancy, self excluded) → entity_at(tile) → id →
+## CombatReferee.is_alive / has_brain_of / hp_of / max_hp_of, because occupancy answers with an entity ID
+## rather than a node. The HP reads are GATED on has_heal_ability (v0.23.3 review fix — a chaser paid the
+## per-think ally-HP scan for a result only healers consume).
 ##
-## The training dummy and any other has_brain=false prop is excluded from BOTH counts: a destructible barrel is
-## not backup, and it is not a comrade worth a cast (it was a heal magnet once — the v0.19.10 fix). Returns
-## { has_backup, injured_count, worst_frac } with worst_frac 1.0 meaning "nobody is hurt".
+## The training dummy and any other has_brain=false prop is excluded from ALL counts: a destructible barrel
+## is not backup, and it is not a comrade worth a cast (it was a heal magnet once — the v0.19.10 fix).
+## Returns { has_backup, injured_count, worst_frac, far_worst_frac, far_worst_tile } — worst_frac /
+## far_worst_frac of 1.0 mean "nobody is hurt" there.
 func _scan_allies(my_tile: Vector2i) -> Dictionary:
 	var has_backup := false
 	var injured_count := 0
@@ -600,9 +604,13 @@ func _scan_allies(my_tile: Vector2i) -> Dictionary:
 	var far_worst_tile := Vector2i.ZERO
 	var backup_radius: int = _monster_type.backup_radius_tiles
 	var heal_radius: int = _monster_type.heal_range_tiles
+	var heal_capable := _monster_type.has_heal_ability()
+	# The far-patient net (v0.23.3 review fix): its OWN radius, not backup's — with backup 6 and heal 5 the
+	# old band collapsed to exactly one tile of awareness and the walk feature almost never fired.
+	var seek_radius: int = _monster_type.heal_seek_radius_tiles if heal_capable else 0
 	for tile in _referee.monster_tiles(_entity_id):
 		var cheb := maxi(absi(tile.x - my_tile.x), absi(tile.y - my_tile.y))
-		if cheb > backup_radius and cheb > heal_radius:
+		if cheb > backup_radius and cheb > heal_radius and cheb > seek_radius:
 			continue
 		var id: int = _referee.entity_at(tile)
 		# monster_tiles yields negative ids by construction; anything else is a race with a despawn (0) and
@@ -611,22 +619,26 @@ func _scan_allies(my_tile: Vector2i) -> Dictionary:
 			continue
 		if cheb <= backup_radius:
 			has_backup = true
+		if not heal_capable:
+			continue
 		var ally_max: int = _combat.max_hp_of(id)
 		# A 0 max means the node is gone — never divide by it.
-		if ally_max > 0:
-			var frac := float(_combat.hp_of(id)) / float(ally_max)
-			if frac < 1.0:
-				if cheb <= heal_radius:
-					injured_count += 1
-					worst_frac = minf(worst_frac, frac)
-				elif frac < far_worst_frac:
-					# Wounded ally BEYOND heal range but inside the scan (v0.23.2, Jon): the heal candidate
-					# can now score this patient and the executor WALKS toward it instead of shrugging into
-					# a smite — "if heal won the decision, move to your buddy." Worst-first, tile carried so
-					# the walk has a destination; the per-step re-think re-scores every tile (deterministic,
-					# so heal keeps winning until the patient is in range, healed, or dead).
-					far_worst_frac = frac
-					far_worst_tile = tile
+		if ally_max <= 0:
+			continue
+		var frac := float(_combat.hp_of(id)) / float(ally_max)
+		if frac >= 1.0:
+			continue
+		if cheb <= heal_radius:
+			injured_count += 1
+			worst_frac = minf(worst_frac, frac)
+		elif cheb <= seek_radius and frac < far_worst_frac:
+			# Wounded ally BEYOND heal range but inside the seek net (v0.23.2, Jon): the heal candidate
+			# scores this patient and the executor WALKS toward it instead of shrugging into a smite —
+			# "if heal won the decision, move to your buddy." Worst-first, tile carried so the walk has a
+			# destination; the per-step re-think re-scores every tile (deterministic, so heal keeps
+			# winning until the patient is in range, healed, or dead).
+			far_worst_frac = frac
+			far_worst_tile = tile
 	return { "has_backup": has_backup, "injured_count": injured_count, "worst_frac": worst_frac,
 			"far_worst_frac": far_worst_frac, "far_worst_tile": far_worst_tile }
 
@@ -675,6 +687,9 @@ func _execute_candidate(candidate: Dictionary, my_tile: Vector2i, targets: Array
 			var toward := _first_step_toward(my_tile, [data.get("approach_tile", Vector2i.ZERO)])
 			if toward == Vector2i.ZERO:
 				return false
+			# Same contract as every other step-submitting site (v0.23.3 review fix — this one skipped it):
+			# the busy-gate settle backstop needs the diagonal flag or a diagonal step's wake fires early.
+			_last_step_was_diagonal = toward.x != 0 and toward.y != 0
 			return _referee.submit_monster_intent(_entity_id, toward)
 		var heal_wait: float = _combat.heal_cast(
 				_entity_id, int(data.get("target_id", 0)), _monster_type.heal_amount,
@@ -841,6 +856,12 @@ func _report_engagement(aggroed: bool, target_id: int) -> void:
 ## authority on whether the chosen step is actually free. Shared by the idle branch and the busy-think pipeline.
 func _first_step_toward(my_tile: Vector2i, targets: Array) -> Vector2i:
 	var avoid: Array[Vector2i] = _referee.monster_tiles(_entity_id)
+	# A target must never be in its own avoid set (v0.23.3 review fix): find_path temp-solids avoid tiles
+	# and protects only `from`, so a MONSTER-tile destination (the heal-walk's patient) would be solid and
+	# the sibling-avoiding attempt would ALWAYS fail to the naive retry — silently losing the routing this
+	# function exists for. A no-op for player-tile targets (never in monster_tiles), so chase is unchanged.
+	for t in targets:
+		avoid.erase(t)
 	var dir := _best_first_step(my_tile, targets, avoid)
 	if dir != Vector2i.ZERO:
 		return dir
