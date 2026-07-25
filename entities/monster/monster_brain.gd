@@ -961,6 +961,14 @@ func _is_thinking() -> bool:
 	return Time.get_ticks_msec() < _thinking_until_msec
 
 
+## v0.25.0 (/mi per-instance tuning): migrate this brain's captured type ref to the instance-local
+## duplicate (or back to the shared .tres on /mi reset). Called synchronously by the Monster node's
+## set_instance_type inside the /mi validator, so the very next think reads the new resource — the
+## GLM plan review's race (a stale captured ref silently ignoring instance tunes) cannot occur.
+func set_monster_type(new_type: MonsterType) -> void:
+	_monster_type = new_type
+
+
 ## First step DIRECTION toward the nearest player by path length over the walls-only A* grid, or
 ## Vector2i.ZERO if every player is unreachable. Body occupancy is deliberately NOT baked into that grid
 ## (bodies are volatile) — but as of v0.10.4 a monster ROUTES AROUND its waiting siblings: every OTHER

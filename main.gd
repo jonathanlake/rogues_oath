@@ -351,6 +351,12 @@ func _ready() -> void:
 	# _on_window_size_changed for why this state is never legitimate here.
 	get_window().size_changed.connect(func(): _check_stuck_windowed.call_deferred())
 
+	# DEBUG TUNING PANEL (v0.25.0): the backtick inspector, added in code on EVERY peer (it is a
+	# presentation surface over the dev_command intent pipe, so host and client get the identical
+	# panel — multiplayer-first). Path preload: the file is new this version (uid lands on the
+	# next editor import; the string path is the sanctioned bootstrap form).
+	add_child(preload("res://ui/debug_panel/debug_panel.gd").new())
+
 	# Paint the room first, on EVERY peer, so players spawn onto a visible floor. Deterministic
 	# presentation of the logical grid — same input (WorldGrid) everywhere, so it can't diverge.
 	_build_room()
@@ -594,7 +600,7 @@ func _ready() -> void:
 		# The item-spawn Callable (v0.18.0) hands DevCommands the /item spawn access WITHOUT reaching up
 		# into Main: it wraps _spawn_item_at (host-only author API), so the component stays decoupled (it
 		# calls a value, not a parent) and every item still spawns through the ONE guarded, id-assigning path.
-		_dev_commands.activate(_players, _combat, _referee, _spawn_item_at)
+		_dev_commands.activate(_players, _combat, _referee, _spawn_item_at, _monsters)
 		NetEvents.register_handler("dev_command", _dev_commands.validate)
 		print("[HOST] server started (peer %d) — spawning host player" % multiplayer.get_unique_id())
 		# Spawn the host's own player immediately — no RPC needed. (_spawn_config records the reset

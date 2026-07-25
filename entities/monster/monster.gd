@@ -97,6 +97,19 @@ func activate_brain(referee: Node, combat: Node, pace: Node) -> void:
 	_brain.activate(referee, combat, entity_id, monster_type, pace)
 
 
+## Host-only (v0.25.0, /mi per-instance tuning): swap in an instance-local MonsterType (the lazy
+## duplicate) and migrate the brain's captured ref IN THE SAME CALL — no async window between the
+## node's readers (referees resolve node.monster_type dynamically) and the brain's own reference
+## (captured at activate). Also the /mi reset path: passing the freshly-loaded SHARED .tres here
+## returns the instance to global /m tuning. Presentation fields (sprite, name) deliberately not
+## re-derived — /mi tunes stats, not identity.
+func set_instance_type(new_type: MonsterType) -> void:
+	monster_type = new_type
+	glide_speed = new_type.glide_speed
+	if _brain != null:
+		_brain.set_monster_type(new_type)
+
+
 ## Host-only forwarder (v0.17.2 review fix): the combat referee tells this monster it just took damage so
 ## its brain treats the hit as an aggro source — a ranged arrow from beyond aggro_range_tiles still wakes it
 ## (no free sniping). Null-guards the brain the same way activate_brain assumes it (the node graph is uniform

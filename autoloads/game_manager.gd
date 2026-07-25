@@ -89,10 +89,19 @@ const DEV_MONSTER_CLAMPS := {
 ## v0.24.0 adds the stamina-experiment regen dials; v0.24.1 the exhausted-crawl dial. Authority story
 ## (per the rule above): all three are read HOST-side only (MoveReferee reads them live at each arm /
 ## stamp), so their branches are plain host-side config writes — no broadcast, no client ever reads them.
-const DEV_GAME_FIELDS := ["tactical_beat_sec", "regen_idle_beats", "regen_interval_beats",
-		"exhausted_step_beats", "monster_think_min_beats", "monster_think_max_beats",
-		"stamina_refill_lockout_beats", "stamina_max", "monster_stamina_max", "swing_catches_adjacent",
-		"regen_refills_full", "passive_regen_beats"]
+## v0.25.0 overhaul: every stamina dial split player_/monster_. Plain-write fields dispatch through
+## DevCommands._GAME_FIELD_SPECS (one shared authority story); tactical_beat_sec keeps its bespoke
+## broadcast branch. This list MUST cover specs ∪ bespoke — /help derives from it.
+const DEV_GAME_FIELDS := ["tactical_beat_sec",
+		"player_regen_idle_beats", "monster_regen_idle_beats",
+		"player_regen_interval_beats", "monster_regen_interval_beats",
+		"player_exhausted_step_beats", "monster_exhausted_step_beats",
+		"player_refill_lockout_beats", "monster_refill_lockout_beats",
+		"player_regen_refills_full", "monster_regen_refills_full",
+		"player_passive_regen_beats", "monster_passive_regen_beats",
+		"player_exhausted_blocks_movement", "monster_exhausted_blocks_movement",
+		"stamina_max", "monster_stamina_max",
+		"monster_think_min_beats", "monster_think_max_beats", "swing_catches_adjacent"]
 
 ## Dev CONFIG PRESETS (v0.19.7): `/config <alias>` applies a whole BUNDLE of /w + /m tunings in one command, so
 ## a repeated test loadout is a single keystroke instead of five. Lives HERE (beside the DEV_* allowlists) so
@@ -134,8 +143,11 @@ const CONFIG_PRESETS := {
 		["g", "tempo", "tactical_beat_sec", 0.25],
 		# v0.24.8 (Jon): the stamina loadout joins the fight-feel preset — ONE pip each side
 		# (every step is precious), regen starts fast (4 idle beats) and refills fast (2/point).
-		["g", "stamina", "regen_idle_beats", 4.0],
-		["g", "stamina", "regen_interval_beats", 2.0],
+		# v0.25.0: rows doubled for the player/monster split — the preset keeps both sides equal.
+		["g", "stamina", "player_regen_idle_beats", 4.0],
+		["g", "stamina", "monster_regen_idle_beats", 4.0],
+		["g", "stamina", "player_regen_interval_beats", 2.0],
+		["g", "stamina", "monster_regen_interval_beats", 2.0],
 		["g", "stamina", "stamina_max", 1],
 		["g", "stamina", "monster_stamina_max", 1],
 	],
@@ -235,6 +247,10 @@ var debug_windup_override_sec: float = 0.0
 ## `overlay=1` arg (either role, before the main scene loads) for scripted screenshots. The
 ## in-session toggle is always F3 regardless; gameplay code never reads this.
 var debug_overlay_start_visible: bool = false
+
+## DEBUG ONLY. When true, the backtick DEBUG TUNING PANEL (v0.25.0) starts OPEN — set by debug.gd's
+## `debugpanel=1` arg for scripted screenshots. The in-session toggle is always ` regardless.
+var debug_panel_start_visible: bool = false
 
 ## DEBUG ONLY. When true, every utility-AI monster BROADCASTS its decision (`ai_decision`: the chosen action
 ## plus every candidate's score) after each think, and the F3 diagnostics overlay renders the last one per

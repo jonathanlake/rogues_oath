@@ -18,6 +18,32 @@ extends Node
 ## event and defers (no dev_command broadcast). Unknown command / bad field / non-number / out-of-range
 ## value → reject with a reason (sender-only, like a refused move).
 
+# Plain-write game-field specs (v0.25.0): field -> { min, max } floats by default; "int": true /
+# "bool": true switch the parse; "post" names a post-write hook. MUST stay in step with
+# GameManager.DEV_GAME_FIELDS (the allowlist /help derives from) — an allowlisted field missing
+# here AND missing a bespoke branch fails loudly in _dev_config_game_row.
+const _GAME_FIELD_SPECS := {
+	"player_regen_idle_beats": { "min": 0.0, "max": 100.0 },
+	"monster_regen_idle_beats": { "min": 0.0, "max": 100.0 },
+	"player_regen_interval_beats": { "min": 0.25, "max": 100.0 },
+	"monster_regen_interval_beats": { "min": 0.25, "max": 100.0 },
+	"player_exhausted_step_beats": { "min": 1.0, "max": 100.0 },
+	"monster_exhausted_step_beats": { "min": 1.0, "max": 100.0 },
+	"player_refill_lockout_beats": { "min": 0.0, "max": 200.0 },
+	"monster_refill_lockout_beats": { "min": 0.0, "max": 200.0 },
+	"player_regen_refills_full": { "bool": true },
+	"monster_regen_refills_full": { "bool": true },
+	"player_passive_regen_beats": { "min": 0.0, "max": 100.0, "post": "passive" },
+	"monster_passive_regen_beats": { "min": 0.0, "max": 100.0, "post": "passive" },
+	"player_exhausted_blocks_movement": { "bool": true },
+	"monster_exhausted_blocks_movement": { "bool": true },
+	"stamina_max": { "min": 1, "max": 12, "int": true },
+	"monster_stamina_max": { "min": 1, "max": 12, "int": true },
+	"monster_think_min_beats": { "min": 0, "max": 30, "int": true },
+	"monster_think_max_beats": { "min": 0, "max": 30, "int": true },
+	"swing_catches_adjacent": { "bool": true },
+}
+
 # The Players container + combat/move referees, handed in by Main via activate() on the HOST only.
 # Players is read to resolve the sender's node (name, class); combat owns the /god invulnerability
 # toggle; move answers the busy check for the /class equip guard (v0.17.0). Never reached up from;
@@ -25,6 +51,7 @@ extends Node
 var _players: Node2D = null
 var _combat = null
 var _move_referee = null
+var _monsters: Node2D = null
 # The host-only ground-item author API (v0.18.0), injected as a Callable by Main so /item can spawn WITHOUT
 # reaching up into Main (the component never climbs the tree). Wraps Main._spawn_item_at(tile, type_path) ->
 # bool, so every /item spawn still routes through the ONE guarded, id-assigning path. Empty (unbound) on
@@ -35,11 +62,15 @@ var _spawn_item: Callable = Callable()
 ## Host-only entry point, called by Main inside its is_server() branch after the referees are wired.
 ## Never called on clients (their node stays inert). `spawn_item` is the /item ground-item spawn Callable
 ## (v0.18.0) — Main binds it to _spawn_item_at so this component gains item-spawn access without a Main ref.
-func activate(players: Node2D, combat: Node, move_referee: Node, spawn_item: Callable = Callable()) -> void:
+func activate(players: Node2D, combat: Node, move_referee: Node, spawn_item: Callable = Callable(),
+		monsters: Node2D = null) -> void:
 	_players = players
 	_combat = combat
 	_move_referee = move_referee
 	_spawn_item = spawn_item
+	# v0.25.0: the Monsters container joins the injection set — /mi resolves live instances and
+	# /snapshot enumerates them. Null-safe like every other ref (inert on clients).
+	_monsters = monsters
 
 
 # ── Public methods ──────────────────────────────────────────────────────────────
@@ -81,6 +112,10 @@ func validate(sender_peer_id: int, data: Dictionary) -> Dictionary:
 			return _dev_cmd_stamina(by)
 		"winded":
 			return _dev_cmd_winded(by)
+		"mi":
+			return _dev_cmd_monster_instance(args, by)
+		"snapshot":
+			return _dev_cmd_snapshot()
 		_:
 			# Bare-weapon alias: "/longsword 5" arrives as cmd "longsword", args ["5"]. Reachable ONLY when
 			# cmd resolves to a real weapon (table precedence is handled by the match above). Re-dispatch as
@@ -211,10 +246,159 @@ func _dev_cmd_stamina(by: String) -> Dictionary:
 ## outright (players AND monsters — the one validator gates both); off = the v0.24.1 crawl. The
 ## /ai-family pattern: host-side config flip is the whole authority story (read at adjudication).
 func _dev_cmd_winded(by: String) -> Dictionary:
-	GameManager.config.exhausted_blocks_movement = not GameManager.config.exhausted_blocks_movement
-	if GameManager.config.exhausted_blocks_movement:
-		return { "ok": true, "data": { "line": "%s set exhaustion to HARD STOP (0 stamina = no moving)." % by } }
-	return { "ok": true, "data": { "line": "%s set exhaustion back to the slow crawl." % by } }
+	# CONVERGENT toggle (v0.25.0 split): reads the PLAYER field and sets BOTH sides to its negation,
+	# so a pair diverged through the per-side GUI dials snaps back together — the recovery primitive.
+	var hard_stop := not GameManager.config.player_exhausted_blocks_movement
+	GameManager.config.player_exhausted_blocks_movement = hard_stop
+	GameManager.config.monster_exhausted_blocks_movement = hard_stop
+	if hard_stop:
+		return { "ok": true, "data": { "line": "%s set exhaustion to HARD STOP (0 stamina = no moving, both sides)." % by } }
+	return { "ok": true, "data": { "line": "%s set exhaustion back to the slow crawl (both sides)." % by } }
+
+
+## /mi <id> <field|hp|stamina|stun|kill|reset> [value] — PER-INSTANCE monster tuning (v0.25.0, Jon's
+## overhaul: "individually tweak each enemy instance"). The id is the entity id (negative; a bare
+## positive is negated as a convenience). Stat fields run the SAME allowlist/clamp pipeline as /m,
+## but against an INSTANCE-LOCAL duplicate of the MonsterType, lazily created on the first tune —
+## untouched monsters keep sharing the authored .tres, so global /m tuning still reaches them. The
+## duplicate + brain-ref migration happen synchronously in this validator (set_instance_type), so
+## there is no window where the brain reads the old resource. `reset` reloads the SHARED .tres and
+## swaps it back in (the instance rejoins global tuning). hp/stamina/stun/kill are live-state pokes
+## through the owning referees, so every peer's presentation rides the normal events.
+func _dev_cmd_monster_instance(args: Array[String], by: String) -> Dictionary:
+	if _monsters == null or args.size() < 2:
+		return { "ok": false, "reason": "usage: /mi <id> <field|hp|stamina|stun|kill|reset> [value]" }
+	if not args[0].is_valid_int():
+		return { "ok": false, "reason": "mi: '%s' is not an entity id" % args[0] }
+	var entity_id := int(args[0].to_int())
+	if entity_id > 0:
+		entity_id = -entity_id
+	var node := _monsters.get_node_or_null(str(entity_id)) as Monster
+	if node == null or not _combat.is_alive(entity_id):
+		# Stale-panel safety (GLM plan point #2): ids are monotonic and never reused in-session, so
+		# a dead/gone id rejects cleanly here — a stale row can never tune the wrong monster.
+		return { "ok": false, "reason": "mi: no living monster with id %d" % entity_id }
+	var label := "%s#%d" % [node.display_name, entity_id]
+	var sub: String = args[1]
+	match sub:
+		"hp":
+			if args.size() < 3 or not args[2].is_valid_float():
+				return { "ok": false, "reason": "mi %s: hp needs a number" % label }
+			var target_hp := clampi(int(args[2].to_float()), 0, _combat.max_hp_of(entity_id))
+			var current_hp: int = _combat.hp_of(entity_id)
+			if target_hp > current_hp:
+				_combat.apply_heal(entity_id, target_hp - current_hp, by)
+			elif target_hp < current_hp:
+				# Self-sourced admin damage: rides the full attack/death pipeline so every peer's
+				# HP label, popup and (at 0) the death path behave exactly as a real hit.
+				_combat.apply_damage(entity_id, entity_id, current_hp - target_hp, "admin", 0.0)
+			return { "ok": true, "data": { "line": "%s set %s HP → %d." % [by, label, target_hp] } }
+		"stamina":
+			if args.size() < 3 or not args[2].is_valid_float():
+				return { "ok": false, "reason": "mi %s: stamina needs a number" % label }
+			if not _move_referee.admin_set_stamina(entity_id, int(args[2].to_float())):
+				return { "ok": false, "reason": "mi %s: no stamina pool" % label }
+			return { "ok": true, "data": { "line": "%s set %s stamina → %d." % [
+					by, label, int(args[2].to_float())] } }
+		"stun":
+			var stun_beats := 3.0
+			if args.size() >= 3 and args[2].is_valid_float():
+				stun_beats = args[2].to_float()
+			_combat.apply_stun(entity_id, stun_beats)
+			return { "ok": true, "data": { "line": "%s stunned %s (%.1f beats)." % [by, label, stun_beats] } }
+		"kill":
+			_combat.apply_damage(entity_id, entity_id, _combat.hp_of(entity_id), "admin", 0.0)
+			return { "ok": true, "data": { "line": "%s killed %s." % [by, label] } }
+		"reset":
+			var shared_path := str(node.get_meta("shared_type_path", ""))
+			if shared_path.is_empty():
+				return { "ok": true, "data": { "line": "%s: %s had no instance overrides." % [by, label] } }
+			# Null-guarded reload (GLM diff review #3): a stale/unloadable path must reject, never
+			# hand set_instance_type a null (glide_speed deref would crash the host).
+			var restored := load(shared_path) as MonsterType
+			if restored == null:
+				return { "ok": false, "reason": "mi %s: shared type '%s' failed to load" % [label, shared_path] }
+			node.set_instance_type(restored)
+			node.remove_meta("shared_type_path")
+			return { "ok": true, "data": { "line": "%s reset %s to its shared type." % [by, label] } }
+		_:
+			# Stat field: lazily fork the shared type into an instance-local duplicate. A duplicate
+			# has no resource_path, which doubles as the "already forked" flag; the original path is
+			# stashed as metadata so `reset` can rejoin the shared resource later.
+			if node.monster_type == null:
+				return { "ok": false, "reason": "mi %s: no monster type" % label }
+			if node.monster_type.resource_path != "":
+				node.set_meta("shared_type_path", node.monster_type.resource_path)
+				node.set_instance_type(node.monster_type.duplicate())
+			var tune_args: Array[String] = [sub]
+			for extra_index in range(2, args.size()):
+				tune_args.append(args[extra_index])
+			return _dev_tune_resource(node.monster_type, GameManager.DEV_MONSTER_FIELDS,
+					GameManager.DEV_MONSTER_INT_FIELDS, GameManager.DEV_MONSTER_CLAMPS,
+					tune_args, by, label)
+
+
+## /snapshot — post the full tuning-truth payload as a `dev_snapshot` event (v0.25.0, the debug
+## panel's repaint source). DEFERRED verdict: the snapshot event IS the outcome (the /class
+## precedent), so no generic dev_command line spams the log on every panel open/refresh. Values are
+## read HOST-side (config, catalogs, referees), so a client's stale local config never leaks in.
+func _dev_cmd_snapshot() -> Dictionary:
+	var game := {}
+	for field in GameManager.DEV_GAME_FIELDS:
+		if field == "tactical_beat_sec":
+			game[field] = GameManager.tactical_beat_sec
+		else:
+			game[field] = GameManager.config.get(field)
+	# The toggles whose commands live outside the g-field table, included read-only-with-command:
+	game["stamina_enabled"] = GameManager.config.stamina_enabled
+	game["banter_enabled"] = GameManager.config.banter_enabled
+	game["banter_chance"] = GameManager.config.banter_chance
+	var weapons := {}
+	for weapon in GameManager.config.weapon_catalog:
+		weapons[weapon.display_name] = {
+			"damage": weapon.damage, "windup_beats": weapon.windup_beats,
+			"recovery_beats": weapon.recovery_beats,
+		}
+	var monster_types := {}
+	var dir := DirAccess.open("res://resources/monsters")
+	if dir != null:
+		for file in dir.get_files():
+			# Exports list .tres as .tres.remap sometimes — normalize; skip the personality resources.
+			var file_name := file.trim_suffix(".remap")
+			if not file_name.ends_with(".tres") or file_name.begins_with("personality"):
+				continue
+			var res := load("res://resources/monsters/" + file_name)
+			if res == null or not (res is MonsterType):
+				continue
+			var type_fields := {}
+			for field in GameManager.DEV_MONSTER_FIELDS:
+				type_fields[field] = res.get(field)
+			monster_types[file_name.trim_suffix(".tres")] = type_fields
+	var instances := {}
+	if _monsters != null:
+		for child in _monsters.get_children():
+			if not (child is Monster) or not _combat.is_alive(child.entity_id):
+				continue
+			var pool: Dictionary = _move_referee.stamina_of(child.entity_id)
+			# Per-instance CURRENT stat values (the instance may hold a /mi duplicate diverged from
+			# its shared type) — the panel's per-instance grid seeds from these, never from the type.
+			var instance_fields := {}
+			if child.monster_type != null:
+				for field in GameManager.DEV_MONSTER_FIELDS:
+					instance_fields[field] = child.monster_type.get(field)
+			instances[str(child.entity_id)] = {
+				"name": child.display_name,
+				"hp": _combat.hp_of(child.entity_id),
+				"max_hp": _combat.max_hp_of(child.entity_id),
+				"stamina": pool["points"], "stamina_max": pool["max"],
+				"tile": _move_referee.tile_of_entity(child.entity_id),
+				"instanced": child.monster_type != null and child.monster_type.resource_path == "",
+				"fields": instance_fields,
+			}
+	NetEvents.post_event("dev_snapshot", {
+		"game": game, "weapons": weapons, "monster_types": monster_types, "instances": instances,
+	})
+	return { "ok": true, "deferred": true }
 
 
 ## /class <name> — set the SENDER's class (v0.10.0). Resolve the class through the roster, apply it
@@ -438,83 +622,39 @@ func _dev_config_game_row(alias: String, field: String, value_token: String, by:
 		return { "ok": false, "reason": "config %s: unknown game field '%s'" % [alias, field] }
 	if not value_token.is_valid_float():
 		return { "ok": false, "reason": "config %s @ %s: '%s' is not a number" % [alias, field, value_token] }
+	# TABLE-DRIVEN plain writes (v0.25.0 overhaul): every field in _GAME_FIELD_SPECS shares ONE
+	# authority story — host-side config write, read live at the referee's arm/stamp/resolve sites,
+	# no client ever reads it — so they share one dispatch (clamp per spec, typed set, optional
+	# post-write hook). A field with a DIFFERENT story (tactical_beat_sec broadcasts an event)
+	# keeps its bespoke branch below.
+	if _GAME_FIELD_SPECS.has(field):
+		var spec: Dictionary = _GAME_FIELD_SPECS[field]
+		var note: String
+		if bool(spec.get("bool", false)):
+			var flag := value_token.to_float() != 0.0
+			GameManager.config.set(field, flag)
+			note = "%s → %s" % [field, "ON" if flag else "off"]
+		elif bool(spec.get("int", false)):
+			var int_value := clampi(int(value_token.to_float()), int(spec["min"]), int(spec["max"]))
+			GameManager.config.set(field, int_value)
+			note = "%s → %d" % [field, int_value]
+		else:
+			var float_value := clampf(value_token.to_float(), float(spec["min"]), float(spec["max"]))
+			GameManager.config.set(field, float_value)
+			note = "%s → %.2f" % [field, float_value]
+		# Post-write hooks, by name: "passive" re-arms the always-on regen chains so a knob turned
+		# on mid-session reaches every already-spawned entity (both split fields share it).
+		if str(spec.get("post", "")) == "passive":
+			_move_referee.start_passive_regen_all()
+		return { "ok": true, "note": note }
 	match field:
 		"tactical_beat_sec":
 			var cfg := GameManager.config
 			var beat := clampf(snappedf(value_token.to_float(), cfg.tempo_step_sec), cfg.tempo_min_sec, cfg.tempo_max_sec)
 			NetEvents.post_event("set_tactical_tempo", { "beat_sec": beat, "by": by })
 			return { "ok": true, "note": "tactical beat → %.2fs/beat" % beat }
-		"regen_idle_beats":
-			# Stamina experiment (v0.24.0): host-side write is the whole authority story — the referee's
-			# rest-to-recover timers read it live at each arm; no client ever reads it. Clamped to a
-			# sane band (0 = regen starts instantly on quiet, generous top for slow-recovery tests).
-			var idle := clampf(value_token.to_float(), 0.0, 100.0)
-			GameManager.config.regen_idle_beats = idle
-			return { "ok": true, "note": "stamina regen idle → %.1f beats" % idle }
-		"regen_interval_beats":
-			# Same authority story as regen_idle_beats. Floor 0.25 — a zero interval would chain
-			# create_timer(0) refills in a same-frame burst.
-			var interval := clampf(value_token.to_float(), 0.25, 100.0)
-			GameManager.config.regen_interval_beats = interval
-			return { "ok": true, "note": "stamina regen interval → %.2f beats/point" % interval }
-		"exhausted_step_beats":
-			# v0.24.1 crawl dial (Jon: "maybe 5 beats, adjustable"): host-side write, read live at each
-			# exhausted stamp. Floor 1 (faster than a normal step would invert the penalty).
-			var crawl := clampf(value_token.to_float(), 1.0, 100.0)
-			GameManager.config.exhausted_step_beats = crawl
-			return { "ok": true, "note": "exhausted crawl → %.1f beats/tile" % crawl }
-		"monster_think_min_beats":
-			# v0.24.3 think-roll dials (Jon: "a knob for both"). Host-side writes, read at each roll;
-			# the brain min/max-orders the pair at roll time, so a momentarily inverted pair is safe.
-			var think_min := clampi(int(value_token.to_float()), 0, 30)
-			GameManager.config.monster_think_min_beats = think_min
-			return { "ok": true, "note": "monster think min → %d beats" % think_min }
-		"monster_think_max_beats":
-			var think_max := clampi(int(value_token.to_float()), 0, 30)
-			GameManager.config.monster_think_max_beats = think_max
-			return { "ok": true, "note": "monster think max → %d beats" % think_max }
-		"stamina_max":
-			# v0.24.5 pip-count knob (Jon), PLAYER-side since the v0.24.7 split: players get this plus
-			# class bonus_stamina (rogue +1). Host-side write, resolved lazily at each pool seed/reset,
-			# so it lands at the next battle entry; /stamina off/on force-reseeds everyone immediately.
-			var pool_max := clampi(int(value_token.to_float()), 1, 12)
-			GameManager.config.stamina_max = pool_max
-			return { "ok": true, "note": "PLAYER stamina max → %d (+class bonus; applies at next battle entry)" % pool_max }
-		"monster_stamina_max":
-			# v0.24.7 (Jon: "tune players and enemies differently"): the MONSTER pool's own dial.
-			# Same lazy landing as the player knob; /stamina off/on reseeds immediately.
-			var monster_max := clampi(int(value_token.to_float()), 1, 12)
-			GameManager.config.monster_stamina_max = monster_max
-			return { "ok": true, "note": "MONSTER stamina max → %d (applies at next battle entry)" % monster_max }
-		"regen_refills_full":
-			# v0.24.9 instant-refill toggle: nonzero = the completed rest wait grants the whole pool
-			# at once; 0 = the per-point trickle. Host-side write, read at each regen tick.
-			var full := value_token.to_float() != 0.0
-			GameManager.config.regen_refills_full = full
-			return { "ok": true, "note": "rest refill → %s" % ("FULL POOL at once" if full else "per-point trickle") }
-		"passive_regen_beats":
-			# v0.24.9 always-on regen (off by default): > 0 = +1 point every N beats no matter what
-			# the entity is doing. Turning it on re-arms the chain for every tracked entity NOW.
-			var passive := clampf(value_token.to_float(), 0.0, 100.0)
-			GameManager.config.passive_regen_beats = passive
-			if passive > 0.0:
-				_move_referee.start_passive_regen_all()
-				return { "ok": true, "note": "passive regen → +1 every %.1f beats (always on)" % passive }
-			return { "ok": true, "note": "passive regen → off" }
-		"swing_catches_adjacent":
-			# v0.24.8 sticky-swing A/B: nonzero = a sidestepping target still adjacent to the swinger
-			# is caught at resolve; 0 = pure tile commitment. Host-side write, read at each resolve.
-			var sticky := value_token.to_float() != 0.0
-			GameManager.config.swing_catches_adjacent = sticky
-			return { "ok": true, "note": "sticky swing → %s" % ("ON (adjacent sidesteps are caught)" if sticky else "off (pure ground commit)") }
-		"stamina_refill_lockout_beats":
-			# v0.24.3 pace-flicker fix dial: how long (explore beats) after leaving battle a re-entry
-			# still counts as the SAME battle (no refill). 0 restores refill-on-every-entry.
-			var lockout := clampf(value_token.to_float(), 0.0, 200.0)
-			GameManager.config.stamina_refill_lockout_beats = lockout
-			return { "ok": true, "note": "stamina refill lockout → %.1f beats" % lockout }
-	# Unreachable while DEV_GAME_FIELDS and this match stay in step — but a field added to the allowlist
-	# without its branch must fail LOUDLY here, not silently no-op into a "success" line.
+	# Unreachable while DEV_GAME_FIELDS, _GAME_FIELD_SPECS and the match stay in step — but a field
+	# allowlisted without a handler must fail LOUDLY here, not silently no-op into a "success" line.
 	return { "ok": false, "reason": "config %s: game field '%s' has no handler" % [alias, field] }
 
 

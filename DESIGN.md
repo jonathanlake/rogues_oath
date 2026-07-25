@@ -148,7 +148,10 @@ monsters included. Refills on battle entry are LOCKOUT-gated (`stamina_refill_lo
 a pace flicker back into the same fight keeps the earned pool. STICKY SWINGS (v0.24.8): a melee
 wind-up still catches its intended victim if it sidestepped but stayed adjacent to the swinger —
 a deliberate, toggleable bend of §2.3's commit-to-ground rule inside this experiment
-(`swing_catches_adjacent`; escaping beyond adjacency still dodges). The same story beats drive GOBLIN
+(`swing_catches_adjacent`; escaping beyond adjacency still dodges). v0.25.0: every stamina dial
+split player_/monster_; the backtick DEBUG TUNING PANEL (docs/dev-commands.md) is the tuning
+surface — a GUI over the same server-authoritative dev_command pipe, with per-INSTANCE monster
+forks via /mi. The same story beats drive GOBLIN
 BANTER (v0.24.4): host-picked overhead one-liners (chance-rolled, globally cooldown-throttled;
 an ally's death always draws a revenge bark from a packmate) — lines are GameConfig content. Intent: movement improves positioning but can no
 longer invalidate attacks (the kiting thread) — a fleeing healer burns dry and crawls. `/stamina`

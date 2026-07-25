@@ -24,7 +24,19 @@ restart restores every authored value (no command saves to disk).
 | `/ai` | Toggle the **utility-AI score broadcast** (v0.22.0, host-side gate, default OFF). While on, every **committed** utility-brain decision posts an `ai_decision` event (personality, per-action scores, the action that actually committed) that ALL peers' F3 overlays render — one line per monster. Idle thinks and fully-declined walks post nothing (v0.22.1 — they drowned the traces), and `chosen` names what COMMITTED, so a higher score beside a different chosen action reads as "top pick declined" (e.g. a cornered flee) at a glance. Zero wire noise while off. The `/m` allowlist includes the 13 `utility_*`/`backup_radius_tiles` weights, so you can watch a retune move the numbers live; `ai_decision` is in the `eventlog=` allowlist for scripted runs. |
 | `/stamina` (alias `/mp`) | Toggle the **stamina experiment** (v0.24.0, renamed v0.24.1) live. OFF = byte-for-byte pre-experiment movement and AI (no pool mutation; sweat-drops clear); ON = every pool reseeds to full. Host-authoritative (all reads are host-side). Dials (v0.24.2 direct form; v0.24.3 additions): `/config regen_idle_beats 10`, `/config regen_interval_beats 4`, `/config exhausted_step_beats 5` (crawl speed), `/config monster_think_min_beats 1` / `monster_think_max_beats 6` (hesitation roll range), `/config stamina_refill_lockout_beats 20` (how long after leaving battle a re-entry still counts as the same fight — no refill), `/config stamina_max 3` (PLAYER pip baseline, 1–12; players add class `bonus_stamina` — rogue +1), `/config monster_stamina_max 3` (the MONSTERS' own independent pool, v0.24.7). Both land at the next battle entry, or /stamina off/on to reseed now. `/config swing_catches_adjacent 1|0` (v0.24.8): sticky swings — a sidestep that stays adjacent to the swinger is still caught at resolve; 0 = pure ground commit. `/config regen_refills_full 1|0` (v0.24.9): rest completion refills the whole pool at once. `/config passive_regen_beats N` (v0.24.9, 0=off): +1 stamina every N beats regardless of activity. |
 | `/winded` | Toggle **hard-stop exhaustion** (v0.24.6): on = 0 stamina refuses movement outright (distinct "winded" reject; players and monsters alike); off = the v0.24.1 slow crawl (`exhausted_step_beats`). Host-authoritative config flip, read at adjudication. |
+| `/mi <id> <field\|hp\|stamina\|stun\|kill\|reset> [v]` | **Per-INSTANCE monster tuning** (v0.25.0). `id` = entity id (negative; bare positive is negated). Stat fields run the same allowlist/clamps as `/m` but against a LAZY instance-local duplicate of the MonsterType — untouched monsters keep sharing the `.tres`, so `/m` stays global; `reset` rejoins the shared type. `hp`/`stamina` poke live referee state through the normal events; `kill` runs the real death path (drops, banter, all of it). |
+| `/snapshot` | Broadcast a `dev_snapshot` event carrying the full tuning truth (game fields, weapon + monster-type values, live instances with hp/stamina). The debug panel's refresh source; deferred verdict, so no log spam. |
 | `/help` | Print the command list (local only — never crosses the wire). |
+
+## The backtick debug panel (v0.25.0)
+
+Press **`** (backtick) in-game to open the DEBUG TUNING PANEL — an inspector-style GUI over the
+whole command surface, on every peer. Sections: GAME/STAMINA (every split dial, players column vs
+monsters column), WEAPONS, MONSTER TYPES (shared `.tres` tuning = `/m`), LIVE INSTANCES (per-monster
+hp/stamina/stun/kill and per-instance stat forks = `/mi`). Every widget edit submits the same
+server-authoritative `dev_command` intent the typed command would (debounced 0.3s); displayed values
+come only from host-authored `dev_snapshot` events, so a client's panel shows host truth, never its
+own stale config. `debugpanel=1` is the autostart knob for scripted screenshots.
 
 ## Resolution notes
 

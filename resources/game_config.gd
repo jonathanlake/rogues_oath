@@ -123,11 +123,11 @@ extends Resource
 ## gas out first (kiters get caught sooner); higher = tireless pursuers.
 @export var monster_stamina_max: int = 3
 
-## The exhausted CRAWL (v0.24.1, Jon: "still able to move, just very slow"): a tactical step taken
-## at 0 stamina commits at THIS many beats per tile instead of the mover's normal tier — the
-## Commitment Rule does the punishing (a 5-beat step is a long time to be committed). Diagonals
-## still carry the diagonal multiplier. Live-tunable via the /config g-row.
-@export var exhausted_step_beats: float = 5.0
+## The exhausted CRAWL (v0.24.1, Jon: "still able to move, just very slow"; split v0.25.0): a
+## tactical step taken at 0 stamina commits at THIS many beats per tile instead of the mover's
+## normal tier — the Commitment Rule does the punishing. Diagonals still carry the multiplier.
+@export var player_exhausted_step_beats: float = 5.0
+@export var monster_exhausted_step_beats: float = 5.0
 
 ## STICKY SWING (v0.24.8 experiment, Jon: "swings still land if the target moved but is still
 ## directly around the swinger"): when a melee wind-up resolves and its committed tile is empty,
@@ -139,36 +139,41 @@ extends Resource
 ## ground commitment live.
 @export var swing_catches_adjacent: bool = true
 
-## HARD-STOP mode (v0.24.6, Jon's toggle — the `/winded` dev command): when true, 0 stamina means
-## you CANNOT move at all (distinct "winded" reject, the original v0.24.0 shape) instead of the
-## crawl above — players and monsters alike (one validator gates both). Rooted movers still regen
-## by resting, so nothing deadlocks. Default false = crawl mode.
-@export var exhausted_blocks_movement: bool = false
+## HARD-STOP mode (v0.24.6, the `/winded` dev command; split v0.25.0): when true, 0 stamina on
+## that side means NO moving at all (distinct "winded" reject) instead of the crawl. `/winded`
+## stays the convergent recovery toggle: it reads the PLAYER field and sets BOTH sides to its
+## negation, so a GUI-diverged pair snaps back together. Rooted movers still rest-regen.
+@export var player_exhausted_blocks_movement: bool = false
+@export var monster_exhausted_blocks_movement: bool = false
 
-## Rest-to-recover stamina regen (Jon, 2026-07-25): regen BEGINS only after this many consecutive
-## beats with no movement and no committed action; any activity restarts the clock. Beats at the
-## entity's resolved pace.
-@export var regen_idle_beats: float = 10.0
+## Rest-to-recover stamina regen (Jon, 2026-07-25; SPLIT per side v0.25.0 — every stamina dial
+## below comes as a player_/monster_ pair so the two sides tune independently, Jon's overhaul ask):
+## regen BEGINS only after this many consecutive beats with no movement and no committed action;
+## any activity restarts the clock. Beats at the entity's resolved pace.
+@export var player_regen_idle_beats: float = 10.0
+@export var monster_regen_idle_beats: float = 10.0
 
 ## Once regenerating, one stamina point returns every this-many beats (pips refill visibly)
 ## until max or until the next activity cancels the regenerative state.
-@export var regen_interval_beats: float = 4.0
+@export var player_regen_interval_beats: float = 4.0
+@export var monster_regen_interval_beats: float = 4.0
 
-## INSTANT-REFILL mode (v0.24.9, Jon's toggle): when true, the moment the rest wait
-## (regen_idle_beats) completes, the WHOLE pool refills at once — no per-point trickle
-## (regen_interval_beats is then unused). `/config regen_refills_full 1|0` live.
-@export var regen_refills_full: bool = false
+## INSTANT-REFILL mode (v0.24.9): when true, the moment the rest wait completes, the WHOLE pool
+## refills at once — no per-point trickle (the interval dial is then unused for that side).
+@export var player_regen_refills_full: bool = false
+@export var monster_regen_refills_full: bool = false
 
-## PASSIVE regen (v0.24.9, OFF by default): when > 0, every entity regains one stamina point every
-## this-many beats NO MATTER WHAT it is doing — moving, attacking, anything. Independent of (and
-## stacking with) the rest-to-recover regen above. 0 = off. `/config passive_regen_beats 6` live.
-@export var passive_regen_beats: float = 0.0
+## PASSIVE regen (v0.24.9, OFF by default at 0): when > 0, that side regains one stamina point
+## every this-many beats NO MATTER WHAT it is doing — moving, attacking, anything. Independent of
+## (and stacking with) the rest-to-recover regen above.
+@export var player_passive_regen_beats: float = 0.0
+@export var monster_passive_regen_beats: float = 0.0
 
-## Refill lockout (v0.24.3, the pace-flicker fix): a tactical re-entry within this many EXPLORE
-## beats of the last tactical exit keeps its current pool instead of refilling — brief pace flaps
-## mid-fight (bubble edge, leash hopping to a teammate) are not "a new battle". Found in the first
-## stamina playtest ("stamina still regens even without the regen boost"). 0 = old refill-always.
-@export var stamina_refill_lockout_beats: float = 20.0
+## Refill lockout (v0.24.3, the pace-flicker fix; split v0.25.0): a tactical re-entry within this
+## many EXPLORE beats of the last tactical exit keeps its current pool instead of refilling —
+## brief pace flaps mid-fight are not "a new battle". 0 = refill on every entry.
+@export var player_refill_lockout_beats: float = 20.0
+@export var monster_refill_lockout_beats: float = 20.0
 
 ## GOBLIN BANTER (v0.24.4): overhead one-liners at pivotal moments, host-picked and broadcast (see
 ## world/banter.gd). The line ARRAYS below are the authoring surface — rewrite goblin dialogue here

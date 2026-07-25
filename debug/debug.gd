@@ -41,6 +41,11 @@ var _has_say: bool = false
 var _cmd_text: String = ""
 var _has_cmd: bool = false
 var _cmd_wait_sec: float = -1.0
+# cmd2=/cmd2wait= (v0.25.0): a SECOND scripted command, exact mirror of cmd= with its own delay —
+# two-step recipes (tune, then re-tune / assert isolation) need ordered commands in one run.
+var _cmd2_text: String = ""
+var _has_cmd2: bool = false
+var _cmd2_wait_sec: float = -1.0
 
 # Scripted-move harness (move=/movedelay=/movewait=), stashed like say so it survives the scene
 # change and can be anchored to the same events (host: after scene change; client: after connect).
@@ -301,6 +306,11 @@ func _ready() -> void:
 			_has_say = true
 		elif arg.begins_with("cmdwait="):
 			_cmd_wait_sec = arg.trim_prefix("cmdwait=").to_float()
+		elif arg.begins_with("cmd2wait="):
+			_cmd2_wait_sec = arg.trim_prefix("cmd2wait=").to_float()
+		elif arg.begins_with("cmd2="):
+			_cmd2_text = arg.trim_prefix("cmd2=")
+			_has_cmd2 = true
 		elif arg.begins_with("cmd="):
 			_cmd_text = arg.trim_prefix("cmd=")
 			_has_cmd = true
@@ -381,6 +391,10 @@ func _ready() -> void:
 			# GameManager flag the overlay reads in its _ready — set here at parse time, before
 			# any scene change, so it is role-symmetric with no node hunting.
 			GameManager.debug_overlay_start_visible = arg.trim_prefix("overlay=").to_int() != 0
+		elif arg.begins_with("debugpanel="):
+			# Both roles: open the backtick DEBUG TUNING PANEL from startup (v0.25.0, scripted
+			# screenshots). Mirror of overlay= — a GameManager flag the panel reads in its _ready.
+			GameManager.debug_panel_start_visible = arg.trim_prefix("debugpanel=").to_int() != 0
 		elif arg.begins_with("rangeoverlay="):
 			# Both roles: show the F7 range overlay from startup (scripted screenshots). Applied via a
 			# GameManager flag the overlay reads in its _ready — exact mirror of overlay= above.
@@ -558,6 +572,10 @@ func _schedule_input_knobs(default_anchor_sec: float) -> void:
 	# spawned; cmdwait= overrides for staggering (e.g. /w then a later bump to feel the new damage).
 	if _has_cmd:
 		_schedule_cmd(_cmd_text, _cmd_wait_sec if _cmd_wait_sec >= 0.0 else default_anchor_sec)
+	# cmd2= defaults to 2s after the cmd= anchor when unpinned, so a bare two-command run is ordered.
+	if _has_cmd2:
+		var cmd_anchor := _cmd_wait_sec if _cmd_wait_sec >= 0.0 else default_anchor_sec
+		_schedule_cmd(_cmd2_text, _cmd2_wait_sec if _cmd2_wait_sec >= 0.0 else cmd_anchor + 2.0)
 	# movewait= overrides the anchor for the move/tap/click knobs; unset, they share the anchor.
 	var move_anchor := _move_wait_sec if _move_wait_sec >= 0.0 else default_anchor_sec
 	if _has_move:
@@ -957,7 +975,7 @@ func _log_net_event(event: Dictionary) -> void:
 	if not (action in ["glide_to", "windup", "heal_cast", "smite_cast", "heal", "attack", "died",
 			"status_applied", "status_expired",
 			"item_picked_up", "item_pickup_full", "item_pickup_available", "item_used", "equip_item",
-			"ai_decision", "stamina", "thinking", "exhausted", "banter"]):
+			"ai_decision", "stamina", "thinking", "exhausted", "banter", "dev_snapshot"]):
 		return
 	_event_log_file.store_line("%9.2f  p%-5d  %-15s  %s" % [
 		float(event.get("server_time", 0.0)), int(event.get("peer", 0)), action, str(event.get("data", {}))])

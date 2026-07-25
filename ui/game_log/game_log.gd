@@ -152,7 +152,10 @@ func _render_help() -> void:
 	add_line("  /stun [me|<monster>] [beats]  — apply a stun (default 3 beats)")
 	add_line("  /ai  — toggle utility-AI score debug in the F3 overlay")
 	add_line("  /stamina  — toggle the stamina experiment (v0.24.1; /mp still works)")
-	add_line("  /winded  — toggle 0-stamina hard stop vs slow crawl (v0.24.6)")
+	add_line("  /winded  — toggle 0-stamina hard stop vs slow crawl (both sides, v0.24.6)")
+	add_line("  /mi <id> <field|hp|stamina|stun|kill|reset> [v]  — tune ONE monster instance (v0.25.0)")
+	add_line("  /snapshot  — broadcast the tuning-truth snapshot (the ` panel's refresh)")
+	add_line("  press ` (backtick) — the DEBUG TUNING PANEL: all of the above as a GUI")
 	add_line("  /help  — this list")
 
 

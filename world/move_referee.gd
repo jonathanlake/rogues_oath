@@ -327,7 +327,7 @@ func reset_stamina(entity_id: int, force: bool = false) -> void:
 	# it stands (regen chains, if resting, keep ticking; activity gates still apply). `force` (the
 	# /stamina enable reseed) bypasses the gate — a toggle flip is an explicit clean slate.
 	if not force and _last_tactical_exit_msec.has(entity_id):
-		var lockout_ms := int(GameManager.config.stamina_refill_lockout_beats
+		var lockout_ms := int(_refill_lockout_beats_of(entity_id)
 				* GameManager.explore_beat_sec * 1000.0)
 		if Time.get_ticks_msec() - int(_last_tactical_exit_msec[entity_id]) < lockout_ms:
 			return
@@ -353,6 +353,30 @@ func reseed_all_stamina() -> void:
 		reset_stamina(entity_id, true)
 
 
+## Host-only read (v0.25.0, the /snapshot payload): an entity's stamina pool as {points, max},
+## zeros for an untracked id.
+func stamina_of(entity_id: int) -> Dictionary:
+	var pool: Dictionary = _stamina.get(entity_id, {})
+	return { "points": int(pool.get("points", 0)), "max": int(pool.get("max", 0)) }
+
+
+## Host-only (v0.25.0, /mi stamina): set an entity's stamina outright (clamped 0..max), posting the
+## usual pool + exhaustion-edge events. Counts as ACTIVITY afterward (note_activity) so a pool set
+## below max arms the normal rest-regen chain — an admin-drained entity must not be regen-orphaned.
+func admin_set_stamina(entity_id: int, points: int) -> bool:
+	if not _stamina.has(entity_id):
+		return false
+	var pool: Dictionary = _stamina[entity_id]
+	var was_exhausted := int(pool["points"]) <= 0
+	pool["points"] = clampi(points, 0, int(pool["max"]))
+	_post_stamina(entity_id)
+	var now_exhausted := int(pool["points"]) <= 0
+	if now_exhausted != was_exhausted:
+		_post_exhausted(entity_id, now_exhausted)
+	note_activity(entity_id)
+	return true
+
+
 ## Host-only (v0.24.3): clear every showing sweat-drop — the /stamina DISABLE path calls this so a
 ## crawl that just stopped existing doesn't keep its exhausted cue (a presentation event, not a pool
 ## mutation; the pools themselves stay untouched on disable, per the toggle contract).
@@ -374,7 +398,7 @@ func note_activity(entity_id: int) -> void:
 	var pool: Dictionary = _stamina.get(entity_id, {})
 	if pool.is_empty() or int(pool["points"]) >= int(pool["max"]):
 		return
-	var idle_sec: float = GameManager.config.regen_idle_beats * PaceReferee.beat_or_explore(_pace, entity_id)
+	var idle_sec: float = _regen_idle_beats_of(entity_id) * PaceReferee.beat_or_explore(_pace, entity_id)
 	get_tree().create_timer(idle_sec).timeout.connect(_stamina_regen_tick.bind(entity_id, generation))
 
 
@@ -546,10 +570,9 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 			reset_stamina(sender_peer_id)
 			stamina_pool = _stamina[sender_peer_id]
 		if int(stamina_pool["points"]) <= 0:
-			# HARD-STOP mode (v0.24.6, the /winded toggle): 0 stamina refuses the step outright —
-			# the original v0.24.0 shape, restored as a live A/B against the crawl. Distinct §2.2.8
-			# reject; monsters eat it identically (their brains re-poll and resume after rest-regen).
-			if GameManager.config.exhausted_blocks_movement:
+			# HARD-STOP mode (v0.24.6, per-side v0.25.0): 0 stamina refuses the step outright —
+			# distinct §2.2.8 reject; each side has its own dial (/winded converges both).
+			if _exhausted_blocks_movement_of(sender_peer_id):
 				return { "ok": false, "reason": "winded" }
 			exhausted_crawl = true
 		else:
@@ -576,7 +599,7 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# per tile instead of the mover's tier — same stamp-and-bake, same diagonal multiplier, so the
 	# busy window and visible slide below scale with it automatically.
 	if exhausted_crawl:
-		glide_sec = GameManager.config.exhausted_step_beats * PaceReferee.beat_or_explore(_pace, sender_peer_id)
+		glide_sec = _exhausted_step_beats_of(sender_peer_id) * PaceReferee.beat_or_explore(_pace, sender_peer_id)
 		if dir.x != 0 and dir.y != 0:
 			glide_sec *= GameManager.config.diagonal_step_multiplier
 	var busy_sec := glide_sec + _rest_duration(sender_peer_id)   # ACTION window (rest default 0 in v0.8.0)
@@ -941,6 +964,44 @@ func motion_tiles_of(entity_id: int) -> Array[Vector2i]:
 	return tiles
 
 
+## Per-side stamina dial reads (v0.25.0 split, Jon's overhaul): positive entity ids are players,
+## negative are monsters — one boundary, seven paired dials. Every stamina read site below goes
+## through these, so the side split can never drift per-site.
+func _regen_idle_beats_of(entity_id: int) -> float:
+	return GameManager.config.player_regen_idle_beats if entity_id > 0 \
+			else GameManager.config.monster_regen_idle_beats
+
+
+func _regen_interval_beats_of(entity_id: int) -> float:
+	return GameManager.config.player_regen_interval_beats if entity_id > 0 \
+			else GameManager.config.monster_regen_interval_beats
+
+
+func _regen_refills_full_of(entity_id: int) -> bool:
+	return GameManager.config.player_regen_refills_full if entity_id > 0 \
+			else GameManager.config.monster_regen_refills_full
+
+
+func _passive_regen_beats_of(entity_id: int) -> float:
+	return GameManager.config.player_passive_regen_beats if entity_id > 0 \
+			else GameManager.config.monster_passive_regen_beats
+
+
+func _refill_lockout_beats_of(entity_id: int) -> float:
+	return GameManager.config.player_refill_lockout_beats if entity_id > 0 \
+			else GameManager.config.monster_refill_lockout_beats
+
+
+func _exhausted_step_beats_of(entity_id: int) -> float:
+	return GameManager.config.player_exhausted_step_beats if entity_id > 0 \
+			else GameManager.config.monster_exhausted_step_beats
+
+
+func _exhausted_blocks_movement_of(entity_id: int) -> bool:
+	return GameManager.config.player_exhausted_blocks_movement if entity_id > 0 \
+			else GameManager.config.monster_exhausted_blocks_movement
+
+
 ## v0.24.3: is this entity's pool sitting at 0? (Cue bookkeeping — the exhausted event's edge reads.)
 func _is_exhausted(entity_id: int) -> bool:
 	var pool: Dictionary = _stamina.get(entity_id, {})
@@ -979,9 +1040,9 @@ func _stamina_regen_tick(entity_id: int, generation: int) -> void:
 	if int(pool["points"]) >= int(pool["max"]):
 		return
 	var was_exhausted := int(pool["points"]) <= 0
-	# INSTANT-REFILL mode (v0.24.9, Jon's toggle): the completed rest wait grants the WHOLE pool in
-	# one go — one event, no trickle chain.
-	if GameManager.config.regen_refills_full:
+	# INSTANT-REFILL mode (v0.24.9, per-side v0.25.0): the completed rest wait grants the WHOLE
+	# pool in one go — one event, no trickle chain.
+	if _regen_refills_full_of(entity_id):
 		pool["points"] = int(pool["max"])
 	else:
 		pool["points"] = int(pool["points"]) + 1
@@ -990,7 +1051,7 @@ func _stamina_regen_tick(entity_id: int, generation: int) -> void:
 	if was_exhausted and int(pool["points"]) > 0:
 		_post_exhausted(entity_id, false)
 	if int(pool["points"]) < int(pool["max"]):
-		var interval_sec: float = GameManager.config.regen_interval_beats \
+		var interval_sec: float = _regen_interval_beats_of(entity_id) \
 				* PaceReferee.beat_or_explore(_pace, entity_id)
 		get_tree().create_timer(interval_sec).timeout.connect(_stamina_regen_tick.bind(entity_id, generation))
 
@@ -1003,10 +1064,10 @@ func _stamina_regen_tick(entity_id: int, generation: int) -> void:
 func start_passive_regen(entity_id: int) -> void:
 	if bool(_passive_regen_running.get(entity_id, false)):
 		return
-	if GameManager.config.passive_regen_beats <= 0.0 or not _stamina.has(entity_id):
+	if _passive_regen_beats_of(entity_id) <= 0.0 or not _stamina.has(entity_id):
 		return
 	_passive_regen_running[entity_id] = true
-	var interval_sec: float = GameManager.config.passive_regen_beats \
+	var interval_sec: float = _passive_regen_beats_of(entity_id) \
 			* PaceReferee.beat_or_explore(_pace, entity_id)
 	get_tree().create_timer(interval_sec).timeout.connect(_passive_regen_tick.bind(entity_id))
 
@@ -1020,7 +1081,7 @@ func start_passive_regen_all() -> void:
 
 func _passive_regen_tick(entity_id: int) -> void:
 	_passive_regen_running.erase(entity_id)
-	if not GameManager.config.stamina_enabled or GameManager.config.passive_regen_beats <= 0.0 \
+	if not GameManager.config.stamina_enabled or _passive_regen_beats_of(entity_id) <= 0.0 \
 			or not _stamina.has(entity_id):
 		return
 	var pool: Dictionary = _stamina[entity_id]

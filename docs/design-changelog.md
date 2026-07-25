@@ -9,6 +9,22 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.25.0 (2026-07-25/26, overnight) — THE TUNING OVERHAUL: the backtick debug panel, the full
+  player/monster stamina split, and per-instance monster tuning (Jon's brief).** Press **`** for
+  an inspector-style DEBUG TUNING PANEL on any peer — every dial the slash commands reach, as
+  labeled widgets: GAME/STAMINA (players column vs monsters column), WEAPONS, MONSTER TYPES, and
+  LIVE INSTANCES (hp/stamina/stun/kill + per-instance stat forks). Architecture invariant: the
+  panel is a presentation surface over the EXISTING dev_command intent pipe — every edit submits
+  the same server-authoritative intent a typed command would (debounced), and displayed values
+  come only from the new host-authored `dev_snapshot` event, so a client's panel shows host truth.
+  SPLIT: every stamina dial is now a player_/monster_ pair (idle, interval, refills-full, passive,
+  crawl, hard-stop, lockout — max was already split); /winded stays the convergent both-sides
+  toggle; the g-field dispatch collapsed into one clamp-table (_GAME_FIELD_SPECS). PER-INSTANCE:
+  `/mi <id> <field|hp|stamina|stun|kill|reset>` — stat fields lazily fork the instance onto a
+  duplicate MonsterType (brain ref migrated synchronously, GLM's plan-review race closed by
+  construction); untouched monsters keep sharing the .tres so /m stays global; `reset` rejoins.
+  Harness: cmd2=/cmd2wait= (a second scripted command) and debugpanel= joined debug.gd.
+
 - **v0.24.9 (2026-07-25) — WIDE HALLS, two regen modes, and the sticky-swing reach fix (Jon).**
   MAP: every corridor is now 2 tiles wide like the A↔D tunnel — A↔B gains row 4, the C connector
   gains col 26, C↔E gains its parallel row/col pair, D↔E gains row 23 (no 1-wide tunnels remain;
