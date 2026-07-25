@@ -251,6 +251,11 @@ func _ready() -> void:
 	# comparison basis, and the real version still shows in the menu. Structurally inert on a host
 	# (hosts never send peer_ready), so it's applied in the client branch alongside join=.
 	var fake_version := ""
+	# host-only port override (inert on the client and without the arg): port=<n> hosts on a
+	# non-default UDP port so a scripted run can coexist with a live session holding 3000. The
+	# scripted CLIENT side already exists: join=127.0.0.1:<n>. Out-of-range values fall back to
+	# DEFAULT_PORT rather than reaching ENet as a confusing bind failure.
+	var host_port := NetworkManager.DEFAULT_PORT
 	# host-only beat override (seconds); inert on the client and without the arg. Sets the whole-game
 	# tempo (GameManager.explore_beat_sec seed) so a scripted run can test a slower/faster beat
 	# end-to-end — e.g. beatsec=0.40 — without editing the .tres. Unlike glidesec=/windupsec= (which
@@ -328,6 +333,13 @@ func _ready() -> void:
 			# Clamped: the same-frame burst is a deliberate adversarial case, but an unbounded count off the
 			# command line would flood the intent pipe with rejects. 8 is far past any real test need.
 			_pickup_count = clampi(arg.trim_prefix("pickup=").to_int(), 0, 8)
+		elif arg.begins_with("port="):
+			var parsed_port := arg.trim_prefix("port=").to_int()
+			if parsed_port >= 1 and parsed_port <= 65535:
+				host_port = parsed_port
+			else:
+				push_warning("[Debug] port=: out of range '%s' (using default %d)" % [
+						arg.trim_prefix("port="), NetworkManager.DEFAULT_PORT])
 		elif arg.begins_with("beatsec="):
 			beat_override = arg.trim_prefix("beatsec=").to_float()
 		elif arg.begins_with("glidesec="):
@@ -469,8 +481,8 @@ func _ready() -> void:
 			GameManager.monster_spawn_cap = goblin_count
 		else:
 			GameManager.spawn_monsters = false
-		print("[Debug] autostart: hosting on port %d" % NetworkManager.DEFAULT_PORT)
-		if NetworkManager.host_game() != OK:
+		print("[Debug] autostart: hosting on port %d" % host_port)
+		if NetworkManager.host_game(host_port) != OK:
 			push_error("[Debug] autostart host failed")
 			return
 		# hostdelay= holds the host on the menu scene after the transport is up but before
