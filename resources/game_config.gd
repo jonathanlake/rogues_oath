@@ -105,6 +105,32 @@ extends Resource
 ## mechanic, nothing more. Flip in the .tres, no code.
 @export var attacks_of_opportunity_enabled: bool = true
 
+## MOVEMENT POINTS EXPERIMENT (v0.24.0, Jeff's proposal 2026-07-25). Battle-only movement budget:
+## while an entity's pace resolves tactical, each accepted glide spends 1 point; at 0 the glide is
+## rejected "winded" (§2.2.8-distinct). Pool resets to max on each tactical ENTRY. Bumps, wind-ups
+## and attacks never spend (attacking is not moving). Read HOST-side only (MoveReferee). The /mp dev
+## command flips this live (off = exactly pre-experiment movement); revert = one commit.
+@export var movement_points_enabled: bool = true
+
+## Movement-point pool max for monsters and any player whose class doesn't override it
+## (PlayerClass.movement_points_max — rogue ships 4). Whole points; no fractional spends exist.
+@export var movement_points_max: int = 3
+
+## Rest-to-recover regen (Jon, 2026-07-25): regen BEGINS only after this many consecutive beats
+## with no movement and no committed action; any activity restarts the clock. Beats at the
+## entity's resolved pace.
+@export var regen_idle_beats: float = 10.0
+
+## Once regenerating, one movement point returns every this-many beats (pips refill visibly)
+## until max or until the next activity cancels the regenerative state.
+@export var regen_interval_beats: float = 4.0
+
+## Monster hesitation (Jeff: "enemies think before moving"): on entering battle a monster rolls
+## think beats uniformly in [min, max] (host RNG) and holds its WHOLE brain — no move, attack or
+## cast — for that long, with a visible thinking cue. Beats at the monster's resolved pace.
+@export var monster_think_min_beats: int = 1
+@export var monster_think_max_beats: int = 6
+
 ## Provisional playtest toggle (DESIGN §2.2.9): click-to-move pathing. The .tres ships it false, which
 ## drops MoveInput into adjacent-only click mode — a click on one of the 8 neighbor tiles submits one
 ## step, any farther click does nothing (Jeff: "if you click 8 spaces ahead nothing happens"). The SCRIPT

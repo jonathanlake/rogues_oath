@@ -151,6 +151,7 @@ func _render_help() -> void:
 	add_line("  /config <%s>  — apply a preset test loadout" % "|".join(PackedStringArray(GameManager.CONFIG_PRESETS.keys())))
 	add_line("  /stun [me|<monster>] [beats]  — apply a stun (default 3 beats)")
 	add_line("  /ai  — toggle utility-AI score debug in the F3 overlay")
+	add_line("  /mp  — toggle the movement-points experiment (v0.24.0)")
 	add_line("  /help  — this list")
 
 
@@ -438,6 +439,10 @@ func _log_glide_reject(reason: String) -> void:
 			pass
 		"already moving":
 			pass
+		"winded":
+			# Out of movement points (v0.24.0 MP experiment) — a distinct world refusal, never confusable
+			# with a dropped input (§2.3.4): the budget is spent, rest to recover.
+			add_line("Winded — out of movement points. Stand still to recover.")
 		"dead":
 			# The mover was killed by an attack of opportunity mid-adjudication (decision 4, Q1
 			# placeholder). Suppress the reject line — the `died` event already logged "You died.",

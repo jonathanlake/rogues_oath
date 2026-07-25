@@ -1,6 +1,12 @@
 class_name PaceReferee
 extends Node
 
+## Host-only past-tense edge (v0.24.0 MP experiment): fired the moment an entity ENTERS tactical —
+## players on the _flush_pace_changes flip diff, monsters on report_engagement's became-engaged
+## change-detect. Main wires it to MoveReferee.reset_move_points (component pattern: this referee
+## never reaches sideways). NOT fired on the explore exit or on seed events.
+signal tactical_entered(entity_id: int)
+
 ## The HOST-ONLY pace resolver (DESIGN §2.8.7 — Tactical Zones v1). It is the SINGLE place the two
 ## tempo dials (explore vs tactical) are chosen from: every stamp site (MoveReferee's step/rest,
 ## CombatReferee's windup/recovery, MonsterBrain's pacing) asks THIS referee, per entity, what beat
@@ -126,6 +132,13 @@ func beat_sec_for(entity_id: int) -> float:
 	return GameManager.tactical_beat_sec if _resolve_tactical(entity_id) else GameManager.explore_beat_sec
 
 
+## Public tactical read for non-stamp gating (v0.24.0 MP experiment: MoveReferee's spend/check).
+## Same single resolve as beat_sec_for — NOT a beat comparison, which would misclassify whenever the
+## two dials are set equal (e.g. /config 2 runs both at 0.25s). Host-only.
+func is_tactical(entity_id: int) -> bool:
+	return _resolve_tactical(entity_id)
+
+
 ## THE single "no resolver → explore" policy site (§2.8.7), shared by the three stamp-site referees
 ## (MoveReferee, CombatReferee, MonsterBrain) so none keeps a private copy of the fallback rule. Given a
 ## (possibly null) PaceReferee and an entity id, returns that entity's resolved beat (seconds) — tactical
@@ -167,7 +180,13 @@ func report_engagement(monster_id: int, aggroed: bool, target_id: int) -> void:
 		# write AND the flush. Radius is resolved ONCE here (review #4), never in the per-player loop.
 		if existing != null and int(existing["target"]) == target_id:
 			return
+		# Became-engaged edge (a NEW entry, not a target switch): the monster just entered tactical.
+		# Target switches within a continuous engagement deliberately do NOT re-fire (MP pools must
+		# not refill mid-battle on a retarget — v0.24.0 experiment).
+		var is_new_engagement := existing == null
 		_engagements[monster_id] = { "target": target_id, "radius": _radius_of(monster_id) }
+		if is_new_engagement:
+			tactical_entered.emit(monster_id)
 	else:
 		# Un-aggro: only a real drop (an entry existed) is a change worth flushing — an already-idle
 		# monster reporting false every think must NOT re-flush (that was the unconditional-flush waste).
@@ -262,6 +281,10 @@ func _flush_pace_changes() -> void:
 		if not _last_broadcast.has(player_id) or bool(_last_broadcast[player_id]) != tactical:
 			_last_broadcast[player_id] = tactical
 			NetEvents.post_event("pace_changed", { "entity_id": player_id, "pace": _pace_name(tactical) })
+			# Entry edge only (v0.24.0 MP experiment): the flip INTO tactical resets the pool; the
+			# flip out is deliberately silent here (pools refill by rest, not by leaving).
+			if tactical:
+				tactical_entered.emit(player_id)
 
 
 ## The wire label for a resolved pace — the ONE mapping bool -> the string the cue reads, so the event

@@ -216,6 +216,11 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
 
 Not scheduled — pulled in when their moment comes:
 
+- **MP experiment follow-ups (v0.24.0, pending the Jon+Jeff playtest verdict)**: rogue
+  slip-through passive (needs a new movement seam in MoveReferee — the passive framework is
+  combat-only); monster MP counts in the F3 `/ai` overlay (two-line add to ai_decision);
+  the deferred two-instance verification matrix (recorded in the v0.24.0 plan file /
+  DESIGN §2.2.10); graduate-or-revert decision on the whole experiment.
 - Crit system + yellow damage numbers (v0.10.2 made player→enemy numbers white and
   deliberately reserved yellow for crits — Jon, 2026-07-21)
 - Class starting weapons (`PlayerClass.starting_weapon`; Jon deferred 2026-07-21 — Tab swap

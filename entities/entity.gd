@@ -141,6 +141,12 @@ var _stun_fx_tween: Tween = null
 var _stun_fx_gen: int = 0
 # The dizzy SPRITE wobble while stunned (v0.20.2), on its own slot; reset by hide_stun.
 var _stun_wobble_tween: Tween = null
+# Overhead THINKING cue (v0.24.0 MP experiment): a grey "…" held for the monster's rolled hesitation
+# window. Own fx slot + generation (never collides with stun/cast); self-clearing on a local timer —
+# there is deliberately no expire event (the duration rides the one `thinking` broadcast).
+var _think_fx: Node2D = null
+var _think_fx_tween: Tween = null
+var _think_fx_gen: int = 0
 
 
 func _ready() -> void:
@@ -459,6 +465,48 @@ func hide_stun(gen: int = -1) -> void:
 	_stun_wobble_tween = null
 	if _sprite != null:
 		_sprite.rotation = 0.0
+
+
+## Overhead THINKING cue (v0.24.0 MP experiment, §2.3.4-distinct): three grey dots that pulse over the
+## head for `hold_sec` — a hesitating monster reads as "considering", never confusable with the yellow
+## stun starburst or a cast symbol. Self-clearing (generation-guarded local timer); a re-roll replaces.
+func play_thinking(hold_sec: float) -> void:
+	hide_thinking()
+	_think_fx_gen += 1
+	var gen := _think_fx_gen
+	var dots := Node2D.new()
+	for i in 3:
+		var dot := Polygon2D.new()
+		var pts := PackedVector2Array()
+		for j in 8:
+			var ang := TAU * j / 8.0
+			pts.append(Vector2(cos(ang) * 2.2, sin(ang) * 2.2))
+		dot.polygon = pts
+		dot.color = Color(0.75, 0.75, 0.78)  # neutral grey — deliberately NOT stun yellow
+		dot.position = Vector2((i - 1) * 8.0, 0)
+		dots.add_child(dot)
+	dots.position = Vector2(0, -50)
+	add_child(dots)
+	_think_fx = dots
+	# Gentle bob loop — reads as pondering, visually quieter than the stun spin.
+	_think_fx_tween = create_tween().set_loops()
+	_think_fx_tween.tween_property(dots, "position:y", -54.0, 0.35).from(-50.0)
+	_think_fx_tween.tween_property(dots, "position:y", -50.0, 0.35)
+	if hold_sec > 0.0:
+		get_tree().create_timer(hold_sec).timeout.connect(hide_thinking.bind(gen))
+
+
+## Clear the thinking cue. No-arg = unconditional (death teardown); a bound generation no-ops if a
+## newer roll replaced this one. Idempotent — safe any time.
+func hide_thinking(gen: int = -1) -> void:
+	if gen != -1 and gen != _think_fx_gen:
+		return
+	if _think_fx_tween != null and _think_fx_tween.is_valid():
+		_think_fx_tween.kill()
+	_think_fx_tween = null
+	if _think_fx != null and is_instance_valid(_think_fx):
+		_think_fx.queue_free()
+	_think_fx = null
 
 
 # ── Private methods ───────────────────────────────────────────────────────────

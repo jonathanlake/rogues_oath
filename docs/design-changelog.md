@@ -9,6 +9,22 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.24.0 (2026-07-25) — MOVEMENT POINTS EXPERIMENT (Jeff's proposal): battle movement is now a
+  budget.** While an entity's pace is tactical, each step spends 1 movement point from a pool of 3
+  (rogue: 4 — the first per-class stat field); at 0 the step is rejected "winded" (distinct log line,
+  §2.2.8). The pool refills to max on each battle entry, and regenerates ONLY by resting: 10 straight
+  beats with no move and no action starts regen, then +1 point per 4 beats until max — any activity
+  cancels it (Jon's rest-to-recover spec). Attacking never spends (a budget rations movement, not
+  aggression), explore-pace walking is untouched, and monsters ride the identical host-side check —
+  a fleeing mender now burns dry and gets caught. Monsters also THINK before their first battle move:
+  on aggro they roll 1–6 beats of visible hesitation (grey "…" cue) and hold completely. HUD: teal
+  movement pips under the HP bar, host-pushed. All dials live-tunable (`/config` g-rows
+  `regen_idle_beats`/`regen_interval_beats`; think range in game_config.tres). ROLLBACK STORY (Jeff's
+  ask): `/mp` toggles the whole experiment off live — off is byte-for-byte v0.23.3 movement and AI —
+  and the entire feature is one tagged commit (`git revert` = gone). VERIFICATION: boot sanity only
+  (host+join launch clean, aggro exercises the new paths) per Jon's speed directive — the full
+  two-instance matrix is deferred to a hardening pass if the experiment survives the playtest.
+
 - **v0.23.3 (2026-07-24) — REVIEW PASS: /code-review found 9 issues in the evening's solo work; 8 fixed,
   1 declined with cause.** A high-effort review of v0.23.1+v0.23.2 (the un-red-teamed commits) before
   closing the session. Fixed: (1) FOUR changelog entries (v0.22.0→v0.23.1) had lost their `- **vX.Y.Z**`

@@ -133,6 +133,18 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    (pipelined next-step): both amendments reduce the player's cancel-authority over travel
    and should be reviewed together as one axis, not as two independent asks.
 
+**§2.2.10 — MOVEMENT POINTS (v0.24.0, EXPERIMENT — Jeff's proposal 2026-07-25, playtest pending).**
+Battle movement is a budget: tactical-pace steps spend from a pool (3; rogue 4 via the first
+per-class stat field), 0 rejects "winded" (§2.2.8-distinct). Pool refills on battle entry;
+otherwise ONLY by resting — 10 quiet beats starts regen, +1 point per 4 beats, any move/action
+cancels (Jon's rest-to-recover spec). Attacks never spend; explore movement untouched; monsters
+ride the identical check and additionally roll 1–6 beats of visible hesitation ("…" cue, whole
+brain held) on entering battle. Intent: movement improves positioning but can no longer
+invalidate attacks (the kiting thread) — a fleeing healer burns dry. `/mp` toggles the whole
+experiment live (off = pre-experiment behavior exactly); all dials live-tunable. Like the v0.6.x
+rhythm experiment, this section is provisional until the Jon+Jeff playtest verdict — it then
+either graduates to a real §2.2 rule or is reverted in one commit.
+
 ### 2.3 Combat Resolution
 
 1. **Deterministic combat (decided 2026-07-18, Jeff via Discord + Jon — Rogue Fable III

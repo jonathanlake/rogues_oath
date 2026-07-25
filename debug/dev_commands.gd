@@ -76,6 +76,8 @@ func validate(sender_peer_id: int, data: Dictionary) -> Dictionary:
 			return _dev_cmd_stun(sender_peer_id, args, by)
 		"ai":
 			return _dev_cmd_ai(by)
+		"mp":
+			return _dev_cmd_mp(by)
 		_:
 			# Bare-weapon alias: "/longsword 5" arrives as cmd "longsword", args ["5"]. Reachable ONLY when
 			# cmd resolves to a real weapon (table precedence is handled by the match above). Re-dispatch as
@@ -184,6 +186,20 @@ func _dev_cmd_ai(by: String) -> Dictionary:
 	var line := ("%s turned AI score debug ON (F3 overlay)." % by) if GameManager.debug_ai_decisions \
 			else ("%s turned AI score debug off." % by)
 	return { "ok": true, "data": { "line": line } }
+
+
+## /mp — toggle the MOVEMENT-POINTS experiment (v0.24.0), the /ai pattern applied to a game rule. Flips
+## the host's config flag (host-side reads are the whole authority story: MoveReferee's check/spend/regen
+## and MonsterBrain's hesitation all gate on it host-side; no client reads it). OFF mutates no pool —
+## byte-for-byte pre-experiment movement, the live half of the rollback story. ON reseeds every tracked
+## entity to max (clean slate: nobody resumes a fight with an unearned partial pool) and bumps the regen
+## generations, so no stale chain from before the off-window survives.
+func _dev_cmd_mp(by: String) -> Dictionary:
+	GameManager.config.movement_points_enabled = not GameManager.config.movement_points_enabled
+	if GameManager.config.movement_points_enabled:
+		_move_referee.reseed_all_move_points()
+		return { "ok": true, "data": { "line": "%s turned MOVEMENT POINTS ON (pools reset to full)." % by } }
+	return { "ok": true, "data": { "line": "%s turned movement points off." % by } }
 
 
 ## /class <name> — set the SENDER's class (v0.10.0). Resolve the class through the roster, apply it
@@ -403,6 +419,19 @@ func _dev_config_game_row(alias: String, field: String, value_token: String, by:
 			var beat := clampf(snappedf(value_token.to_float(), cfg.tempo_step_sec), cfg.tempo_min_sec, cfg.tempo_max_sec)
 			NetEvents.post_event("set_tactical_tempo", { "beat_sec": beat, "by": by })
 			return { "ok": true, "note": "tactical beat → %.2fs/beat" % beat }
+		"regen_idle_beats":
+			# MP experiment (v0.24.0): host-side write is the whole authority story — the referee's
+			# rest-to-recover timers read it live at each arm; no client ever reads it. Clamped to a
+			# sane band (0 = regen starts instantly on quiet, generous top for slow-recovery tests).
+			var idle := clampf(value_token.to_float(), 0.0, 100.0)
+			GameManager.config.regen_idle_beats = idle
+			return { "ok": true, "note": "MP regen idle → %.1f beats" % idle }
+		"regen_interval_beats":
+			# Same authority story as regen_idle_beats. Floor 0.25 — a zero interval would chain
+			# create_timer(0) refills in a same-frame burst.
+			var interval := clampf(value_token.to_float(), 0.25, 100.0)
+			GameManager.config.regen_interval_beats = interval
+			return { "ok": true, "note": "MP regen interval → %.2f beats/point" % interval }
 	# Unreachable while DEV_GAME_FIELDS and this match stay in step — but a field added to the allowlist
 	# without its branch must fail LOUDLY here, not silently no-op into a "success" line.
 	return { "ok": false, "reason": "config %s: game field '%s' has no handler" % [alias, field] }

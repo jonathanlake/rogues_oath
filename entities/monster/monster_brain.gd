@@ -55,6 +55,16 @@ var _aggroed: bool = false
 # not yet fired. Cleared at _think entry, checked in _reschedule_after — collapses the historical double
 # timer chain (activation think + seed-glide boundary think, each self-perpetuating) to a single chain.
 var _rethink_pending: bool = false
+
+# THINKING hesitation (v0.24.0 MP experiment, Jeff: "enemies think before moving"). On the
+# became-engaged edge this brain rolls monster_think_min..max_beats (host RNG, at its resolved pace)
+# and holds the WHOLE brain — no move, attack or cast — until the deadline. Wall-clock msec like the
+# pace referee's forcing window; 0 = not thinking. Gated on movement_points_enabled so /mp off
+# restores pre-experiment AI exactly.
+var _thinking_until_msec: int = 0
+# Edge detector for the hesitation roll: the last aggro state this brain reported. Reset never —
+# a monster that genuinely un-aggros (aggro_persists false) re-rolls on its next latch, by design.
+var _last_reported_engaged: bool = false
 # The host's MoveReferee, handed in by the parent at activation. The brain reads occupancy truth
 # and submits monster intents through it (host-local — no RPC; monsters have no RTT). It never
 # reaches up to Main or the monster; the referee is its one injected dependency. Untyped so its
@@ -185,6 +195,12 @@ func _think() -> void:
 	if _combat != null and _combat.is_stunned(_entity_id):
 		_reschedule()
 		return
+	# THINKING hold (v0.24.0): mid-hesitation, the whole brain waits — the same self-skip shape as
+	# the stun gate above. Catches every think after the one that rolled; that rolling think is
+	# gated at its own action sites (post-engagement-report), so no action ever fires mid-cue.
+	if _is_thinking():
+		_reschedule()
+		return
 	# Busy gate: the referee holds this monster committed for the whole ACTION window (glide term +
 	# rest), but the node's glide_finished (which woke us via on_boundary) fires at the SLIDE boundary
 	# — so a post-slide think lands mid-SETTLE and sees busy. This is the chase-parity hot loop.
@@ -226,7 +242,7 @@ func _think() -> void:
 		# timer cascade. Not-pipelined is the ONLY case needing recovery, and it always gets it. (This
 		# is the one deliberate refinement of the plan's "arm at every busy think": it faithfully keeps
 		# the plan's stated intent that the backstop "no-ops if the pipelined step ran".)
-		if _try_pipeline_next_step():
+		if not _is_thinking() and _try_pipeline_next_step():
 			return
 		_reschedule_after(backstop_sec)
 		return
@@ -288,6 +304,12 @@ func _think() -> void:
 	# / leash-dropped means idle on the re-think cadence. The SAME _should_chase decision the busy-think
 	# pipeline consults, so both chase paths acquire identically.
 	if not _update_engagement(my_tile, targets):
+		_reschedule()
+		return
+
+	# THINKING hold, latch-think leg (v0.24.0): the engagement report above may have JUST rolled the
+	# hesitation — this same think must not fall through into the kiter/wind-up/chase actions below.
+	if _is_thinking():
 		_reschedule()
 		return
 
@@ -500,6 +522,11 @@ func _flee_candidates(away: Vector2i) -> Array:
 ## boundary, so an approaching caster re-decides per tile and can never chase past its preferred range.
 func _think_utility(my_tile: Vector2i, targets: Array) -> void:
 	var engaged := _update_engagement(my_tile, targets)
+	# THINKING hold, latch-think leg (v0.24.0) — mirror of the legacy path's gate: the report above
+	# may have just rolled the hesitation; this think must not walk the candidate list.
+	if _is_thinking():
+		_reschedule()
+		return
 	var candidates: Array = UtilityScorer.score_candidates(_build_utility_context(my_tile, targets, engaged))
 	if not engaged:
 		var heal_only: Array = []
@@ -840,8 +867,28 @@ func _update_engagement(my_tile: Vector2i, targets: Array) -> bool:
 ## Report this monster's engagement to the pace referee (guarded for a client's null-pace inert brain,
 ## which never thinks anyway). The ONE call site wrapper so both the idle and busy paths report identically.
 func _report_engagement(aggroed: bool, target_id: int) -> void:
+	# THINKING hesitation roll (v0.24.0), on the became-engaged edge only — one site, shared by the
+	# legacy, kiter, utility and busy paths (they all report through here). Host RNG; duration in
+	# beats at this monster's resolved pace (engaged = tactical). The `thinking` event drives the
+	# overhead cue on every peer. Tied to the /mp master toggle: off = pre-experiment AI exactly.
+	var was_engaged := _last_reported_engaged
+	_last_reported_engaged = aggroed
 	if _pace != null:
 		_pace.report_engagement(_entity_id, aggroed, target_id)
+	# Roll AFTER the referee records the engagement (boot-check finding, v0.24.0): beat_or_explore
+	# resolves a monster tactical iff its engagement is on record, so rolling first priced the
+	# hesitation at the EXPLORE beat. Order fixed — the think window now scales with the fight tempo.
+	if aggroed and not was_engaged and GameManager.config.movement_points_enabled:
+		var think_beats := randi_range(
+				GameManager.config.monster_think_min_beats, GameManager.config.monster_think_max_beats)
+		var think_sec := think_beats * PaceReferee.beat_or_explore(_pace, _entity_id)
+		_thinking_until_msec = Time.get_ticks_msec() + int(think_sec * 1000.0)
+		NetEvents.post_event("thinking", { "entity_id": _entity_id, "duration_sec": think_sec })
+
+
+## THINKING hold read (v0.24.0): true while this brain's hesitation deadline is in the future.
+func _is_thinking() -> bool:
+	return Time.get_ticks_msec() < _thinking_until_msec
 
 
 ## First step DIRECTION toward the nearest player by path length over the walls-only A* grid, or
