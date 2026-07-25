@@ -105,23 +105,30 @@ extends Resource
 ## mechanic, nothing more. Flip in the .tres, no code.
 @export var attacks_of_opportunity_enabled: bool = true
 
-## MOVEMENT POINTS EXPERIMENT (v0.24.0, Jeff's proposal 2026-07-25). Battle-only movement budget:
-## while an entity's pace resolves tactical, each accepted glide spends 1 point; at 0 the glide is
-## rejected "winded" (§2.2.8-distinct). Pool resets to max on each tactical ENTRY. Bumps, wind-ups
-## and attacks never spend (attacking is not moving). Read HOST-side only (MoveReferee). The /mp dev
-## command flips this live (off = exactly pre-experiment movement); revert = one commit.
-@export var movement_points_enabled: bool = true
+## STAMINA EXPERIMENT (v0.24.0 as "movement points", renamed v0.24.1 — Jeff's proposal 2026-07-25).
+## Battle-only movement budget: while an entity's pace resolves tactical, each accepted glide spends
+## 1 stamina; at 0 the step still COMMITS but as an exhausted CRAWL (exhausted_step_beats below) —
+## never a hard stop (Jon, v0.24.1). Pool resets to max on each tactical ENTRY. Bumps, wind-ups and
+## attacks never spend (attacking is not moving). Read HOST-side only (MoveReferee). The /stamina
+## dev command flips this live (off = exactly pre-experiment movement); revert = one commit.
+@export var stamina_enabled: bool = true
 
-## Movement-point pool max for monsters and any player whose class doesn't override it
-## (PlayerClass.movement_points_max — rogue ships 4). Whole points; no fractional spends exist.
-@export var movement_points_max: int = 3
+## Stamina pool max for monsters and any player whose class doesn't override it
+## (PlayerClass.stamina_max — rogue ships 4). Whole points; no fractional spends exist.
+@export var stamina_max: int = 3
 
-## Rest-to-recover regen (Jon, 2026-07-25): regen BEGINS only after this many consecutive beats
-## with no movement and no committed action; any activity restarts the clock. Beats at the
+## The exhausted CRAWL (v0.24.1, Jon: "still able to move, just very slow"): a tactical step taken
+## at 0 stamina commits at THIS many beats per tile instead of the mover's normal tier — the
+## Commitment Rule does the punishing (a 5-beat step is a long time to be committed). Diagonals
+## still carry the diagonal multiplier. Live-tunable via the /config g-row.
+@export var exhausted_step_beats: float = 5.0
+
+## Rest-to-recover stamina regen (Jon, 2026-07-25): regen BEGINS only after this many consecutive
+## beats with no movement and no committed action; any activity restarts the clock. Beats at the
 ## entity's resolved pace.
 @export var regen_idle_beats: float = 10.0
 
-## Once regenerating, one movement point returns every this-many beats (pips refill visibly)
+## Once regenerating, one stamina point returns every this-many beats (pips refill visibly)
 ## until max or until the next activity cancels the regenerative state.
 @export var regen_interval_beats: float = 4.0
 

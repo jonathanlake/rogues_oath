@@ -86,10 +86,10 @@ const DEV_MONSTER_CLAMPS := {
 ## is the TACTICAL BEAT, routed through the existing set_tactical_tempo broadcast (snap/clamp exactly as the
 ## host validator does, then post the event) so every peer adopts it through the one _apply_tactical_tempo
 ## chokepoint. Lives here beside the other allowlists so /help can derive the list from one source.
-## v0.24.0 adds the two MP-experiment regen dials. Authority story (per the rule above): both are read
-## HOST-side only (MoveReferee's rest-to-recover timers read them live at each arm), so their branch is
-## a plain host-side config write — no broadcast needed, no client ever reads them.
-const DEV_GAME_FIELDS := ["tactical_beat_sec", "regen_idle_beats", "regen_interval_beats"]
+## v0.24.0 adds the stamina-experiment regen dials; v0.24.1 the exhausted-crawl dial. Authority story
+## (per the rule above): all three are read HOST-side only (MoveReferee reads them live at each arm /
+## stamp), so their branches are plain host-side config writes — no broadcast, no client ever reads them.
+const DEV_GAME_FIELDS := ["tactical_beat_sec", "regen_idle_beats", "regen_interval_beats", "exhausted_step_beats"]
 
 ## Dev CONFIG PRESETS (v0.19.7): `/config <alias>` applies a whole BUNDLE of /w + /m tunings in one command, so
 ## a repeated test loadout is a single keystroke instead of five. Lives HERE (beside the DEV_* allowlists) so

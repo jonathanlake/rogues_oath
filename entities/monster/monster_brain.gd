@@ -56,10 +56,10 @@ var _aggroed: bool = false
 # timer chain (activation think + seed-glide boundary think, each self-perpetuating) to a single chain.
 var _rethink_pending: bool = false
 
-# THINKING hesitation (v0.24.0 MP experiment, Jeff: "enemies think before moving"). On the
+# THINKING hesitation (v0.24.0 stamina experiment, Jeff: "enemies think before moving"). On the
 # became-engaged edge this brain rolls monster_think_min..max_beats (host RNG, at its resolved pace)
 # and holds the WHOLE brain — no move, attack or cast — until the deadline. Wall-clock msec like the
-# pace referee's forcing window; 0 = not thinking. Gated on movement_points_enabled so /mp off
+# pace referee's forcing window; 0 = not thinking. Gated on stamina_enabled so /stamina off
 # restores pre-experiment AI exactly.
 var _thinking_until_msec: int = 0
 # Edge detector for the hesitation roll: the last aggro state this brain reported. Reset never —
@@ -870,7 +870,7 @@ func _report_engagement(aggroed: bool, target_id: int) -> void:
 	# THINKING hesitation roll (v0.24.0), on the became-engaged edge only — one site, shared by the
 	# legacy, kiter, utility and busy paths (they all report through here). Host RNG; duration in
 	# beats at this monster's resolved pace (engaged = tactical). The `thinking` event drives the
-	# overhead cue on every peer. Tied to the /mp master toggle: off = pre-experiment AI exactly.
+	# overhead cue on every peer. Tied to the /stamina master toggle: off = pre-experiment AI exactly.
 	var was_engaged := _last_reported_engaged
 	_last_reported_engaged = aggroed
 	if _pace != null:
@@ -878,7 +878,7 @@ func _report_engagement(aggroed: bool, target_id: int) -> void:
 	# Roll AFTER the referee records the engagement (boot-check finding, v0.24.0): beat_or_explore
 	# resolves a monster tactical iff its engagement is on record, so rolling first priced the
 	# hesitation at the EXPLORE beat. Order fixed — the think window now scales with the fight tempo.
-	if aggroed and not was_engaged and GameManager.config.movement_points_enabled:
+	if aggroed and not was_engaged and GameManager.config.stamina_enabled:
 		var think_beats := randi_range(
 				GameManager.config.monster_think_min_beats, GameManager.config.monster_think_max_beats)
 		var think_sec := think_beats * PaceReferee.beat_or_explore(_pace, _entity_id)

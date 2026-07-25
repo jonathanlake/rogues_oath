@@ -151,7 +151,7 @@ func _render_help() -> void:
 	add_line("  /config <%s>  — apply a preset test loadout" % "|".join(PackedStringArray(GameManager.CONFIG_PRESETS.keys())))
 	add_line("  /stun [me|<monster>] [beats]  — apply a stun (default 3 beats)")
 	add_line("  /ai  — toggle utility-AI score debug in the F3 overlay")
-	add_line("  /mp  — toggle the movement-points experiment (v0.24.0)")
+	add_line("  /stamina  — toggle the stamina experiment (v0.24.1; /mp still works)")
 	add_line("  /help  — this list")
 
 
@@ -252,6 +252,15 @@ func _on_event_received(event: Dictionary) -> void:
 			if bool(data.get("weapon_skipped", false)):
 				class_line += " (weapon not equipped — busy; Tab to equip.)"
 			add_line(class_line)
+		"stamina":
+			# Stamina experiment (v0.24.1): the EXHAUSTION line, own-player only. Fires exactly once per
+			# empty (the event posts on change, and hitting 0 is a change), so no throttle is needed —
+			# §2.3.4: crawling must read as "I'm exhausted", never as lag or a dropped input. Refill/regen
+			# ticks get no line (the pips are the running signal; the crawl visibly ending is the recovery
+			# tell).
+			if int(data.get("entity_id", 0)) == multiplayer.get_unique_id() \
+					and int(data.get("points", -1)) == 0:
+				add_line("Exhausted — you can barely move. Stand still to recover.")
 		"pace_changed":
 			# The pace-flip cue (Tactical Zones v1, §2.8.7). A TWO-SIGNAL cue — tempo-bar emphasis + this
 			# log line — and deliberately NO sound: pace flips are a two-signal cue by audio-grammar choice
@@ -439,10 +448,6 @@ func _log_glide_reject(reason: String) -> void:
 			pass
 		"already moving":
 			pass
-		"winded":
-			# Out of movement points (v0.24.0 MP experiment) — a distinct world refusal, never confusable
-			# with a dropped input (§2.3.4): the budget is spent, rest to recover.
-			add_line("Winded — out of movement points. Stand still to recover.")
 		"dead":
 			# The mover was killed by an attack of opportunity mid-adjudication (decision 4, Q1
 			# placeholder). Suppress the reject line — the `died` event already logged "You died.",

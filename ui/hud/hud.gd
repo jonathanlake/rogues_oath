@@ -158,14 +158,14 @@ var _world_scale: int = 1
 # Own-player character-panel widgets (built in _ready, refreshed by refresh_self on class/weapon change).
 var _own_class_label: Label = null
 var _own_passives_box: VBoxContainer = null
-# MOVEMENT-POINT pips (v0.24.0 MP experiment): the own-player battle-movement budget, one square per
-# point, host-pushed via move_points events (never queried — the HP pattern). HIDDEN until the first
-# event arrives, so a session with /mp off from boot never shows an inert row (no disable event
-# exists; a mid-session /mp off just freezes the last state — accepted for the experiment).
-var _own_mp_row: HBoxContainer = null
-var _own_mp_pips: Array[ColorRect] = []
-const _MP_FULL := Color(0.35, 0.8, 0.95)   # teal — deliberately not HP green/red
-const _MP_EMPTY := Color(0.1, 0.16, 0.2)
+# STAMINA pips (v0.24.0 experiment, renamed v0.24.1): the own-player battle-movement budget, one
+# square per point, host-pushed via stamina events (never queried — the HP pattern). HIDDEN until
+# the first event arrives, so a session with /stamina off from boot never shows an inert row (no
+# disable event exists; a mid-session /stamina off just freezes the last state — accepted).
+var _own_stamina_row: HBoxContainer = null
+var _own_stamina_pips: Array[ColorRect] = []
+const _STAMINA_FULL := Color(0.35, 0.8, 0.95)   # teal — deliberately not HP green/red
+const _STAMINA_EMPTY := Color(0.1, 0.16, 0.2)
 # Own-player HP bar (transplanted party-frame mechanics), fed by note_attack/note_died filtered to our id.
 var _own_hp_fill: ColorRect = null
 var _own_hp_text: Label = null
@@ -250,27 +250,27 @@ func note_attack(target_id: int, hp_after: int, target_max: int) -> void:
 		_set_own_hp(hp_after, target_max)
 
 
-## A movement-point change landed (v0.24.0, fanned out by main.gd): if it is OUR OWN player, repaint
+## A stamina change landed (v0.24.0, fanned out by main.gd): if it is OUR OWN player, repaint
 ## the pips. First event reveals the row (and re-measures the column — the one min-height change);
 ## a max change (class swap) rebuilds the pip set. HUD-local units throughout — the row lives inside
 ## the char-info column, so the canvas-px vs HUD-local boundary (hud zoom) is never crossed here.
-func note_move_points(entity_id: int, points: int, max_points: int) -> void:
-	if entity_id != _own_id or _own_mp_row == null or max_points <= 0:
+func note_stamina(entity_id: int, points: int, max_points: int) -> void:
+	if entity_id != _own_id or _own_stamina_row == null or max_points <= 0:
 		return
-	if _own_mp_pips.size() != max_points:
-		for pip in _own_mp_pips:
+	if _own_stamina_pips.size() != max_points:
+		for pip in _own_stamina_pips:
 			pip.queue_free()
-		_own_mp_pips.clear()
+		_own_stamina_pips.clear()
 		for i in max_points:
 			var pip := ColorRect.new()
 			pip.custom_minimum_size = Vector2(7, 7)
 			pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			_own_mp_row.add_child(pip)
-			_own_mp_pips.append(pip)
-	for i in _own_mp_pips.size():
-		_own_mp_pips[i].color = _MP_FULL if i < points else _MP_EMPTY
-	if not _own_mp_row.visible:
-		_own_mp_row.visible = true
+			_own_stamina_row.add_child(pip)
+			_own_stamina_pips.append(pip)
+	for i in _own_stamina_pips.size():
+		_own_stamina_pips[i].color = _STAMINA_FULL if i < points else _STAMINA_EMPTY
+	if not _own_stamina_row.visible:
+		_own_stamina_row.visible = true
 		_relayout()
 
 
@@ -628,14 +628,14 @@ func _build_char_info() -> void:
 	level_label.add_theme_color_override("font_color", Color(0.75, 0.8, 0.95, 0.7))
 	vbox.add_child(level_label)
 	vbox.add_child(_build_hp_bar())
-	# Movement-point pips row (v0.24.0), directly under the HP bar. Starts hidden (zero height while
+	# Stamina pips row (v0.24.0), directly under the HP bar. Starts hidden (zero height while
 	# invisible, so the column's min-height — and thus the integer HUD zoom fit — is untouched until
 	# the experiment actually posts a value; the visibility flip re-measures via _relayout).
-	_own_mp_row = HBoxContainer.new()
-	_own_mp_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_own_mp_row.add_theme_constant_override("separation", 2)
-	_own_mp_row.visible = false
-	vbox.add_child(_own_mp_row)
+	_own_stamina_row = HBoxContainer.new()
+	_own_stamina_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_own_stamina_row.add_theme_constant_override("separation", 2)
+	_own_stamina_row.visible = false
+	vbox.add_child(_own_stamina_row)
 	_own_passives_box = VBoxContainer.new()
 	_own_passives_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_own_passives_box.add_theme_constant_override("separation", 0)

@@ -141,7 +141,7 @@ var _stun_fx_tween: Tween = null
 var _stun_fx_gen: int = 0
 # The dizzy SPRITE wobble while stunned (v0.20.2), on its own slot; reset by hide_stun.
 var _stun_wobble_tween: Tween = null
-# Overhead THINKING cue (v0.24.0 MP experiment): a grey "…" held for the monster's rolled hesitation
+# Overhead THINKING cue (v0.24.0 stamina experiment): a grey "…" held for the monster's rolled hesitation
 # window. Own fx slot + generation (never collides with stun/cast); self-clearing on a local timer —
 # there is deliberately no expire event (the duration rides the one `thinking` broadcast).
 var _think_fx: Node2D = null
@@ -467,7 +467,7 @@ func hide_stun(gen: int = -1) -> void:
 		_sprite.rotation = 0.0
 
 
-## Overhead THINKING cue (v0.24.0 MP experiment, §2.3.4-distinct): three grey dots that pulse over the
+## Overhead THINKING cue (v0.24.0 stamina experiment, §2.3.4-distinct): three grey dots that pulse over the
 ## head for `hold_sec` — a hesitating monster reads as "considering", never confusable with the yellow
 ## stun starburst or a cast symbol. Self-clearing (generation-guarded local timer); a re-roll replaces.
 func play_thinking(hold_sec: float) -> void:

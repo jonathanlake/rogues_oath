@@ -1,9 +1,9 @@
 class_name PaceReferee
 extends Node
 
-## Host-only past-tense edge (v0.24.0 MP experiment): fired the moment an entity ENTERS tactical —
+## Host-only past-tense edge (v0.24.0 stamina experiment): fired the moment an entity ENTERS tactical —
 ## players on the _flush_pace_changes flip diff, monsters on report_engagement's became-engaged
-## change-detect. Main wires it to MoveReferee.reset_move_points (component pattern: this referee
+## change-detect. Main wires it to MoveReferee.reset_stamina (component pattern: this referee
 ## never reaches sideways). NOT fired on the explore exit or on seed events.
 signal tactical_entered(entity_id: int)
 
@@ -132,7 +132,7 @@ func beat_sec_for(entity_id: int) -> float:
 	return GameManager.tactical_beat_sec if _resolve_tactical(entity_id) else GameManager.explore_beat_sec
 
 
-## Public tactical read for non-stamp gating (v0.24.0 MP experiment: MoveReferee's spend/check).
+## Public tactical read for non-stamp gating (v0.24.0 stamina experiment: MoveReferee's spend/check).
 ## Same single resolve as beat_sec_for — NOT a beat comparison, which would misclassify whenever the
 ## two dials are set equal (e.g. /config 2 runs both at 0.25s). Host-only.
 func is_tactical(entity_id: int) -> bool:
@@ -281,7 +281,7 @@ func _flush_pace_changes() -> void:
 		if not _last_broadcast.has(player_id) or bool(_last_broadcast[player_id]) != tactical:
 			_last_broadcast[player_id] = tactical
 			NetEvents.post_event("pace_changed", { "entity_id": player_id, "pace": _pace_name(tactical) })
-			# Entry edge only (v0.24.0 MP experiment): the flip INTO tactical resets the pool; the
+			# Entry edge only (v0.24.0 stamina experiment): the flip INTO tactical resets the pool; the
 			# flip out is deliberately silent here (pools refill by rest, not by leaving).
 			if tactical:
 				tactical_entered.emit(player_id)

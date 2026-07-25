@@ -501,10 +501,10 @@ func _ready() -> void:
 		# it into the movement referee so its step/rest stamps route through beat_sec_for.
 		_pace.activate(_players, _monsters, _referee)
 		_referee.set_pace(_pace)
-		# MP experiment (v0.24.0): battle entry = fresh pool. The pace referee owns the entry edge
-		# (players: flip diff; monsters: became-engaged), the move referee owns the pool — wired here
-		# per the component rule (referees never reach sideways). Host-only like everything above.
-		_pace.tactical_entered.connect(_referee.reset_move_points)
+		# Stamina experiment (v0.24.0): battle entry = fresh pool. The pace referee owns the entry
+		# edge (players: flip diff; monsters: became-engaged), the move referee owns the pool — wired
+		# here per the component rule (referees never reach sideways). Host-only like everything above.
+		_pace.tactical_entered.connect(_referee.reset_stamina)
 		# Host-only: activate the combat referee AFTER the movement + pace referees are set up and BEFORE
 		# any spawn — its container enter hooks then seed HP for every entity (host player + goblin), and
 		# the referees hold each other's references so bump/AoO/wind-up/death can cross-call and every attack
@@ -861,10 +861,10 @@ func _on_net_event(event: Dictionary) -> void:
 			# A monster's telegraphed SMITE channel starting (v0.19.10, host-authored). Orange-red tell over the
 			# caster; the LAND is the later `attack` event (kind "smite"). Log line from game_log.
 			_handle_smite_cast_event(event)
-		"move_points":
-			# A player's movement-point pool changed (v0.24.0 MP experiment, host-authored: spend, battle-entry
-			# reset, or a rest-to-recover regen tick). Own-player HUD renders the pips; monsters budget silently.
-			_handle_move_points_event(event)
+		"stamina":
+			# A player's stamina pool changed (v0.24.0 experiment, renamed v0.24.1; host-authored: spend,
+			# battle-entry reset, or a rest-to-recover regen tick). Own-player HUD renders the pips.
+			_handle_stamina_event(event)
 		"thinking":
 			# A monster rolled its battle-entry hesitation (v0.24.0, host-authored). Every peer shows the grey
 			# "…" cue over it for the rolled window — self-clearing, no expire event.
@@ -1291,16 +1291,16 @@ func _handle_smite_cast_event(event: Dictionary) -> void:
 
 ## All peers: show the overhead STUN icon when the host applies a stun (v0.20.0). entity_id may be a player
 ## (positive) or a monster (negative) — _node_for_peer resolves either; duration_sec holds the icon the window.
-## All peers: mirror a movement-point change (v0.24.0 MP experiment) into the OWN-player HUD pips.
+## All peers: mirror a stamina change (v0.24.0 experiment) into the OWN-player HUD pips.
 ## Value is host-pushed, never queried (the HP-display pattern); other players' pools are not shown.
-func _handle_move_points_event(event: Dictionary) -> void:
+func _handle_stamina_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
 	if _hud != null:
-		_hud.note_move_points(int(data.get("entity_id", 0)),
+		_hud.note_stamina(int(data.get("entity_id", 0)),
 				int(data.get("points", 0)), int(data.get("max", 0)))
 
 
-## All peers: show the grey thinking cue over a hesitating monster (v0.24.0 MP experiment).
+## All peers: show the grey thinking cue over a hesitating monster (v0.24.0 stamina experiment).
 func _handle_thinking_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
 	var ent := _node_for_peer(int(data.get("entity_id", 0))) as Entity

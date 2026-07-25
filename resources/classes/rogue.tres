@@ -10,4 +10,4 @@ display_name = "rogue"
 atlas_coords = Vector2i(3, 0)
 passives = Array[PassiveAbility]([ExtResource("2_backstab")])
 active_abilities = Array[ActiveAbility]([ExtResource("3_kick")])
-movement_points_max = 4
+stamina_max = 4

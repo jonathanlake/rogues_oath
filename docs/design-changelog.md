@@ -9,6 +9,16 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.24.1 (2026-07-25) — STAMINA rename + the exhausted crawl (Jon's tweak, same session).**
+  "Movement points" is now **stamina** everywhere (config fields, class stat, event name, HUD,
+  command — `/stamina`, with `/mp` kept as an alias). Bigger change: running dry no longer STOPS
+  you — a 0-stamina tactical step still commits, but as an exhausted **crawl at 5 beats per tile**
+  (`exhausted_step_beats`, live-tunable g-row) instead of your normal speed. The "winded" reject is
+  gone; in its place, hitting 0 stamina logs "Exhausted — you can barely move" once per empty
+  (§2.3.4 — the crawl must never read as lag). The Commitment Rule does the punishing now: an
+  exhausted step is a ~1.25s commit at config-2 tempo, so a drained kiter is still catchable but
+  never bricked. Same rollback story as v0.24.0.
+
 - **v0.24.0 (2026-07-25) — MOVEMENT POINTS EXPERIMENT (Jeff's proposal): battle movement is now a
   budget.** While an entity's pace is tactical, each step spends 1 movement point from a pool of 3
   (rogue: 4 — the first per-class stat field); at 0 the step is rejected "winded" (distinct log line,

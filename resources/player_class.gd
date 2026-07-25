@@ -43,11 +43,11 @@ extends Resource
 ## knight → [shield_bash], rogue → [kick]. Ability sets swap with the class (the /class equip flow).
 @export var active_abilities: Array[ActiveAbility] = []
 
-## Movement-point pool max for this class (v0.24.0 MP experiment — the first per-class STAT field,
-## exactly what the header above reserved this file for). Resolved HOST-side and LAZILY (at each
-## pool seed/reset, never cached at spawn) so a mid-session /class change takes effect at the next
-## battle entry. 3 = the config baseline; rogue ships 4 (Jeff: the rogue is the mobile class).
-@export var movement_points_max: int = 3
+## Stamina pool max for this class (v0.24.0 experiment, renamed v0.24.1 — the first per-class STAT
+## field, exactly what the header above reserved this file for). Resolved HOST-side and LAZILY (at
+## each pool seed/reset, never cached at spawn) so a mid-session /class change takes effect at the
+## next battle entry. 3 = the config baseline; rogue ships 4 (Jeff: the rogue is the mobile class).
+@export var stamina_max: int = 3
 
 ## The class's WEAPON ROSTER (v0.17.0) — the loadout this class carries and Tab-cycles through. EMPTY (the
 ## default) = use the GLOBAL GameConfig.weapon_roster fallback (the shipped dagger↔longsword cycle); NON-EMPTY

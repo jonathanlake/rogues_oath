@@ -110,15 +110,16 @@ var _facing: Dictionary = {}
 # arrival, NOT at the later action-window end. The bump validator refuses a strike against a still-arriving
 # hostile so you can't hit a goblin before it's in the square (Jeff's report). Cleared on death/exit too.
 var _arriving: Dictionary = {}
-# MOVEMENT POINTS (v0.24.0 experiment, DESIGN §2.2.x): entity_id -> { "points": int, "max": int }.
-# Host-authoritative battle budget — a tactical glide spends 1, 0 rejects "winded". Seeded full on
-# entity enter, reset to a LAZILY re-resolved max on each tactical entry (Main wires
+# STAMINA (v0.24.0 experiment, renamed v0.24.1 — DESIGN §2.2.10): entity_id -> { "points": int,
+# "max": int }. Host-authoritative battle budget — a tactical glide spends 1; at 0 the step still
+# commits as an exhausted CRAWL (exhausted_step_beats), never a hard stop. Seeded full on entity
+# enter, reset to a LAZILY re-resolved max on each tactical entry (Main wires
 # PaceReferee.tactical_entered here), erased with the other per-entity records on death/exit.
-var _move_points: Dictionary = {}
+var _stamina: Dictionary = {}
 # Rest-to-recover regen generation counter: entity_id -> int. Every activity, reset, teardown and
-# /mp toggle bumps it; a regen timer that fires holding a stale generation no-ops (stun-system
+# /stamina toggle bumps it; a regen timer that fires holding a stale generation no-ops (stun-system
 # precedent). This is the sole stale-timer guard — one regen chain per entity by construction.
-var _mp_generation: Dictionary = {}
+var _stamina_generation: Dictionary = {}
 
 # Monotonic per-glide id, stamped into each _gliding record so a completion timer can tell "my"
 # glide from a later one for the same peer (disconnect+rejoin, or any superseding glide).
@@ -307,22 +308,22 @@ func commit_in_place(entity_id: int, duration_sec: float) -> bool:
 	return true
 
 
-## Host-only (v0.24.0 MP experiment): reset an entity's movement-point pool to its lazily-resolved
+## Host-only (v0.24.0 stamina experiment): reset an entity's stamina pool to its lazily-resolved
 ## max. Wired by Main to PaceReferee.tactical_entered (battle entry = fresh pool) and used as the
 ## seed on entity enter. Bumping the generation kills any regen chain from a previous engagement,
 ## closing the stale-timer race (an orphaned timer fires, sees a newer generation, no-ops).
-func reset_move_points(entity_id: int) -> void:
-	var max_points := _mp_max_of(entity_id)
-	_move_points[entity_id] = { "points": max_points, "max": max_points }
-	_mp_generation[entity_id] = int(_mp_generation.get(entity_id, 0)) + 1
-	_post_move_points(entity_id)
+func reset_stamina(entity_id: int) -> void:
+	var max_points := _stamina_max_of(entity_id)
+	_stamina[entity_id] = { "points": max_points, "max": max_points }
+	_stamina_generation[entity_id] = int(_stamina_generation.get(entity_id, 0)) + 1
+	_post_stamina(entity_id)
 
 
-## Host-only (v0.24.0): reseed EVERY tracked entity to max. Called by the /mp toggle on ENABLE only
-## (clean slate — nobody resumes a fight with an unearned partial pool). Disable mutates nothing.
-func reseed_all_move_points() -> void:
-	for entity_id in _move_points.keys():
-		reset_move_points(entity_id)
+## Host-only (v0.24.0): reseed EVERY tracked entity to max. Called by the /stamina toggle on ENABLE
+## only (clean slate — nobody resumes a fight with an unearned partial pool). Disable mutates nothing.
+func reseed_all_stamina() -> void:
+	for entity_id in _stamina.keys():
+		reset_stamina(entity_id)
 
 
 ## Host-only (v0.24.0): register activity — an accepted glide or any committed busy window. Bumps
@@ -330,15 +331,15 @@ func reseed_all_move_points() -> void:
 ## below max, arms a fresh rest-to-recover idle timer: regen_idle_beats of unbroken quiet at the
 ## entity's resolved pace, then +1 point per regen_interval_beats until max or the next activity.
 func note_activity(entity_id: int) -> void:
-	if not GameManager.config.movement_points_enabled:
+	if not GameManager.config.stamina_enabled:
 		return
-	var generation := int(_mp_generation.get(entity_id, 0)) + 1
-	_mp_generation[entity_id] = generation
-	var pool: Dictionary = _move_points.get(entity_id, {})
+	var generation := int(_stamina_generation.get(entity_id, 0)) + 1
+	_stamina_generation[entity_id] = generation
+	var pool: Dictionary = _stamina.get(entity_id, {})
 	if pool.is_empty() or int(pool["points"]) >= int(pool["max"]):
 		return
 	var idle_sec: float = GameManager.config.regen_idle_beats * PaceReferee.beat_or_explore(_pace, entity_id)
-	get_tree().create_timer(idle_sec).timeout.connect(_mp_regen_tick.bind(entity_id, generation))
+	get_tree().create_timer(idle_sec).timeout.connect(_stamina_regen_tick.bind(entity_id, generation))
 
 
 ## Host-only: erase ALL of a dead entity's occupancy bookkeeping in ONE synchronous pass (decision 7)
@@ -353,11 +354,11 @@ func clear_entity(entity_id: int) -> void:
 	_arriving.erase(entity_id)
 	_erase_by_value(_occupied, entity_id)
 	_erase_by_value(_reserved, entity_id)
-	# MP experiment (v0.24.0): drop the pool and bump the generation so any in-flight regen timer
-	# for this entity no-ops (ids are never recycled in-session, but a respawn reuses a PEER id —
-	# the bump makes the old chain stale either way).
-	_move_points.erase(entity_id)
-	_mp_generation[entity_id] = int(_mp_generation.get(entity_id, 0)) + 1
+	# Stamina experiment (v0.24.0): drop the pool and bump the generation so any in-flight regen
+	# timer for this entity no-ops (ids are never recycled in-session, but a respawn reuses a PEER
+	# id — the bump makes the old chain stale either way).
+	_stamina.erase(entity_id)
+	_stamina_generation[entity_id] = int(_stamina_generation.get(entity_id, 0)) + 1
 
 
 # ── Private methods ───────────────────────────────────────────────────────────
@@ -489,28 +490,30 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 			return { "ok": false, "reason": "occupied_hostile" }
 		return { "ok": false, "reason": "occupied" }
 
-	# MOVEMENT POINTS (v0.24.0 experiment): battle-only budget check + spend, placed HERE by design —
-	# every earlier return (bump, wind-up route, occupied, corner, busy…) is structurally exempt
-	# (attacking is not moving), and both accept paths below (pipelined + direct) flow through this
-	# point, so an accepted tactical glide spends EXACTLY once. Pace read via is_tactical (never a
-	# beat comparison — the two dials can be authored equal). The only post-spend abort is the AoO
-	# death below, where the mover's whole pool is torn down anyway (clear_entity).
-	if GameManager.config.movement_points_enabled and _pace != null and _pace.is_tactical(sender_peer_id):
-		var mp_pool: Dictionary = _move_points.get(sender_peer_id, {})
-		if mp_pool.is_empty():
+	# STAMINA (v0.24.0 experiment, v0.24.1 crawl): battle-only budget check + spend, placed HERE by
+	# design — every earlier return (bump, wind-up route, occupied, corner, busy…) is structurally
+	# exempt (attacking is not moving), and both accept paths below (pipelined + direct) flow through
+	# this point, so an accepted tactical glide spends EXACTLY once. Pace read via is_tactical (never
+	# a beat comparison — the two dials can be authored equal). At 0 stamina the step is NOT rejected
+	# (v0.24.1, Jon: "still able to move, just very slow"): it commits as an exhausted CRAWL — the
+	# stamp below swaps the mover's tier for exhausted_step_beats, and the Commitment Rule does the
+	# punishing. The only post-spend abort is the AoO death below (pool torn down by clear_entity).
+	var exhausted_crawl := false
+	if GameManager.config.stamina_enabled and _pace != null and _pace.is_tactical(sender_peer_id):
+		var stamina_pool: Dictionary = _stamina.get(sender_peer_id, {})
+		if stamina_pool.is_empty():
 			# Untracked mid-battle (defensive — enter-seed should have run): seed full rather than
 			# hard-deny a mover the experiment never met.
-			reset_move_points(sender_peer_id)
-			mp_pool = _move_points[sender_peer_id]
-		if int(mp_pool["points"]) <= 0:
-			return { "ok": false, "reason": "winded" }
-		mp_pool["points"] = int(mp_pool["points"]) - 1
-		_post_move_points(sender_peer_id)
-		note_activity(sender_peer_id)
-	else:
-		# Explore-pace movement is unbudgeted, but it is still ACTIVITY: walking cancels any
-		# rest-to-recover regen in progress (Jon: "moving... will stop the regeneration").
-		note_activity(sender_peer_id)
+			reset_stamina(sender_peer_id)
+			stamina_pool = _stamina[sender_peer_id]
+		if int(stamina_pool["points"]) <= 0:
+			exhausted_crawl = true
+		else:
+			stamina_pool["points"] = int(stamina_pool["points"]) - 1
+			_post_stamina(sender_peer_id)
+	# EVERY accepted glide — budgeted, exhausted, or explore-pace — is ACTIVITY: it cancels any
+	# rest-to-recover regen in progress (Jon: "moving... will stop the regeneration").
+	note_activity(sender_peer_id)
 
 	# Stamp THREE windows ONCE here (stamp-and-bake, DESIGN §2.8), so a live tempo change never
 	# re-derives this in-flight commit. glide_sec is the GLIDE term (tier beats × beat × diagonal
@@ -520,6 +523,13 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# VISIBLE tween that rides the broadcast — slide_fraction of the GLIDE TERM, never of glide+rest;
 	# the settle (action − slide) is the on-tile grid tell and exists even at rest 0.
 	var glide_sec := _step_duration(mover, dir, sender_peer_id)  # GLIDE term (tier beats × PACE beat × mult)
+	# Exhausted CRAWL override (v0.24.1): a 0-stamina tactical step commits at exhausted_step_beats
+	# per tile instead of the mover's tier — same stamp-and-bake, same diagonal multiplier, so the
+	# busy window and visible slide below scale with it automatically.
+	if exhausted_crawl:
+		glide_sec = GameManager.config.exhausted_step_beats * PaceReferee.beat_or_explore(_pace, sender_peer_id)
+		if dir.x != 0 and dir.y != 0:
+			glide_sec *= GameManager.config.diagonal_step_multiplier
 	var busy_sec := glide_sec + _rest_duration(sender_peer_id)   # ACTION window (rest default 0 in v0.8.0)
 	var slide_sec := _slide_fraction() * glide_sec        # visible tween: fraction of the glide term
 
@@ -839,56 +849,56 @@ func _tile_of_peer(peer_id: int) -> Vector2i:
 func _on_entity_entered(node: Node) -> void:
 	if node is Entity:
 		_occupied[node.tile] = node.entity_id
-		# MP experiment (v0.24.0): seed a full pool at enter. A monster that spawns already engaged
-		# gets exactly what the tactical-entry reset would grant, so the no-transition spawn case is
-		# covered by construction. Seeded even while /mp is off (harmless; enable reseeds anyway).
-		var max_points := _mp_max_of(node.entity_id)
-		_move_points[node.entity_id] = { "points": max_points, "max": max_points }
+		# Stamina experiment (v0.24.0): seed a full pool at enter. A monster that spawns already
+		# engaged gets exactly what the tactical-entry reset would grant, so the no-transition spawn
+		# case is covered by construction. Seeded even while /stamina is off (enable reseeds anyway).
+		var max_points := _stamina_max_of(node.entity_id)
+		_stamina[node.entity_id] = { "points": max_points, "max": max_points }
 
 
-## MP experiment (v0.24.0): an entity's pool max, resolved LAZILY at every seed/reset — players read
-## their CURRENT class's movement_points_max (so a mid-session /class change lands at the next battle
+## Stamina experiment (v0.24.0): an entity's pool max, resolved LAZILY at every seed/reset — players
+## read their CURRENT class's stamina_max (so a mid-session /class change lands at the next battle
 ## entry), monsters and class-less fallbacks read the config baseline. Duck-typed node.get like
 ## CombatReferee._passives_of (players and monsters share the container contract, no class_name cast).
-func _mp_max_of(entity_id: int) -> int:
+func _stamina_max_of(entity_id: int) -> int:
 	var node = _node_of_id(entity_id)
 	if node != null:
 		var player_class = node.get("player_class")
 		if player_class != null:
-			return int(player_class.movement_points_max)
-	return GameManager.config.movement_points_max
+			return int(player_class.stamina_max)
+	return GameManager.config.stamina_max
 
 
-## MP experiment (v0.24.0): broadcast a PLAYER's pool state (monsters budget silently — their tell is
-## the burst-pause movement itself). On-change only: called from spend, reset and each regen tick,
-## never per-frame (§2.5). Negative ids return without posting.
-func _post_move_points(entity_id: int) -> void:
-	if entity_id <= 0 or not _move_points.has(entity_id):
+## Stamina experiment (v0.24.0): broadcast a PLAYER's pool state (monsters budget silently — their
+## tell is the burst-pause movement itself). On-change only: called from spend, reset and each regen
+## tick, never per-frame (§2.5). Negative ids return without posting.
+func _post_stamina(entity_id: int) -> void:
+	if entity_id <= 0 or not _stamina.has(entity_id):
 		return
-	var pool: Dictionary = _move_points[entity_id]
-	NetEvents.post_event("move_points", {
+	var pool: Dictionary = _stamina[entity_id]
+	NetEvents.post_event("stamina", {
 		"entity_id": entity_id, "points": int(pool["points"]), "max": int(pool["max"]),
 	})
 
 
-## MP experiment (v0.24.0): one rest-to-recover tick. Fires first at the END of the idle wait, then
-## every regen_interval_beats. A stale generation (any activity/reset/teardown since arming) no-ops —
-## that guard alone enforces one chain per entity. Membership re-checked (the entity may have died
-## while the timer flew). The chain re-arms itself until the pool refills.
-func _mp_regen_tick(entity_id: int, generation: int) -> void:
-	if int(_mp_generation.get(entity_id, -1)) != generation:
+## Stamina experiment (v0.24.0): one rest-to-recover tick. Fires first at the END of the idle wait,
+## then every regen_interval_beats. A stale generation (any activity/reset/teardown since arming)
+## no-ops — that guard alone enforces one chain per entity. Membership re-checked (the entity may
+## have died while the timer flew). The chain re-arms itself until the pool refills.
+func _stamina_regen_tick(entity_id: int, generation: int) -> void:
+	if int(_stamina_generation.get(entity_id, -1)) != generation:
 		return
-	if not GameManager.config.movement_points_enabled or not _move_points.has(entity_id):
+	if not GameManager.config.stamina_enabled or not _stamina.has(entity_id):
 		return
-	var pool: Dictionary = _move_points[entity_id]
+	var pool: Dictionary = _stamina[entity_id]
 	if int(pool["points"]) >= int(pool["max"]):
 		return
 	pool["points"] = int(pool["points"]) + 1
-	_post_move_points(entity_id)
+	_post_stamina(entity_id)
 	if int(pool["points"]) < int(pool["max"]):
 		var interval_sec: float = GameManager.config.regen_interval_beats \
 				* PaceReferee.beat_or_explore(_pace, entity_id)
-		get_tree().create_timer(interval_sec).timeout.connect(_mp_regen_tick.bind(entity_id, generation))
+		get_tree().create_timer(interval_sec).timeout.connect(_stamina_regen_tick.bind(entity_id, generation))
 
 
 ## Forget an entity wholesale as its node leaves (disconnect / despawn / teardown): drop its resting
@@ -909,9 +919,9 @@ func _on_entity_exiting(node: Node) -> void:
 	_arriving.erase(entity_id)
 	_erase_by_value(_occupied, entity_id)
 	_erase_by_value(_reserved, entity_id)
-	# MP experiment (v0.24.0): same teardown as clear_entity (idempotent re-erase is a no-op).
-	_move_points.erase(entity_id)
-	_mp_generation[entity_id] = int(_mp_generation.get(entity_id, 0)) + 1
+	# Stamina experiment (v0.24.0): same teardown as clear_entity (idempotent re-erase is a no-op).
+	_stamina.erase(entity_id)
+	_stamina_generation[entity_id] = int(_stamina_generation.get(entity_id, 0)) + 1
 
 
 ## Remove every tile->peer entry whose value is this peer (a peer holds at most one of each, but
