@@ -79,6 +79,8 @@ func validate(sender_peer_id: int, data: Dictionary) -> Dictionary:
 		"stamina", "mp":
 			# "mp" survives as an alias (v0.24.1 rename — muscle memory from the v0.24.0 playtest).
 			return _dev_cmd_stamina(by)
+		"winded":
+			return _dev_cmd_winded(by)
 		_:
 			# Bare-weapon alias: "/longsword 5" arrives as cmd "longsword", args ["5"]. Reachable ONLY when
 			# cmd resolves to a real weapon (table precedence is handled by the match above). Re-dispatch as
@@ -203,6 +205,16 @@ func _dev_cmd_stamina(by: String) -> Dictionary:
 	# v0.24.3: clear any showing sweat-drops (presentation only — pools stay untouched on disable).
 	_move_referee.clear_exhaustion_cues()
 	return { "ok": true, "data": { "line": "%s turned stamina off." % by } }
+
+
+## /winded — toggle HARD-STOP exhaustion (v0.24.6, Jon's ask): on = 0 stamina refuses movement
+## outright (players AND monsters — the one validator gates both); off = the v0.24.1 crawl. The
+## /ai-family pattern: host-side config flip is the whole authority story (read at adjudication).
+func _dev_cmd_winded(by: String) -> Dictionary:
+	GameManager.config.exhausted_blocks_movement = not GameManager.config.exhausted_blocks_movement
+	if GameManager.config.exhausted_blocks_movement:
+		return { "ok": true, "data": { "line": "%s set exhaustion to HARD STOP (0 stamina = no moving)." % by } }
+	return { "ok": true, "data": { "line": "%s set exhaustion back to the slow crawl." % by } }
 
 
 ## /class <name> — set the SENDER's class (v0.10.0). Resolve the class through the roster, apply it

@@ -541,6 +541,11 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 			reset_stamina(sender_peer_id)
 			stamina_pool = _stamina[sender_peer_id]
 		if int(stamina_pool["points"]) <= 0:
+			# HARD-STOP mode (v0.24.6, the /winded toggle): 0 stamina refuses the step outright —
+			# the original v0.24.0 shape, restored as a live A/B against the crawl. Distinct §2.2.8
+			# reject; monsters eat it identically (their brains re-poll and resume after rest-regen).
+			if GameManager.config.exhausted_blocks_movement:
+				return { "ok": false, "reason": "winded" }
 			exhausted_crawl = true
 		else:
 			stamina_pool["points"] = int(stamina_pool["points"]) - 1

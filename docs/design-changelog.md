@@ -9,6 +9,12 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.24.6 (2026-07-25) — `/winded`: hard-stop exhaustion as a live A/B (Jon).** New toggle: ON =
+  0 stamina refuses movement outright (the original v0.24.0 shape — distinct "winded" reject + log
+  line, players AND monsters through the one validator); OFF (default) = the v0.24.1 slow crawl.
+  Rooted movers still rest-regen (refusals aren't activity), so nothing deadlocks. Flip mid-session
+  to feel both answers to "what does empty mean" — the experiment's last open dial.
+
 - **v0.24.5 (2026-07-25) — THE ROOM PASS + the pip-count knob (Jon).** Room B (east) trades its
   lone goblin for a TRAINING-SCALE pack: two regular goblins walling the west entrance, one mender
   deep east covering both with heal range 5 — the Warren's "focus the wall fails" lesson with no

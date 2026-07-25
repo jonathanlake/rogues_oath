@@ -124,6 +124,12 @@ extends Resource
 ## still carry the diagonal multiplier. Live-tunable via the /config g-row.
 @export var exhausted_step_beats: float = 5.0
 
+## HARD-STOP mode (v0.24.6, Jon's toggle — the `/winded` dev command): when true, 0 stamina means
+## you CANNOT move at all (distinct "winded" reject, the original v0.24.0 shape) instead of the
+## crawl above — players and monsters alike (one validator gates both). Rooted movers still regen
+## by resting, so nothing deadlocks. Default false = crawl mode.
+@export var exhausted_blocks_movement: bool = false
+
 ## Rest-to-recover stamina regen (Jon, 2026-07-25): regen BEGINS only after this many consecutive
 ## beats with no movement and no committed action; any activity restarts the clock. Beats at the
 ## entity's resolved pace.

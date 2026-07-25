@@ -152,6 +152,7 @@ func _render_help() -> void:
 	add_line("  /stun [me|<monster>] [beats]  — apply a stun (default 3 beats)")
 	add_line("  /ai  — toggle utility-AI score debug in the F3 overlay")
 	add_line("  /stamina  — toggle the stamina experiment (v0.24.1; /mp still works)")
+	add_line("  /winded  — toggle 0-stamina hard stop vs slow crawl (v0.24.6)")
 	add_line("  /help  — this list")
 
 
@@ -453,6 +454,10 @@ func _log_glide_reject(reason: String) -> void:
 			pass
 		"already moving":
 			pass
+		"winded":
+			# Hard-stop mode only (v0.24.6, /winded toggle): out of stamina AND movement is blocked.
+			# Distinct from the crawl (which accepts the step slowly and never rejects) — §2.3.4.
+			add_line("Winded — can't move. Stand still to recover.")
 		"dead":
 			# The mover was killed by an attack of opportunity mid-adjudication (decision 4, Q1
 			# placeholder). Suppress the reject line — the `died` event already logged "You died.",
