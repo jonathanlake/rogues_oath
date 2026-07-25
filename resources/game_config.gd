@@ -291,6 +291,35 @@ extends Resource
 ## HOST-side by MoveReferee._begin_bump. Option D (a knockback on the kick) is a future, separate add.
 @export var kick_damage: int = 1
 
+## INSTANT ABILITIES EXPERIMENT (v0.26.0, Jon's decision 2026-07-25 — DESIGN §2.11.1). The master
+## switch for the two INSTANT class abilities: knight **Shield Block** and rogue **Shadow Step**.
+## An "instant" differs from every other ability in exactly two ways — it is usable MID-ACTION
+## (no busy gate), and it is gated by a per-ability COOLDOWN (the two dials below) instead of by an
+## occupied window.
+##
+## Both of those DELIBERATELY SUSPEND standing decisions, and only inside this toggle, pending a
+## Jon+Jeff verdict:
+##  - §2.1.3 "there is no active dodge, block, or escape input" — Shield Block IS a defensive input,
+##    and Shadow Step INTERRUPTS the actor's OWN committed glide (the only self-interrupt in the game).
+##  - Part 4 Q9 "unified occupancy — NO separate cooldowns, ever" — these two carry cooldowns.
+##
+## OFF = the pre-experiment game EXACTLY. Both abilities reject "instant abilities are disabled" at
+## the validator, so no teleport and no block can occur; with no teleport, MoveReferee's forced-movement
+## interrupt generation never moves and every downstream interrupt guard is inert by construction.
+## Read HOST-side only (CombatReferee's use_ability validator) — never a client value.
+@export var instant_abilities_enabled: bool = true
+
+## Shield Block COOLDOWN in BEATS (v0.26.0 instants experiment). Stamped at the BLOCKER's resolved
+## pace when the block is CONSUMED — not when it is raised — so holding a guard costs nothing until it
+## actually turns a blow aside. Deliberately long (30 beats): the block negates one hit of ANY size,
+## which is only balanced if it is a once-a-fight decision. Read HOST-side.
+@export var shield_block_cooldown_beats: float = 30.0
+
+## Shadow Step COOLDOWN in BEATS (v0.26.0 instants experiment). Stamped at the blinker's resolved pace
+## on a SUCCESSFUL teleport only — a blocked destination burns nothing, so a mis-timed press is a
+## refusal, not a punishment. Read HOST-side.
+@export var shadow_step_cooldown_beats: float = 20.0
+
 
 # ── Weapon roster helpers ─────────────────────────────────────────────────────
 

@@ -170,6 +170,16 @@ var _banter_tween: Tween = null
 var _recovery_fx: Node2D = null
 var _recovery_fx_tween: Tween = null
 var _ready_blink_tween: Tween = null
+# Overhead SHIELD-BLOCK icon (v0.26.0 instants experiment): a steel-blue shield held while this entity's
+# one-shot guard is RAISED. Own slot in the icon band, mirrored across from the sweat drop — sweat (10,-46),
+# shield (-10,-46) — so a blocking knight can still be winded/thinking without the cues stacking. NO
+# generation token and no local expiry timer, unlike the stun icon: the host does not know when this comes
+# down (a HIT does), so the paired status_expired is the only thing that clears it.
+var _block_fx: Node2D = null
+var _block_fx_tween: Tween = null
+# The BLINK vanish/reappear flash (v0.26.0), on its own slot so a teleport's fade can't be clobbered by — or
+# clobber — the recovery alpha it restores back to.
+var _blink_tween: Tween = null
 
 
 func _ready() -> void:
@@ -217,6 +227,75 @@ func glide_to(to_tile: Vector2i, duration_sec: float) -> void:
 	_glide_tween = create_tween()
 	_glide_tween.tween_property(self, "position", target, duration_sec).set_trans(Tween.TRANS_LINEAR)
 	_glide_tween.finished.connect(_on_glide_finished)
+
+
+## Play back a host-adjudicated BLINK (v0.26.0 instants experiment, DESIGN §2.11.1) — a TELEPORT, not a
+## glide: there is no travel time to tween, so the body must read as "gone, then there". Called on every peer
+## from the `blink` event (main.gd). The sibling of glide_to, and deliberately NOT a 0-second glide_to: that
+## would still run the tween machinery, still emit glide_started, and still leave a client believing it moved
+## through the tiles in between.
+##
+## Sequence: kill the in-flight glide tween (the ability's whole promise is leaving a committed step early —
+## the host already erased that glide record, so its visual must not keep travelling) and any lunge shake,
+## snap `tile` + `position` to the destination, then a ~0.1s fade-out/in on the SPRITE's own alpha so the jump
+## is legible instead of a one-frame pop. The fade restores to whatever alpha was there BEFORE, not to 1.0, so
+## blinking while stamina-recovering keeps the spent transparency (that cue owns the same channel).
+##
+## Then `_on_glide_accepted` + `glide_finished` — REQUIRED, not decoration: the local Player blocks its own
+## input sampler on glide_started and unblocks on glide_finished, and a killed tween emits no `finished`. A
+## blink out of a glide would otherwise leave the blinker's input latched shut forever. Both hooks are also
+## exactly TRUE here: the host's movement record for this entity is gone, so the mover genuinely is free to
+## act and its planning tile genuinely is the destination.
+func snap_to_tile(to_tile: Vector2i) -> void:
+	if _glide_tween != null and _glide_tween.is_valid():
+		_glide_tween.kill()
+	if _shake_tween != null and _shake_tween.is_valid():
+		_shake_tween.kill()
+	tile = to_tile
+	position = WorldGrid.tile_to_world(to_tile)
+	if _sprite != null:
+		var base_alpha := _sprite.modulate.a
+		if _blink_tween != null and _blink_tween.is_valid():
+			_blink_tween.kill()
+		_blink_tween = create_tween()
+		_blink_tween.tween_property(_sprite, "modulate:a", 0.0, 0.05)
+		_blink_tween.tween_property(_sprite, "modulate:a", base_alpha, 0.05)
+	_on_glide_accepted(to_tile)
+	glide_finished.emit()
+
+
+## Overhead SHIELD-BLOCK icon (v0.26.0 instants experiment, §2.3.4): a steel-blue shield over the shoulder
+## while this entity's one-shot guard is raised, so "that knight is holding a block" reads at a glance from
+## across the room — and so the later blocked hit has a cause the whole party already saw. Driven per-peer from
+## `status_applied {status: "block"}`; cleared ONLY by the paired `status_expired` (hide_blocking) — the guard
+## has no duration, so unlike the stun icon there is no local backup timer and none is wanted. A slow scale
+## pulse marks it as HELD and ready, deliberately calmer than the stun burst's spin.
+func play_blocking() -> void:
+	hide_blocking()
+	var shield := Polygon2D.new()
+	# Heater-shield silhouette: flat top, straight flanks, tapering to a point — reads as a shield at 5px and
+	# is unmistakable against the stun starburst, the think dots and the sweat teardrop.
+	shield.polygon = PackedVector2Array([
+		Vector2(-4.5, -5.0), Vector2(4.5, -5.0), Vector2(4.5, 0.5),
+		Vector2(0.0, 6.0), Vector2(-4.5, 0.5)])
+	shield.color = Color(0.58, 0.68, 0.95, 0.95)  # steel blue — its own colour, not stun yellow / sweat cyan
+	shield.position = Vector2(-10, -46)  # mirror of the sweat drop's (10,-46): its own spot in the icon band
+	add_child(shield)
+	_block_fx = shield
+	_block_fx_tween = create_tween().set_loops()
+	_block_fx_tween.tween_property(shield, "scale", Vector2(1.18, 1.18), 0.5).from(Vector2.ONE)
+	_block_fx_tween.tween_property(shield, "scale", Vector2.ONE, 0.5)
+
+
+## Clear the block shield (the host's `status_expired` — i.e. the guard absorbed a hit — or a death teardown).
+## Idempotent, like every other hide_* here.
+func hide_blocking() -> void:
+	if _block_fx_tween != null and _block_fx_tween.is_valid():
+		_block_fx_tween.kill()
+	_block_fx_tween = null
+	if _block_fx != null and is_instance_valid(_block_fx):
+		_block_fx.queue_free()
+	_block_fx = null
 
 
 ## Attacker feedback for a landed strike (§2.3.4), played on every peer from the referee's `attack`

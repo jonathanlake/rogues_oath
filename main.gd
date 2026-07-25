@@ -919,12 +919,20 @@ func _on_net_event(event: Dictionary) -> void:
 			# speech label on the speaker; the log line comes from game_log's own handler.
 			_handle_banter_event(event)
 		"status_applied":
-			# A host-applied status effect started (v0.20.0 — stun). Every peer shows the overhead icon for the
-			# broadcast window on the affected entity (player or monster).
+			# A host-applied status effect started (v0.20.0 — stun; v0.26.0 — block). Every peer shows the
+			# overhead icon on the affected entity (player or monster).
 			_handle_status_applied_event(event)
 		"status_expired":
 			# A host status effect ended (v0.20.0). Every peer clears the overhead icon.
 			_handle_status_expired_event(event)
+		"blink":
+			# A host-adjudicated TELEPORT (v0.26.0 instants experiment — the rogue's Shadow Step). Its own
+			# action, never a glide_to: every peer SNAPS the body to the destination with a vanish flash.
+			_handle_blink_event(event)
+		"ability_used", "ability_cooldown":
+			# An instant ability fired (v0.26.0), or a deferred cooldown was charged when a raised guard
+			# absorbed a hit. Own-player HUD only — it drains the cooldown overlay on that ability's socket.
+			_handle_ability_cooldown_event(event)
 
 
 ## Play back an accepted glide. Resolve the mover by entity id: positive is a player, negative a
@@ -1013,6 +1021,13 @@ func _handle_attack_event(event: Dictionary) -> void:
 		# reads as damage taken (§2.3.4 — distinct outcomes stay distinct). Attacker-side cues (swing,
 		# rig, recovery) are unchanged — the world still reacts, only the victim's damage feedback is gated.
 		var godded := bool(data.get("godded", false))
+		# SHIELD BLOCK (v0.26.0 instants experiment): the blow CONNECTED and was turned aside — damage 0, hp
+		# unchanged, `blocked` flag. Handled exactly like `godded` (the pattern this follows): the grey "block"
+		# popup + the "X blocks Y's blow!" log line ARE the feedback, and the victim's HURT cues (white flash,
+		# slash streak, local red vignette) are SUPPRESSED so a negated hit can never read as damage taken
+		# (§2.3.4 — distinct outcomes stay distinct). Attacker-side cues are untouched: the knight blocked it,
+		# the goblin still swung, and the swing/recovery it committed to still plays on every peer.
+		var blocked := bool(data.get("blocked", false))
 		# Arrow HIT (v0.17.0): SUPPRESS the attacker-side lunge/swing here. The shooter's cue was the draw +
 		# release (windup / projectile_launched) when it loosed — a lunge now, as the remote arrow lands,
 		# would be a wrong double-cue (§2.3.4). Only the TARGET's hurt + popup play (below) for an arrow.
@@ -1024,7 +1039,7 @@ func _handle_attack_event(event: Dictionary) -> void:
 		if target != null:
 			# dir passed through so the victim's slash streak reads directional (v0.6.3), derived
 			# per-peer from this same event — no new wire data. SKIPPED for a godded no-op.
-			if not godded:
+			if not godded and not blocked:
 				# On a backstab the impact SFX is pitched UP a step (placeholder audio grammar, §2.3.4)
 				# so the sharper hit is audibly distinct from a normal blow — same stream, per-peer local.
 				target.play_hurt(dir, 1.5 if backstab else 1.0)
@@ -1039,6 +1054,10 @@ func _handle_attack_event(event: Dictionary) -> void:
 			# One per peer off this same event; the FX layer parents it (survives the victim's despawn).
 			if godded:
 				_fx.damage_popup("0", DamagePopup.MISS_COLOR, target.tile)
+			elif blocked:
+				# Its OWN word, not a "0": the number would read as "the hit was worthless", when what
+				# happened is that the defender SPENT something to stop it (v0.26.0).
+				_fx.damage_popup("block", DamagePopup.MISS_COLOR, target.tile)
 			else:
 				# id-sign invariant (players POSITIVE ids, monsters NEGATIVE): target_id < 0 ⇒ a monster
 				# was struck (a player→enemy hit) → white; target_id > 0 ⇒ a player took the hit → red.
@@ -1050,7 +1069,7 @@ func _handle_attack_event(event: Dictionary) -> void:
 		# LOCAL-only red hit vignette (v0.6.3 juice): fires ONLY when it's OUR OWN avatar being struck
 		# (landed — we're already past the whiff branch). Suppressed on a godded no-op (no damage taken).
 		# Pure local presentation off the same attack event every peer receives.
-		if not godded and target_id == multiplayer.get_unique_id():
+		if not godded and not blocked and target_id == multiplayer.get_unique_id():
 			_flash_hurt_vignette()
 	# Recovery tell (§2.3.4; DESIGN §2.8): the attacker is SPENT for the recovery window the event
 	# carries in duration_sec — a bump (player), an instant strike (goblin windup_beats==0), AND a
@@ -1409,21 +1428,52 @@ func _handle_exhausted_event(event: Dictionary) -> void:
 
 func _handle_status_applied_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
-	if str(data.get("status", "")) != "stun":
-		return
 	var ent := _node_for_peer(int(data.get("entity_id", 0))) as Entity
-	if ent != null:
-		ent.play_stunned(float(data.get("duration_sec", 0.0)))
+	if ent == null:
+		return
+	match str(data.get("status", "")):
+		"stun":
+			ent.play_stunned(float(data.get("duration_sec", 0.0)))
+		"block":
+			# SHIELD BLOCK (v0.26.0 instants experiment): a raised guard has NO duration — it ends when a blow
+			# lands on it — so the icon is held open and only the paired status_expired takes it down.
+			ent.play_blocking()
 
 
-## All peers: clear the overhead STUN icon when the host's stun expires (v0.20.0).
+## All peers: clear an overhead status icon when the host's status ends (v0.20.0 stun; v0.26.0 block).
 func _handle_status_expired_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
-	if str(data.get("status", "")) != "stun":
+	var ent := _node_for_peer(int(data.get("entity_id", 0))) as Entity
+	if ent == null:
 		return
+	match str(data.get("status", "")):
+		"stun":
+			ent.hide_stun()
+		"block":
+			ent.hide_blocking()
+
+
+## All peers: play back a host-adjudicated BLINK (v0.26.0 instants experiment — Shadow Step). The body SNAPS
+## to the destination with a vanish flash (Entity.snap_to_tile), never a glide tween: the host performed a
+## teleport, so no peer may render travel through the tiles in between. `from` rides the event for future
+## after-image FX; the snap only needs `to`. A vanished node (killed the same frame) renders nothing.
+func _handle_blink_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
 	var ent := _node_for_peer(int(data.get("entity_id", 0))) as Entity
 	if ent != null:
-		ent.hide_stun()
+		ent.snap_to_tile(data.get("to", ent.tile) as Vector2i)
+
+
+## All peers (own-player effect only): an instant ability fired or had its cooldown charged (v0.26.0). Both
+## `ability_used` and `ability_cooldown` carry the same {entity_id, ability, cooldown_sec} shape and mean the
+## same thing to the UI — "this socket's cooldown state is now N seconds" — so they share one handler. The HUD
+## self-filters to our own id and drains a LOCAL cosmetic overlay over the host's stamped span; host authority
+## is untouched (the referee's ready-at msec is the only thing that can refuse a press).
+func _handle_ability_cooldown_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	if _hud != null:
+		_hud.note_ability_cooldown(int(data.get("entity_id", 0)), str(data.get("ability", "")),
+				float(data.get("cooldown_sec", 0.0)))
 
 
 ## All peers: adopt a host-stamped tempo change (§2.8.3). Apply it to the LOCAL GameManager beat so the
@@ -1865,8 +1915,12 @@ func _on_intent_rejected(action: String, reason: String) -> void:
 	# all bonk the sender's own player: a refused move / swap / shot / use / equip gets the same distinct
 	# sound+flash, so "the host refused" is never a silent no-op (§2.3.4). An equip reject (dead, busy, wrong
 	# slot, not-a-weapon) fires the bonk exactly like a refused move — the game_log line adds the reason.
+	# use_ability joins the set in v0.26.0 (instants experiment): a refused ability press — no target, empty
+	# slot, ON COOLDOWN, nowhere to blink, instants switched off — was previously SILENT on this node, which
+	# §2.2.8 forbids ("the roll failed" must never be confusable with "my input didn't register"). The bonk is
+	# the instants' whole reject cue; game_log adds the reason line.
 	if action != "glide_to" and action != "swap_weapon" and action != "shoot" \
-			and action != "use_item" and action != "equip_item":
+			and action != "use_item" and action != "equip_item" and action != "use_ability":
 		return
 	var me := _players.get_node_or_null(str(multiplayer.get_unique_id())) as Player
 	if me == null:

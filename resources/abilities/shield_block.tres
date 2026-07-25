@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ActiveAbility" format=3]
+
+[ext_resource type="Script" path="res://resources/active_ability.gd" id="1_aa"]
+
+[resource]
+script = ExtResource("1_aa")
+kind = 1
+display_name = "Shield Block"
+atlas_coords = Vector2i(6, 11)
+log_verb = "blocks"
+damage = 0
+stun_beats = 0.0
+windup_beats = 0.0
+recovery_beats = 0.0
+range_tiles = 0

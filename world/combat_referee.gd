@@ -67,6 +67,25 @@ var _stun_gen: Dictionary = {}
 # (through has_pending_smite_at) and by pick_smite_tile, which skips already-doomed tiles outright.
 var _pending_smites: Dictionary = {}
 
+# SHIELD BLOCK (v0.26.0 instants experiment, DESIGN §2.11.1): entity id -> the ActiveAbility resource whose
+# guard is currently RAISED. Presence IS the blocking state; the value is stored (rather than a bare `true`)
+# because the consumption site — inside apply_damage — has to know WHICH ability to charge the cooldown
+# against, and the ability is the cooldown key. Host-only truth, never trusted from the wire: only the
+# use_ability validator writes it, and that runs host-side.
+#
+# LIFETIME: raised by _use_shield_block, erased the instant it ABSORBS a hit (one-shot — there is no timed
+# expiry, deliberately: the guard is a decision you spend, not a window you wait out), and torn down with the
+# entity's other per-entity state on death / container exit. Empty forever while the experiment toggle is off
+# (nothing can raise a guard), which is what makes the consumption branch inert.
+var _blocking: Dictionary = {}
+# INSTANT-ABILITY COOLDOWNS (v0.26.0 experiment): entity id -> { ability display_name -> ready-at msec }.
+# The Part 4 Q9 suspension made concrete — a second timer beside the occupied window, which is exactly what
+# Q9 forbids for a normal ability and exactly what an instant needs, since it HAS no occupied window to pay
+# with. Wall-clock msec (Time.get_ticks_msec), stamped from the ability's beats × the user's resolved pace at
+# the moment the cost is incurred, so the number bakes the tempo it was charged at (stamp-and-bake, §2.8.2).
+# Nested per entity so the death/exit teardown is one erase. Host-only; a client never reads a cooldown.
+var _ability_ready_at_msec: Dictionary = {}
+
 # The Players / Monsters containers, handed in by Main via activate() on the HOST only. Read for
 # node resolution + HP seeding; never reached up from. Null on clients (activate never runs there).
 var _players: Node2D = null
@@ -284,6 +303,45 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 	# player-only forcing window; a monster (negative id) never arms one regardless.
 	if _pace != null and attacker_id > 0 and is_alive(attacker_id):
 		_pace.report_hostile_action(attacker_id)
+	# SHIELD BLOCK CONSUMPTION (v0.26.0 instants experiment, DESIGN §2.11.1). Insertion point is pinned:
+	# AFTER the god check (a godded target returned already and must NEVER spend its block on a hit that was
+	# a no-op anyway) and AFTER the forcing-window arm (a blocked swing is still a hostile action — the
+	# attacker committed and connected, so it stays tactical), but BEFORE the passive chain / armor / HP
+	# write, all of which this returns in front of: a blocked blow is negated WHOLE, so there is no amount
+	# left for a backstab to multiply or plate to shave.
+	#
+	# NEGATES ANY DAMAGE KIND — bump, kick, free, windup, strike, arrow, ability, AND smite (flagged for
+	# Jeff: a magic ground-spell being shield-blockable is a real design call, not an accident) — with ONE
+	# exemption: "admin". The dev pokes (/mi hp, /mi kill) must stay exact or the tuning tools lie, so a
+	# blocking knight still dies to `/mi <id> kill`. Same exemption list shape as _is_physical_kind's, but
+	# deliberately NOT that predicate: armor's exemptions are about physicality, this one is about authority.
+	#
+	# NOT gated on instant_abilities_enabled, on purpose: _blocking can only be non-empty if the toggle was
+	# on when the guard went up, so the branch is unreachable in an experiment-off session. Gating it would
+	# instead strand a raised guard (a permanently un-consumable dict entry) if the toggle flipped mid-block
+	# — and honouring the already-committed block is the Commitment-Rule-correct reading anyway.
+	if kind != "admin" and _blocking.has(target_id):
+		var block_ability: ActiveAbility = _blocking[target_id]
+		_blocking.erase(target_id)
+		# COOLDOWN STARTS ON CONSUMPTION (not on the raise): holding a guard is free, spending it is what costs.
+		var block_cooldown_sec := _stamp_cooldown(target_id, block_ability,
+				GameManager.config.shield_block_cooldown_beats)
+		# The blow still gets an `attack` event — §2.3.4 forbids a silent negation. Reuses the ONE attack-dict
+		# builder with damage 0, hp UNCHANGED and a present-only `blocked` flag (the `godded` pattern exactly),
+		# so every other kind's payload is byte-identical and clients render "turned aside", never "missed".
+		# duration_sec rides through untouched: the ATTACKER's recovery is its own commitment, not the victim's.
+		var blocked_data := _build_attack_data(attacker, attacker_id, target, target_id, 0,
+				int(_hp[target_id]), kind, duration_sec, false, [], verb, true)
+		NetEvents.post_event("attack", blocked_data, attacker_id)
+		# Drop the overhead shield on every peer, then hand the HUD the cooldown it just incurred. Two events,
+		# because they are two facts: the guard is gone (world state) and a socket is now dark (own-player UI).
+		NetEvents.post_event("status_expired", { "entity_id": target_id, "status": "block" })
+		NetEvents.post_event("ability_cooldown", {
+			"entity_id": target_id,
+			"ability": block_ability.display_name,
+			"cooldown_sec": block_cooldown_sec,
+		})
+		return false
 	# Passive modify_damage dispatch (v0.11.0). AFTER the god-check (a godded no-op returned above and
 	# runs NO passives), BEFORE the HP mutation. Run the ATTACKER's passives SEQUENTIALLY in array order
 	# — each receives the previous one's output amount (ctx.amount rewritten between calls) — and collect
@@ -466,8 +524,11 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 	# construction, the same mechanism MoveReferee's completion timers use). recovery_sec stamps the
 	# landed event's duration (swing + spent tell, same as the instant path); occupancy stays
 	# windup-only — recovery remains brain pacing (added to the return), not a referee record.
+	# interrupt_gen captured AT COMMIT (v0.26.0): an attacker forcibly MOVED during this telegraph (today only
+	# a player's Shadow Step, but the same door serves any future knockback) lands nothing at windup end.
 	get_tree().create_timer(windup_sec).timeout.connect(
-			_resolve_windup.bind(attacker_id, target_tile, "windup", recovery_sec, intended_id))
+			_resolve_windup.bind(attacker_id, target_tile, "windup", recovery_sec, intended_id,
+					_move_referee.interrupt_gen_of(attacker_id)))
 	return windup_sec + recovery_sec
 
 
@@ -581,6 +642,8 @@ func _resolve_heal_cast(caster_id: int, target_id: int, amount: int) -> void:
 	if not is_alive(caster_id):
 		return
 	# INTERRUPT (v0.20.2): a healer stunned mid-cast heals nothing — stunning the shaman mid-channel cancels it.
+	# No forced-movement (interrupt_gen) guard, for the same reason as _resolve_smite: only players blink and
+	# only monsters heal-cast, so nothing reaching this resolve is teleportable (v0.26.0).
 	if is_stunned(caster_id):
 		return
 	apply_heal(target_id, amount, _name_of(_node_of_id(caster_id)))
@@ -724,6 +787,9 @@ func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int, recovery
 	if not is_alive(caster_id):
 		return
 	# INTERRUPT (v0.20.2): a caster stunned mid-smite deals nothing — stunning the shaman mid-cast cancels it.
+	# NO forced-movement (interrupt_gen) guard here, unlike the windup/ability/arrow resolves (v0.26.0): only
+	# PLAYERS can blink, and only monsters cast — so no caster this resolve can belong to is teleportable today.
+	# If a monster ever gains a blink (or a knockback lands on a caster), capture the gen at smite_cast.
 	if is_stunned(caster_id):
 		return
 	var caster := _node_of_id(caster_id)
@@ -765,17 +831,42 @@ func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int, recovery
 ## the player for the ability's occupied window (Q9: no cooldown — the beats ARE the cost) and resolves a melee
 ## strike that deals damage + applies a stun. Distinct §2.2.8 rejects (dead / stunned / busy / no ability /
 ## no target). Returns a DEFERRED accept on success — the `attack` + `status_applied` events ARE the outcome.
+## v0.26.0 (instants experiment, DESIGN §2.11.1) reshapes the ENTRY ONLY: the ability is now resolved BEFORE
+## the busy gate, so an INSTANT (BLOCK / BLINK) can dispatch without ever meeting a Commitment-Rule check it
+## is designed to sidestep. A STRIKE falls straight through to the v0.20.0 path below with its busy gate
+## intact and its behavior unchanged. The one observable side effect of the reorder is reject PRECEDENCE: a
+## busy player pressing an EMPTY slot now hears "no such ability" instead of "busy" (the more accurate of the
+## two anyway). The dead → stunned order in front is untouched, deliberately: **a stun blocks instants too**
+## (Jon's ruling) — being stunned is the enemy's committed answer to your defensive options, so it must not be
+## the one state a block or a blink can escape from.
 func _validate_use_ability(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	if not is_alive(sender_peer_id):
 		return { "ok": false, "reason": "dead" }
 	if is_stunned(sender_peer_id):
 		return { "ok": false, "reason": "stunned" }
-	if _move_referee.is_entity_moving(sender_peer_id):
-		return { "ok": false, "reason": "busy" }
 	var caster := _node_of_id(sender_peer_id)
 	var ability := _ability_of(caster, int(data.get("index", -1)))
 	if ability == null or not ability.is_valid_ability():
 		return { "ok": false, "reason": "no such ability" }
+	# INSTANT DISPATCH (v0.26.0), ahead of the busy gate. Both handlers are fully SYNCHRONOUS — they validate
+	# and execute inside this one callback with no timer and no fire delay — so neither needs an interrupt_gen
+	# capture of its own: on the single-threaded host nothing can move the actor between the check and the
+	# mutation. They also must never reach the STRIKE path's whiff branch (which releases a busy window and
+	# wakes brains): an instant opens no window, so there is nothing there for it to release.
+	if ability.kind != ActiveAbility.Kind.STRIKE:
+		if not GameManager.config.instant_abilities_enabled:
+			return { "ok": false, "reason": "instant abilities are disabled" }
+		match ability.kind:
+			ActiveAbility.Kind.BLOCK:
+				return _use_shield_block(sender_peer_id, ability)
+			ActiveAbility.Kind.BLINK:
+				return _use_shadow_step(sender_peer_id, ability)
+		# A Kind added to the enum but not to this match: fail LOUD-ish rather than silently accept.
+		push_warning("[CombatReferee] use_ability: unhandled ActiveAbility.Kind %d on '%s'" % [
+				ability.kind, ability.display_name])
+		return { "ok": false, "reason": "no such ability" }
+	if _move_referee.is_entity_moving(sender_peer_id):
+		return { "ok": false, "reason": "busy" }
 	# Target: the first ADJACENT hostile (facing neighbour preferred). No target → a clean reject, not a whiff —
 	# a player-triggered ability shouldn't burn its window on empty air (unlike a monster's committed windup).
 	var my_tile: Vector2i = _move_referee.tile_of_entity(sender_peer_id)
@@ -799,8 +890,11 @@ func _validate_use_ability(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# Telegraphed (windup > 0) — commit the FULL window, resolve at windup end (dodgeable), like a monster windup.
 	if not _move_referee.commit_in_place(sender_peer_id, windup_sec + recovery_sec):
 		return { "ok": false, "reason": "busy" }
+	# interrupt_gen captured AT COMMIT (v0.26.0) and re-checked at fire: a caster who SHADOW-STEPPED out of
+	# this telegraph never lands the strike (see _resolve_ability's guard).
 	get_tree().create_timer(windup_sec).timeout.connect(
-			_resolve_ability.bind(sender_peer_id, target_tile, ability.damage, ability.stun_beats, ability.log_verb, recovery_sec))
+			_resolve_ability.bind(sender_peer_id, target_tile, ability.damage, ability.stun_beats,
+					ability.log_verb, recovery_sec, _move_referee.interrupt_gen_of(sender_peer_id)))
 	return { "ok": true, "deferred": true }
 
 
@@ -808,8 +902,18 @@ func _validate_use_ability(sender_peer_id: int, data: Dictionary) -> Dictionary:
 ## = nothing). Whoever HOSTILE + LIVING occupies the tile NOW eats `damage` (kind "ability", carrying the verb for
 ## the log) AND a `stun_beats` stun; a target that stepped off / died whiffs (a distinct §2.3.4 outcome). recovery_sec
 ## rides the hit so the caster shows its spent tell. The strike is deterministic (RF baseline) — the stun is the ability's teeth.
-func _resolve_ability(attacker_id: int, target_tile: Vector2i, damage: int, stun_beats: float, verb: String, recovery_sec: float) -> void:
+##
+## `interrupt_gen` (v0.26.0 instants experiment) is MoveReferee's forced-movement generation captured when this
+## resolve was armed; -1 means "no capture needed" — the SYNCHRONOUS instant-strike caller, which resolves inside
+## the same stack as its own commit and so cannot be teleported in between.
+func _resolve_ability(attacker_id: int, target_tile: Vector2i, damage: int, stun_beats: float, verb: String, recovery_sec: float,
+		interrupt_gen: int = -1) -> void:
 	if not is_alive(attacker_id):
+		return
+	# FORCED-MOVEMENT INTERRUPT (v0.26.0): the caster was teleported (Shadow Step) after committing this
+	# telegraph — it is no longer standing where it wound up from, so the strike fizzles. Silent, like the stun
+	# gates below: the blink WAS the visible outcome. Inert while the experiment is off (the gen never moves).
+	if interrupt_gen != -1 and _move_referee.interrupt_gen_of(attacker_id) != interrupt_gen:
 		return
 	# INTERRUPT (v0.20.2): a caster stunned mid-windup ability deals nothing — same interrupt rule as a monster
 	# windup (a telegraphed ability, windup > 0, can be interrupted by stunning its user).
@@ -846,6 +950,107 @@ func _resolve_ability(attacker_id: int, target_tile: Vector2i, damage: int, stun
 	# a promoted pipelined step posts. `recovery_sec` goes unused on this branch by design.
 	if not _move_referee.finish_busy_early(attacker_id):
 		push_warning("[CombatReferee] ability whiff for %d posted duration_sec 0 but no in-place record was released — client/server recovery tell may disagree" % attacker_id)
+
+
+# ── Instant abilities (v0.26.0 EXPERIMENT — Shield Block + Shadow Step; DESIGN §2.11.1) ──────
+#
+# The whole experiment lives in this section plus the consumption branch in apply_damage and
+# MoveReferee.teleport_entity. Everything here is unreachable with GameConfig.instant_abilities_enabled
+# off (the validator rejects before dispatch), which is the property that makes the toggle a true revert.
+
+## Raise the knight's one-shot GUARD (BLOCK kind). Host-only, fully synchronous, NO occupied window — this is
+## the §2.1.3 suspension made concrete: pressing it while mid-swing or mid-glide is exactly the point, so it
+## never meets the busy gate. Nothing is committed and nothing is spent yet: the cooldown is charged when a
+## blow is actually absorbed (see apply_damage), so a guard that goes unused costs the knight nothing but the
+## press. Rejects — both mutation-free — are "already blocking" (idempotent presses must not re-post events)
+## and "on cooldown (Ns)". Returns a DEFERRED accept: the status_applied + ability_used events ARE the outcome.
+func _use_shield_block(user_id: int, ability: ActiveAbility) -> Dictionary:
+	if _blocking.has(user_id):
+		return { "ok": false, "reason": "already blocking" }
+	var remaining := _cooldown_remaining_sec(user_id, ability)
+	if remaining > 0.0:
+		return { "ok": false, "reason": "on cooldown (%.1fs)" % remaining }
+	_blocking[user_id] = ability
+	# duration_sec 0.0 = an OPEN-ENDED status window (§2.3.4): unlike a stun, the host does not know when this
+	# icon comes down — a hit does. Clients hold the shield until the paired status_expired, so play_blocking
+	# runs no local expiry timer.
+	NetEvents.post_event("status_applied", {
+		"entity_id": user_id,
+		"name": _name_of(_node_of_id(user_id)),
+		"status": "block",
+		"duration_sec": 0.0,
+	})
+	# cooldown_sec 0 — the socket must NOT go dark on the raise; it darkens on consumption. Posted anyway so
+	# the HUD gets one uniform "an instant fired" signal per press (and a scripted run gets one assertable line).
+	NetEvents.post_event("ability_used", {
+		"entity_id": user_id,
+		"ability": ability.display_name,
+		"cooldown_sec": 0.0,
+	}, user_id)
+	return { "ok": true, "deferred": true }
+
+
+## The rogue BLINK (BLINK kind): teleport ONE tile directly OPPOSITE the user's facing — a step back out of
+## trouble without turning your back on it. Host-only and fully synchronous.
+##
+## VALIDATION ORDER IS PINNED (GLM resolution, 2026-07-25) and every reject above the teleport is a PURE
+## NO-OP — no cooldown burned, no facing touched, no occupancy moved:
+##   1. cooldown        — cheapest check, and the one that must not be bypassed by an illegal destination.
+##   2. facing          — a never-moved rogue faces NOWHERE (ZERO), so "backwards" is undefined: reject
+##                        "no direction" rather than pick an arbitrary axis.
+##   3. destination     — computed from the COMMITTED tile (MoveReferee.tile_of_entity), which under conga IS
+##                        the in-flight glide's DESTINATION. That is the honest Commitment-Rule read: you are
+##                        already counted at the tile you committed to, so you blink back off THAT one.
+##   4. walkable + free — a wall or a body behind you means the blink simply cannot happen.
+##   5. teleport        — the ONLY mutation, and the ONLY site that bumps the interrupt generation.
+## Blocked destination burning NO cooldown is deliberate (Jon): the ability's failure mode is "there was
+## nowhere to go", which is a positioning mistake the player already paid for by still being where they were.
+func _use_shadow_step(user_id: int, ability: ActiveAbility) -> Dictionary:
+	var remaining := _cooldown_remaining_sec(user_id, ability)
+	if remaining > 0.0:
+		return { "ok": false, "reason": "on cooldown (%.1fs)" % remaining }
+	var facing: Vector2i = _move_referee.facing_of(user_id)
+	if facing == Vector2i.ZERO:
+		return { "ok": false, "reason": "no direction" }
+	var from: Vector2i = _move_referee.tile_of_entity(user_id)
+	var dest := from - facing
+	if not WorldGrid.is_walkable(dest) or not _move_referee.is_tile_free(dest):
+		return { "ok": false, "reason": "blocked" }
+	# teleport_entity re-derives every one of the checks above from its OWN state before mutating, so a false
+	# here is a genuine "it isn't legal after all" and still leaves nothing changed.
+	if not _move_referee.teleport_entity(user_id, dest):
+		return { "ok": false, "reason": "blocked" }
+	var cooldown_sec := _stamp_cooldown(user_id, ability, GameManager.config.shadow_step_cooldown_beats)
+	# `blink` is its OWN action, never a `glide_to`: a glide event means "tween over duration_sec", and a
+	# teleport has no travel to tween. from/to both ride it so each peer can place the vanish and the arrival.
+	NetEvents.post_event("blink", { "entity_id": user_id, "from": from, "to": dest }, user_id)
+	NetEvents.post_event("ability_used", {
+		"entity_id": user_id,
+		"ability": ability.display_name,
+		"cooldown_sec": cooldown_sec,
+	}, user_id)
+	return { "ok": true, "deferred": true }
+
+
+## Seconds left on this entity's cooldown for `ability`, or 0.0 when it is ready (v0.26.0). Host-only read over
+## _ability_ready_at_msec; an untracked entity / never-used ability reads ready. The remaining seconds ride the
+## reject reason so §2.3.4's "distinct feedback per outcome" gets a NUMBER, not just a refusal.
+func _cooldown_remaining_sec(entity_id: int, ability: ActiveAbility) -> float:
+	var per_entity: Dictionary = _ability_ready_at_msec.get(entity_id, {})
+	var ready_at := int(per_entity.get(ability.display_name, 0))
+	return maxf(0.0, float(ready_at - Time.get_ticks_msec()) / 1000.0)
+
+
+## Charge `cooldown_beats` against this entity's `ability` starting NOW, and return the stamped SECONDS (which
+## ride the ability_used / ability_cooldown events so every HUD drains its overlay over the host's own span —
+## stamp-and-bake, §2.8.2: a later tempo change never re-derives a cooldown already running). Beats × the
+## entity's RESOLVED pace, so a cooldown incurred in a fight is measured on the fight's clock.
+func _stamp_cooldown(entity_id: int, ability: ActiveAbility, cooldown_beats: float) -> float:
+	var cooldown_sec := maxf(0.0, cooldown_beats) * PaceReferee.beat_or_explore(_pace, entity_id)
+	var per_entity: Dictionary = _ability_ready_at_msec.get(entity_id, {})
+	per_entity[ability.display_name] = Time.get_ticks_msec() + int(cooldown_sec * 1000.0)
+	_ability_ready_at_msec[entity_id] = per_entity
+	return cooldown_sec
 
 
 ## The ACTIVE ABILITY at `idx` on this node's class, or null (v0.20.0). Duck-typed off `player_class.active_abilities`
@@ -1053,9 +1258,12 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# _resolve_windup). Capture PRIMITIVES only (never node refs): the round generation (review #4), shooter
 	# id + tile, damage, weapon name, per-tile speed. round_gen makes an F5-mid-draw loose NOTHING into the
 	# fresh round — a same-peer respawn defeats is_alive, but the generation check catches it.
+	# interrupt_gen (v0.26.0) rides the bind beside round_gen — the same "identity a stale fire can never match"
+	# idiom, one axis further: a shooter who BLINKED mid-draw looses nothing (see _loose_arrow's guard).
 	get_tree().create_timer(windup_sec).timeout.connect(_loose_arrow.bind(
 			_round_gen, sender_peer_id, shooter_tile, target_tile, weapon.damage,
-			weapon.display_name, weapon.projectile_tiles_per_beat))
+			weapon.display_name, weapon.projectile_tiles_per_beat,
+			_move_referee.interrupt_gen_of(sender_peer_id)))
 	# Commit the FULL window in place (from==to — the shooter is rooted while drawing AND recovering; no
 	# occupancy move). A miss means it went busy between the checks and now (host single-threaded; defensive).
 	if not _move_referee.commit_in_place(sender_peer_id, busy_sec):
@@ -1082,11 +1290,18 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 ## already closed, so there is no window left to release at the moment contact is known. Melee/casts release
 ## their tail at resolve (see MoveReferee.finish_busy_early); the bow deliberately does not.
 func _loose_arrow(round_gen: int, shooter_id: int, shooter_tile: Vector2i, target_tile: Vector2i,
-		damage: int, weapon_name: String, tiles_per_beat: float) -> void:
+		damage: int, weapon_name: String, tiles_per_beat: float, interrupt_gen: int = -1) -> void:
 	# Round-generation guard FIRST (v0.17.1 review #4): a draw in flight when F5 reset the round must loose
 	# NOTHING into the fresh round. is_alive alone can't catch it — a same-peer respawn reuses the id and is
 	# alive again — so the captured generation (bumped by reset_round) is the identity that no longer matches.
 	if round_gen != _round_gen:
+		return
+	# FORCED-MOVEMENT INTERRUPT (v0.26.0 instants experiment): a shooter who SHADOW-STEPPED mid-draw looses
+	# NOTHING. The whole flight path was computed from `shooter_tile` — the tile it drew from — so firing from
+	# there after the archer has vanished off it would send an arrow out of thin air. Silent (the blink was the
+	# outcome) and the draw's committed window still runs in full: the Commitment Rule keeps its bite, the
+	# player traded the shot for the escape. Inert while the experiment is off.
+	if interrupt_gen != -1 and _move_referee.interrupt_gen_of(shooter_id) != interrupt_gen:
 		return
 	# Mid-draw erasure (Q9 / M3): a shooter that died or despawned during the draw looses nothing — the death
 	# teardown (clear_entity) already erased its commit record. This mirrors _resolve_windup's is-alive guard.
@@ -1228,7 +1443,7 @@ func _is_hostile_pair(shooter_id: int, occ_id: int) -> bool:
 ## normal hit's dict is byte-identical to the pre-dedup literal.
 func _build_attack_data(attacker: Node, attacker_id: int, target: Node, target_id: int,
 		damage: int, hp_after: int, kind: String, duration_sec: float, godded: bool,
-		tags: Array = [], verb: String = "") -> Dictionary:
+		tags: Array = [], verb: String = "", blocked: bool = false) -> Dictionary:
 	var data := {
 		"attacker_id": attacker_id,
 		"attacker_name": _name_of(attacker),
@@ -1243,6 +1458,11 @@ func _build_attack_data(attacker: Node, attacker_id: int, target: Node, target_i
 	}
 	if godded:
 		data["godded"] = true
+	# SHIELD BLOCK (v0.26.0): present-only, exactly like `godded` above — a blocked blow rides damage 0 +
+	# unchanged hp + this flag, so clients render "turned aside" (grey shield popup, its own log line, hurt
+	# cues SKIPPED) and can never confuse it with a miss or with a real hit. Absent on every other outcome.
+	if blocked:
+		data["blocked"] = true
 	# Ability verb (v0.20.0): a kind "ability" hit rides its class-authored verb ("bashes"/"kicks") so game_log
 	# renders "%s <verb> %s"; present-only, so no other kind's dict changes.
 	if verb != "":
@@ -1279,9 +1499,20 @@ func _build_attack_data(attacker: Node, attacker_id: int, target: Node, target_i
 ## whatever hostile-to-the-attacker LIVING entity occupies the tile NOW (MoveReferee's authoritative
 ## occupancy): a target that glided off whiffs; a different hostile that stepped onto the tile eats
 ## it (the attack commits to ground, not a name). No occupant / no hostile / dead → a WHIFF event.
+##
+## `interrupt_gen` (v0.26.0 instants experiment): MoveReferee's forced-movement generation captured when this
+## resolve was ARMED. -1 means "no capture needed" — the synchronous instant-strike caller, which resolves in
+## the same stack as its own commit and so cannot be teleported in between.
 func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, recovery_sec: float,
-		intended_id: int = _NO_ENTITY) -> void:
+		intended_id: int = _NO_ENTITY, interrupt_gen: int = -1) -> void:
 	if not is_alive(attacker_id):
+		return
+	# FORCED-MOVEMENT INTERRUPT (v0.26.0): the attacker was teleported (a Shadow Step) after committing this
+	# telegraph, so it is no longer standing where it wound up from — the swing fizzles, silently, exactly like
+	# the stun gate below (the blink itself was the visible outcome). Placed ABOVE the whiff path deliberately:
+	# teleport_entity already erased the busy record, so there is nothing left to release and a whiff event
+	# would be a lie. Inert while the experiment is off — nothing ever bumps the generation then.
+	if interrupt_gen != -1 and _move_referee.interrupt_gen_of(attacker_id) != interrupt_gen:
 		return
 	# INTERRUPT (v0.20.2): an attacker STUNNED mid-windup deals NOTHING — the stun cancels the in-flight strike
 	# (Jon: stun interrupts an attack, not just blocks the next one). The committed busy record still clears on
@@ -1381,6 +1612,10 @@ func _kill_entity(entity_id: int, ent_name: String) -> void:
 	# Clear any stun (v0.20.0) so a same-id respawn isn't born stunned; the node frees, taking its icon.
 	_stunned.erase(entity_id)
 	_stun_gen.erase(entity_id)
+	# Instants experiment (v0.26.0): a raised guard dies with its knight (no phantom block for a respawned peer
+	# id — and the node frees, taking its shield icon), and cooldowns reset so a fresh life starts ready.
+	_blocking.erase(entity_id)
+	_ability_ready_at_msec.erase(entity_id)
 	_move_referee.clear_entity(entity_id)
 	NetEvents.post_event("died", { "entity_id": entity_id, "name": ent_name })
 	# Goblin banter (v0.24.4): a MONSTER death makes a random living packmate bark revenge — Jon's
@@ -1455,6 +1690,10 @@ func _on_entity_exiting(node: Node) -> void:
 		# Stun cleanup (v0.20.0), same as HP/god — a disconnect / despawn / F5 respawn starts unstunned.
 		_stunned.erase(node.entity_id)
 		_stun_gen.erase(node.entity_id)
+		# Instants experiment (v0.26.0), same contract: a disconnect / despawn / F5 respawn starts unguarded
+		# and with every instant cooldown ready. Idempotent with _kill_entity's erases above.
+		_blocking.erase(node.entity_id)
+		_ability_ready_at_msec.erase(node.entity_id)
 
 
 ## Null-safe passive accessor (v0.11.0): the ATTACKER's PassiveAbility list, or [] for anything without

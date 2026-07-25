@@ -137,6 +137,20 @@ var _last_tactical_exit_msec: Dictionary = {}
 # generation-guarded (activity must never cancel passive regen — that's its point); membership +
 # the enable knobs are its guards. Erased at each fire and re-set by the re-arm.
 var _passive_regen_running: Dictionary = {}
+# FORCED-MOVEMENT interrupt GENERATION (v0.26.0 instants experiment): entity_id -> int, bumped by
+# `teleport_entity` and by NOTHING ELSE. It is the identity a deferred resolve captures at COMMIT and
+# re-checks at FIRE: a bump means "this actor was picked up and moved somewhere else mid-action", so the
+# resolve fizzles silently (the same shape as the `is_stunned` resolve gates). Distinct from the per-glide
+# `token` — that answers "is this the same glide?"; this answers "is the actor still where it committed
+# from?", which a token cannot, because a teleport ERASES the record the token belongs to.
+#
+# INERT WHEN THE EXPERIMENT IS OFF, by construction: teleport_entity has exactly one caller
+# (CombatReferee._use_shadow_step) and that caller is gated on GameConfig.instant_abilities_enabled, so
+# with the toggle off this dict never changes and every downstream guard compares 0 == 0 forever.
+# NOT erased on death/exit (unlike every other per-entity record): a monotonic counter that only ever
+# rises is precisely what a stale timer must fail against, and erasing it would reset a respawned peer's
+# id back to 0 — which an in-flight capture of 1 would then MATCH. Bounded by the peer/monster id space.
+var _interrupt_gen: Dictionary = {}
 
 # Monotonic per-glide id, stamped into each _gliding record so a completion timer can tell "my"
 # glide from a later one for the same peer (disconnect+rejoin, or any superseding glide).
@@ -357,6 +371,69 @@ func finish_busy_early(entity_id: int) -> bool:
 	# that case, which is exactly the "don't re-think, you're moving" answer the brain wants).
 	busy_released.emit(entity_id)
 	return true
+
+
+## Host-only (v0.26.0 instants experiment, DESIGN §2.11.1): the FORCED-MOVEMENT API — put `entity_id` on
+## tile `to` RIGHT NOW, with no glide, no duration and no intent. The one caller today is
+## CombatReferee._use_shadow_step (the rogue blink), which is itself gated on
+## `GameConfig.instant_abilities_enabled`; a future knockback / pull / trap would reuse this same door.
+## Returns false — mutating NOTHING — when the move is illegal, so a caller can reject cleanly.
+##
+## Commitment Rule standing (§2.1; SANCTIONED EXPERIMENT, Jon 2026-07-25): this is the ONE place a player
+## may interrupt their OWN committed action, and it exists behind the experiment toggle precisely because
+## that is a suspension of §2.1.3, not a reinterpretation of it. The §2.2.5 forced-movement CAUTION note
+## (see `_pending`) named this exact hazard years of comments ago: any mechanic that bypasses the intent
+## pipe MUST clear or re-adjudicate the mover's pending slot. It does, below.
+##
+## AUTHORITY RE-CHECK: the caller already validated, but this is the mutation site, so it re-derives
+## membership + origin + walkable + free from ITS OWN state (never a passed-in belief). A caller can
+## therefore never talk this function into overlapping two bodies.
+##
+## What it does, and deliberately does NOT do:
+##  - BUMPS `_interrupt_gen` first, so any resolve already in flight for this entity fizzles at its fire.
+##  - ERASES the glide record, the pipelined pending slot and the arriving mark. The stale completion /
+##    arriving timers then no-op on their own missing-record guards, so nothing double-finishes and no
+##    ghost `glide_to` is ever broadcast from a slot whose origin the mover has left (GLM resolution).
+##  - erases occupancy AND reservations BY VALUE, which frees the abandoned tile in BOTH origin-timing
+##    branches and releases the pending slot's destination reservation — no leaked claim either way.
+##  - FACING is left exactly as it was: you blink backwards while still facing your enemy (that is the
+##    tactical point of the ability, and a silent turn would also break a backstab adjudication).
+##  - NO attack of opportunity: §2.2.6 grants a free strike for "starting a glide out of a tile", and a
+##    blink is not a glide — it is the ability's whole promise that you get out clean.
+##  - NO walk-over pickup: `_finish_glide`'s pickup seam is a MOVEMENT settle; a teleport never lands as
+##    an arrival, so vanishing onto a potion does not loot it.
+##  - does NOT emit `busy_released`: that signal means "an in-place window ended early" and wakes a
+##    monster's brain. A blink is not a window ending, and the blinker's tile change must never read to a
+##    watching brain as its own whiff-wake.
+##  - counts as ACTIVITY (note_activity) — it cancels rest-regen and restarts the idle clock like any
+##    other deliberate act — but costs NO stamina: the spend site is the glide validator, untouched here.
+func teleport_entity(entity_id: int, to: Vector2i) -> bool:
+	if _node_of_id(entity_id) == null:
+		return false
+	var from := _tile_of_peer(entity_id)
+	if from == _NO_TILE:
+		return false
+	if not WorldGrid.is_walkable(to):
+		return false
+	# `from` is this entity's own single occupancy entry, and `to != from` for every real blink direction,
+	# so this union check can never trip over the mover itself.
+	if not is_tile_free(to):
+		return false
+	_interrupt_gen[entity_id] = int(_interrupt_gen.get(entity_id, 0)) + 1
+	_gliding.erase(entity_id)
+	_pending.erase(entity_id)
+	_arriving.erase(entity_id)
+	_erase_by_value(_occupied, entity_id)
+	_erase_by_value(_reserved, entity_id)
+	_occupied[to] = entity_id
+	note_activity(entity_id)
+	return true
+
+
+## The entity's current forced-movement interrupt generation (v0.26.0), 0 for an id never teleported.
+## Captured by every deferred resolve at COMMIT and re-checked at FIRE — see `_interrupt_gen`.
+func interrupt_gen_of(entity_id: int) -> int:
+	return int(_interrupt_gen.get(entity_id, 0))
 
 
 ## Host-only (v0.24.0 stamina experiment): reset an entity's stamina pool to its lazily-resolved

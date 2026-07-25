@@ -105,7 +105,8 @@ const DEV_GAME_FIELDS := ["tactical_beat_sec",
 		"player_passive_regen_beats", "monster_passive_regen_beats",
 		"player_exhausted_blocks_movement", "monster_exhausted_blocks_movement",
 		"stamina_max", "monster_stamina_max",
-		"monster_think_min_beats", "monster_think_max_beats", "swing_catches_adjacent"]
+		"monster_think_min_beats", "monster_think_max_beats", "swing_catches_adjacent",
+		"instant_abilities_enabled", "shield_block_cooldown_beats", "shadow_step_cooldown_beats"]
 
 ## Dev CONFIG PRESETS (v0.19.7): `/config <alias>` applies a whole BUNDLE of /w + /m tunings in one command, so
 ## a repeated test loadout is a single keystroke instead of five. Lives HERE (beside the DEV_* allowlists) so

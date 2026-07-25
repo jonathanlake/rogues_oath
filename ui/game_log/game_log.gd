@@ -341,8 +341,13 @@ func _on_event_received(event: Dictionary) -> void:
 		"status_applied":
 			# A status effect landed (§2.3.4, v0.20.0 — stun). A distinct line so "it's stunned" is legible in the
 			# log, not only the overhead icon. Name is server-resolved; still escaped at the add_line sink.
-			if str(data.get("status", "")) == "stun":
-				add_line("%s is stunned!" % str(data.get("name", "Someone")))
+			# v0.26.0: "block" joins it — a raised guard is a party-visible commitment, so it gets its own line
+			# (worded as a stance, never as a hit, so it can't be mistaken for the later "blocks ...'s blow!").
+			match str(data.get("status", "")):
+				"stun":
+					add_line("%s is stunned!" % str(data.get("name", "Someone")))
+				"block":
+					add_line("%s raises a guard." % str(data.get("name", "Someone")))
 		"smite_cast":
 			# A monster's SMITE channel starting (§2.3.4, v0.19.10 — the offensive twin of the heal channel). The
 			# RED danger tile is the real telegraph; this line names whoever's standing on it at cast start (empty
@@ -367,6 +372,13 @@ func _log_attack(data: Dictionary) -> void:
 			add_line("%s's attack hits nothing." % attacker_name)
 		return
 	var target_name := str(data.get("target_name", ""))
+	# SHIELD BLOCK (v0.26.0 instants experiment): the blow connected and was turned aside. FIRST of the
+	# damage-0 branches and phrased from the DEFENDER's side — the defender is who did something here (they
+	# spent a guard), which is also what keeps it unconfusable with a whiff ("hits nothing") or a god no-op
+	# ("no effect"). §2.3.4: three different zeroes, three different sentences.
+	if bool(data.get("blocked", false)):
+		add_line("%s blocks %s's blow!" % [target_name, attacker_name])
+		return
 	# God-mode no-op (v0.10.0): a hit that landed on an invulnerable target. A DISTINCT line (§2.3.4 —
 	# never confusable with a real hit or a whiff), before the free/normal branches; the event carries
 	# damage 0 + hp unchanged, so this reads "connected, no damage" not "missed".
@@ -434,6 +446,8 @@ func _on_intent_rejected(action: String, reason: String) -> void:
 		_log_shoot_reject(reason)
 	elif action == "use_item":
 		_log_use_reject(reason)
+	elif action == "use_ability":
+		_log_ability_reject(reason)
 
 
 # A refused move must never be silent when the cause is the world (§2.3.4): a wall/corner/occupied
@@ -491,6 +505,42 @@ func _log_use_reject(reason: String) -> void:
 			pass
 		_:
 			add_line(reason)
+
+
+## A refused ABILITY press (v0.20.0 pipe, first given a log voice in v0.26.0 with the instants experiment).
+## Until now `use_ability` had no branch at all, so every refusal — no target, empty slot, and now the four
+## instant-only ones — was silently swallowed, which §2.2.8/§2.3.4 forbid. Each reason gets its OWN sentence so
+## none of them can be confused with another (or with a dropped keypress); `busy`/`dead`/`stunned` stay
+## suppressed like every other pipe's (you're committed / gone / disrupted — the bonk and the stun icon already
+## say it, and the `died` line already covers death).
+func _log_ability_reject(reason: String) -> void:
+	# Host-composed and carries a NUMBER ("on cooldown (12.3s)") — surface it as a sentence rather than
+	# matching, so the remaining seconds reach the player (§2.3.4: distinct feedback, with the actual value).
+	if reason.begins_with("on cooldown"):
+		add_line("Not ready yet — %s." % reason)
+		return
+	match reason:
+		"busy", "dead", "stunned":
+			pass
+		"no target":
+			add_line("Nothing in reach.")
+		"no such ability":
+			add_line("Nothing bound to that slot.")
+		"instant abilities are disabled":
+			# The experiment toggle is off. Named plainly, because in a playtest this IS the answer to
+			# "why did nothing happen?" — never a generic refusal.
+			add_line("Instant abilities are switched off.")
+		"already blocking":
+			add_line("Your guard is already up.")
+		"blocked":
+			# Shadow Step with a wall or a body directly behind. No cooldown was burned — say so, so the
+			# player knows to turn and press again rather than assume they wasted the ability.
+			add_line("No room to step back — something's behind you.")
+		"no direction":
+			# A never-moved body faces nowhere, so "backwards" has no meaning yet (MoveReferee.facing_of ZERO).
+			add_line("Take a step first — you have no direction to step back from.")
+		_:
+			add_line("Ability refused (%s)." % reason)
 
 
 # Neutralize user text before it reaches a bbcode_enabled label: only "[" can open a tag, so

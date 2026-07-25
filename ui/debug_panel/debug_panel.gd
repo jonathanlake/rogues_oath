@@ -60,6 +60,13 @@ const _SHARED_DIALS := [
 	{ "label": "think min (beats)", "field": "monster_think_min_beats", "min": 0, "max": 30, "step": 1 },
 	{ "label": "think max (beats)", "field": "monster_think_max_beats", "min": 0, "max": 30, "step": 1 },
 	{ "label": "sticky swings", "field": "swing_catches_adjacent", "bool": true },
+	# v0.26.0 instants experiment (DESIGN §2.11.1) — the toggle Jeff flips to answer the question, plus the
+	# two cooldown dials the answer depends on.
+	{ "label": "instant abilities", "field": "instant_abilities_enabled", "bool": true },
+	{ "label": "shield block CD (beats)", "field": "shield_block_cooldown_beats",
+		"min": 0, "max": 600, "step": 1 },
+	{ "label": "shadow step CD (beats)", "field": "shadow_step_cooldown_beats",
+		"min": 0, "max": 600, "step": 1 },
 ]
 
 const _WEAPON_FIELDS := ["damage", "windup_beats", "recovery_beats"]

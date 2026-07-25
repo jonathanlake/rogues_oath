@@ -39,6 +39,11 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
 4. Design test for every future mechanic: does it let a player back out of a decision for
    free? If yes, redesign it.
 
+*Two sanctioned exceptions exist, both scoped and both documented at their site: an opponent-imposed
+**STUN** interrupts an in-flight attack/cast (§2.11 — crowd control, not a self-take-back), and rule 3
+plus Part 4 Q9 are **suspended for two abilities inside the `instant_abilities_enabled` experiment**
+(§2.11.1 — provisional, verdict pending; off = these rules hold everywhere).*
+
 ### 2.2 Movement
 
 1. World is a tile grid. Every entity occupies exactly one tile.
@@ -577,6 +582,8 @@ ability by dropping a `.tres` into a class's `active_abilities`. A telegraphed a
 > 0`) resolves against the target TILE at windup end, so it is DODGEABLE (the same commit-to-ground
 model as the goblin wind-up and the smite); an instant one (0) strikes now. This is NOT an active
 DODGE/BLOCK (§2.1.3 forbids those): the SHIELD is an offensive committed BASH, never a hold-to-block.
+*(Both claims in this paragraph — no cooldowns, no defensive input — are SUSPENDED for two specific
+abilities inside the `instant_abilities_enabled` experiment; see §2.11.1. They stand for everything else.)*
 
 **Stun INTERRUPTS and locks (Jon's call, v0.20.2).** A stun does two things: (1) it BLOCKS a new committed
 action — every intent validator (glide / shoot / use_item / equip_item / use_ability) rejects "stunned" at
@@ -620,6 +627,61 @@ gear as well as class.
 
 **Complete when** a non-coder can author a class ability + a status effect via `.tres` alone, the hotbar
 reads as the ability bar, and abilities compose with the build system (§2.7). *(Stage in ROADMAP.)*
+
+#### 2.11.1 Instant abilities (PROVISIONAL EXPERIMENT — v0.26.0, verdict pending)
+
+**Status: an experiment behind `instant_abilities_enabled`, not a decision.** Jeff's verdict pass asked for
+two abilities that the spec as written forbids. Jon's call (2026-07-25): build them behind a toggle, the way
+stamina was built, and let playtest answer. **Off = the pre-experiment game exactly** — both abilities reject,
+and nothing else anywhere behaves differently.
+
+**What it suspends, and only inside the toggle:**
+- **§2.1.3** ("no active dodge, block, or escape input"). Shield Block *is* a defensive input, and Shadow Step
+  interrupts the actor's **own** committed action — the only self-interrupt in the game. Note the shape of the
+  suspension: §2.11's stun exception was defensible *because* the interrupt came from an opponent. This one has
+  no such cover, which is exactly why it is a toggle and not a rewrite of §2.1.
+- **Part 4 Q9** ("unified occupancy — NO separate cooldowns, ever"). An instant has no occupied window to pay
+  with, so it pays with a cooldown timer beside the timeline. Two dials: `shield_block_cooldown_beats` (30),
+  `shadow_step_cooldown_beats` (20).
+
+**Shield Block (knight, slot 2).** Raises a one-shot guard: the next incoming blow is negated whole. Instant,
+no window, usable mid-action. The cooldown is charged **on consumption, not on the raise** — holding a guard is
+free, spending it is what costs — so its real cost is that you only get one per fight-ish.
+
+**Shadow Step (rogue, slot 2).** Teleports one tile directly **opposite the user's facing** — a step back out
+of trouble without turning your back on it. Computed from the *committed* tile, which under conga is the
+in-flight glide's destination, so blinking mid-step returns you to the tile you were leaving.
+
+**Rulings recorded (all Jon's, 2026-07-25 unless noted):**
+- **A stun blocks both instants.** Being stunned is the enemy's committed answer to your defensive options; it
+  must not be the one state a block or a blink escapes.
+- **Potion wasted on a blink mid-drink.** Consume-on-commit already took it; the heal never lands. Mirrors
+  killed-mid-drink exactly (same class of outcome, same silence, no refund).
+- **A blocked Shadow Step destination burns no cooldown.** The failure mode is "there was nowhere to go" —
+  a positioning mistake already paid for by still being where you were. Turn and press again.
+- **Facing is unchanged by a blink**, deliberately: you keep looking at what you retreated from (and a silent
+  turn would also move a backstab arc).
+- **No attack of opportunity and no walk-over pickup on a blink.** §2.2.6 grants a free strike for *starting a
+  glide out of a tile*; a blink is not a glide, and getting out clean is the ability's whole promise. The
+  pickup seam is a movement settle, so vanishing onto a potion does not loot it.
+- **`admin` damage is exempt from the block** — `/mi kill` must still kill a blocking knight, or the tuning
+  tools lie.
+- **Smite IS blockable** (every kind except `admin` is). **Flagged for Jeff:** a shield stopping a magical
+  ground-spell is a real design call, not an oversight.
+- **Shield Block is "the kite shield expressed at class level"** until §2.10's equipment slots exist — the same
+  phase-1 shortcut class armor took. When a real off-hand item lands, this ability is what it grants.
+- **Shadow Step was assigned to the rogue by Jon, not Jeff** (Jeff left it unassigned). **Flagged for Jeff.**
+
+**Interrupt correctness is the load-bearing part.** A forced move mid-action invalidates every resolve already
+armed against the old tile, so `MoveReferee.teleport_entity` bumps a per-entity **interrupt generation** that
+each deferred resolve captures at commit and re-checks at fire: blink mid-windup lands nothing, blink mid-draw
+looses nothing, blink mid-drink heals nothing. Same "identity a stale timer can never match" idiom as the round
+and stun generations. The teleport also clears the pipelined pending slot — the §2.2.5 forced-movement caution
+made real — and frees both occupancy and reservations, so no tile stays claimed.
+
+**Verdict question for Jon+Jeff:** does the game read better with these? If yes, §2.1.3 and Q9 need rewriting
+(not merely excepting) and the cooldown model needs a general home. If no, the toggle goes off and the code
+comes out. Nothing else should be built on top until that is answered.
 
 ### 2.12 Monster AI — Weighted Utility (v1 in progress — v0.22.0)
 

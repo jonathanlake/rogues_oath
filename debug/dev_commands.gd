@@ -46,6 +46,13 @@ const _GAME_FIELD_SPECS := {
 	"monster_think_min_beats": { "min": 0, "max": 30, "int": true },
 	"monster_think_max_beats": { "min": 0, "max": 30, "int": true },
 	"swing_catches_adjacent": { "bool": true },
+	# v0.26.0 instants experiment (DESIGN §2.11.1): the master toggle + the two per-ability cooldown dials.
+	# All three share the plain host-side-config-write story, so they need no bespoke branch. 0..600 beats is
+	# generous on purpose — 600 beats is "once per fight, and you'll remember it", the far end of the question
+	# the experiment is asking.
+	"instant_abilities_enabled": { "bool": true },
+	"shield_block_cooldown_beats": { "min": 0.0, "max": 600.0 },
+	"shadow_step_cooldown_beats": { "min": 0.0, "max": 600.0 },
 }
 
 # The Players container + combat/move referees, handed in by Main via activate() on the HOST only.

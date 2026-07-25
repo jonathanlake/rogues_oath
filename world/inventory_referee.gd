@@ -253,19 +253,30 @@ func _validate_use_item(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# v0.17.1 arrow idiom): the round generation (an F5 mid-drink resolves NOTHING into the fresh round), the user
 	# id, the heal amount, and the item name (the heal event's source field). No node ref is captured, so a user
 	# that despawns mid-drink can't crash the resolve.
+	# interrupt_gen (v0.26.0 instants experiment) rides the bind beside round_gen — the same captured-identity
+	# idiom, one axis further: a drinker who SHADOW-STEPPED mid-drink gets no heal (see _resolve_use's guard).
 	get_tree().create_timer(use_sec).timeout.connect(
-			_resolve_use.bind(_round_gen, sender_peer_id, item.heal_amount, item_name))
+			_resolve_use.bind(_round_gen, sender_peer_id, item.heal_amount, item_name,
+					_move_referee.interrupt_gen_of(sender_peer_id)))
 	return { "ok": true, "deferred": true }
 
 
 ## Resolve a completed use at the end of its committed window (host-only, from the use timer). Bailing here is
 ## silent BY DESIGN — the two bail cases are both "the potion was spent for nothing", a Commitment-Rule outcome:
 ## the drink played to completion, but its effect no longer has a valid target.
-func _resolve_use(round_gen: int, user_id: int, heal_amount: int, item_name: String) -> void:
+func _resolve_use(round_gen: int, user_id: int, heal_amount: int, item_name: String,
+		interrupt_gen: int = -1) -> void:
 	# Round-generation guard FIRST (v0.18.0 chunk C): a use in flight when F5 reset the round heals NOTHING into
 	# the fresh round. is_alive alone can't catch a same-peer respawn (it reuses the id and is alive again), so
 	# the captured generation — bumped by reset_round — is the identity that no longer matches.
 	if round_gen != _round_gen:
+		return
+	# FORCED-MOVEMENT INTERRUPT (v0.26.0 instants experiment; Jon's ruling): a drinker who SHADOW-STEPPED
+	# mid-drink WASTES THE POTION. Consume-on-commit already took it out of the bag and the item_used telegraph
+	# already went out; the heal simply never lands. This deliberately MIRRORS the killed-mid-drink case just
+	# below — same class of outcome ("the drink played out, its effect no longer has a valid subject"), same
+	# silence (the blink was the visible thing that happened), no refund. Inert while the experiment is off.
+	if interrupt_gen != -1 and _move_referee.interrupt_gen_of(user_id) != interrupt_gen:
 		return
 	# Killed mid-drink = the potion is WASTED (the Commitment Rule: the drink was committed and played out, but
 	# the drinker died before the heal landed). Deliberately SILENT beyond the death itself — no refund, no heal,

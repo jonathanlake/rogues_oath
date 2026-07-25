@@ -68,10 +68,18 @@ var _move_wait_sec: float = -1.0
 var _event_log_path := ""
 var _event_log_file: FileAccess = null
 
-# ability=<index> (v0.20.0): submit ONE use_ability intent (the 1-5 hotbar, 0-based index) through the real pipe
-# from either role, testing the active-ability flow end-to-end (like shoot=/swap=). abilitywait= its own delay.
-var _ability_index: int = -1
+# ability=<index>[,<index>...] (v0.20.0; LIST form v0.26.0): submit use_ability intents (the 1-5 hotbar, 0-based
+# index) through the real pipe from either role, testing the active-ability flow end-to-end (like shoot=/swap=).
+# abilitywait= is the first-fire delay; abilitydelay= the spacing between presses.
+#
+# The list form exists for the v0.26.0 instants experiment: a COOLDOWN reject is only observable by pressing the
+# same slot TWICE in one session (`ability=1,1`), and the reject reaches the SENDER's stdout, so both presses
+# have to come from one instance. Spacing defaults tight (0.5s) so a second press lands well inside any
+# cooldown; widen it to watch one expire.
+var _ability_indices: Array[int] = []
+var _has_ability: bool = false
 var _ability_wait_sec: float = -1.0
+var _ability_delay_sec: float = 0.5
 
 # pickup=<n> (v0.21.0): submit n pickup_item intents (the G key) through the real pipe from either role, so the
 # manual-pickup flow is scriptable. Exact mirror of ability=: the G key sampling is focus-gated like the number
@@ -333,8 +341,10 @@ func _ready() -> void:
 			_move_wait_sec = arg.trim_prefix("movewait=").to_float()
 		elif arg.begins_with("eventlog="):
 			_event_log_path = arg.trim_prefix("eventlog=")
+		elif arg.begins_with("abilitydelay="):
+			_ability_delay_sec = arg.trim_prefix("abilitydelay=").to_float()
 		elif arg.begins_with("ability="):
-			_ability_index = arg.trim_prefix("ability=").to_int()
+			_parse_ability_list(arg.trim_prefix("ability="))
 		elif arg.begins_with("abilitywait="):
 			_ability_wait_sec = arg.trim_prefix("abilitywait=").to_float()
 		elif arg.begins_with("pickupwait="):
@@ -580,7 +590,7 @@ func _schedule_input_knobs(default_anchor_sec: float) -> void:
 	var move_anchor := _move_wait_sec if _move_wait_sec >= 0.0 else default_anchor_sec
 	if _has_move:
 		_schedule_moves(move_anchor)
-	if _ability_index >= 0:
+	if _has_ability:
 		_schedule_ability(_ability_wait_sec if _ability_wait_sec >= 0.0 else move_anchor)
 	# pickup= fires at its own anchor (default the move anchor) so a scripted run can walk ONTO a non-potion
 	# item and then deliberately pick it up — the two halves of the v0.21.0 potion-only autopickup split.
@@ -928,13 +938,29 @@ func _schedule_screenshot(path: String) -> void:
 	get_tree().quit()
 
 
-## ability= (v0.20.0): fire ONE use_ability intent through the real pipe after a delay. Works from either role —
-## submit_intent is the single public entry, no role branch. The host validates the sender's class ability +
-## adjacency and resolves the strike + stun.
+## ability= (v0.20.0; LIST v0.26.0): fire the scripted use_ability intents through the real pipe, the first after
+## `delay_sec` and each subsequent one _ability_delay_sec later. Works from either role — submit_intent is the
+## single public entry, no role branch. The host validates the sender's class ability (+ adjacency for a STRIKE,
+## + cooldown/facing/destination for an instant) and resolves it; a REJECT prints on THIS instance's stdout.
 func _schedule_ability(delay_sec: float) -> void:
 	await get_tree().create_timer(delay_sec).timeout
-	print("[Debug] ability: submitting use_ability index=%d" % _ability_index)
-	NetEvents.submit_intent("use_ability", { "index": _ability_index })
+	for i in _ability_indices.size():
+		if i > 0:
+			await get_tree().create_timer(_ability_delay_sec).timeout
+		print("[Debug] ability: submitting use_ability index=%d" % _ability_indices[i])
+		NetEvents.submit_intent("use_ability", { "index": _ability_indices[i] })
+
+
+## Parse a comma-separated 0-based ability-index list (e.g. "1" or "1,1") into _ability_indices. Negative /
+## non-numeric tokens are skipped with a warning rather than aborting the run (mirrors _parse_move_list).
+func _parse_ability_list(spec: String) -> void:
+	for token in spec.split(",", false):
+		var text := token.strip_edges()
+		if text.is_valid_int() and text.to_int() >= 0:
+			_ability_indices.append(text.to_int())
+			_has_ability = true
+		elif not text.is_empty():
+			push_warning("[Debug] ability=: malformed index '%s' (skipped)" % text)
 
 
 ## pickup= (v0.21.0): submit the scripted pickup_item intents after the anchor delay. Deliberately NO spacing
@@ -973,11 +999,14 @@ func _log_net_event(event: Dictionary) -> void:
 	# v0.24.x: stamina + thinking joined the set — the stamina experiment's spends/regen ticks and
 	# the monster hesitation roll are only assertable in scripted runs if they reach this file.
 	# v0.26.0: stamina_recovery joined the set — the armor-weight rest wait is only assertable in a
-	# scripted run if the host's stamped duration reaches this file.
+	# scripted run if the host's stamped duration reaches this file. So did the three INSTANTS events
+	# (blink / ability_used / ability_cooldown): the teleport, the press and the stamped cooldown are the
+	# only observables the Shield Block + Shadow Step experiment has (status_applied/expired were already in).
 	if not (action in ["glide_to", "windup", "heal_cast", "smite_cast", "heal", "attack", "died",
 			"status_applied", "status_expired",
 			"item_picked_up", "item_pickup_full", "item_pickup_available", "item_used", "equip_item",
 			"ai_decision", "stamina", "stamina_recovery", "thinking", "exhausted", "banter",
+			"blink", "ability_used", "ability_cooldown",
 			"dev_snapshot"]):
 		return
 	_event_log_file.store_line("%9.2f  p%-5d  %-15s  %s" % [

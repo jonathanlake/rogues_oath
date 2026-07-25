@@ -185,6 +185,17 @@ var _bag_atlases: Array[AtlasTexture] = []
 # (main._unhandled_input) — the sockets themselves are display-only (mouse IGNORE).
 var _ability_icons: Array[TextureRect] = []
 var _ability_atlases: Array[AtlasTexture] = []
+# COOLDOWN OVERLAYS (v0.26.0 instants experiment): one dark ColorRect per ability socket, drained bottom-up
+# over the host's stamped cooldown_sec by note_ability_cooldown. Parallel to the icon arrays. Purely LOCAL
+# COSMETIC — the referee's ready-at msec is the only authority on whether a press is refused, so a stale or
+# missing overlay can never grant or deny an ability (it only ever misinforms the eye, never the rules).
+var _ability_cooldown_fills: Array[ColorRect] = []
+var _ability_cooldown_tweens: Array[Tween] = []
+# The ability display_name painted into each socket, in slot order (v0.26.0). The `ability_used` /
+# `ability_cooldown` events carry a NAME (not an index — the wire never assumes both peers order a class's
+# abilities identically), so this is how a name maps back to the socket that has to darken. Repainted with the
+# icons by _refresh_abilities, so a /class change re-keys it in the same pass.
+var _ability_names: Array[String] = []
 # The bottom-center ability bar Control (v0.21.0), built in _ready as a $Root child — NOT a RightVBox section,
 # so it never enters _column_stack_min_h(). Placed in HUD-LOCAL px each _relayout pass (see the header's
 # ABILITY BAR + UNIT BOUNDARY notes).
@@ -282,6 +293,45 @@ func note_stamina(entity_id: int, points: int, max_points: int) -> void:
 	if not _own_stamina_row.visible:
 		_own_stamina_row.visible = true
 		_relayout()
+
+
+## An instant ability fired or had its cooldown charged (v0.26.0 instants experiment; fanned out by main.gd
+## from the host's `ability_used` / `ability_cooldown` events). OWN PLAYER ONLY — a teammate's cooldown is not
+## on our bar — and resolved by ability NAME, because the wire deliberately never assumes two peers order a
+## class's abilities the same way. `cooldown_sec` is the HOST's stamped span, so the overlay drains over exactly
+## the window the referee will refuse presses for (stamp-and-bake, §2.8.2); a 0 clears the socket, which is how
+## Shield Block's RAISE reads (raising is free — only consumption charges it).
+##
+## Purely cosmetic and locally tweened: nothing here can grant or deny an ability. Being LOCAL is deliberate
+## rather than lazy — a per-frame cooldown sync would be exactly the streaming the event model bans (§2.5).
+func note_ability_cooldown(entity_id: int, ability_name: String, cooldown_sec: float) -> void:
+	if entity_id != _own_id or ability_name.is_empty():
+		return
+	var idx := _ability_names.find(ability_name)
+	if idx < 0 or idx >= _ability_cooldown_fills.size():
+		return
+	_clear_ability_cooldown(idx)
+	if cooldown_sec <= 0.0:
+		return
+	var fill := _ability_cooldown_fills[idx]
+	fill.size = Vector2(SLOT_PX, SLOT_PX)
+	fill.visible = true
+	var tween := create_tween()
+	_ability_cooldown_tweens[idx] = tween
+	tween.tween_property(fill, "size", Vector2(SLOT_PX, 0.0), cooldown_sec).set_trans(Tween.TRANS_LINEAR)
+	tween.tween_callback(func(): fill.visible = false)
+
+
+## Kill + hide one socket's cooldown overlay (v0.26.0). Idempotent; shared by note_ability_cooldown's
+## replace-on-recall and _refresh_abilities' re-key on a class change.
+func _clear_ability_cooldown(idx: int) -> void:
+	if idx < 0 or idx >= _ability_cooldown_fills.size():
+		return
+	var tween: Tween = _ability_cooldown_tweens[idx]
+	if tween != null and tween.is_valid():
+		tween.kill()
+	_ability_cooldown_tweens[idx] = null
+	_ability_cooldown_fills[idx].visible = false
 
 
 ## A player died (fanned out by main.gd): if it is OUR OWN player, read the bar "DEAD". A respawn re-seeds
@@ -791,6 +841,21 @@ func _build_ability_bar() -> void:
 		slot.add_child(a_icon["rect"])
 		_ability_icons.append(a_icon["rect"])
 		_ability_atlases.append(a_icon["atlas"])
+		_ability_names.append("")
+		# COOLDOWN OVERLAY (v0.26.0): a dark scrim over the icon, drained bottom-up as the cooldown runs (the
+		# same "fill grows / scrim shrinks from the bottom" idiom as the entity recovery bar, so the two read as
+		# one language). Added AFTER the icon so it covers it, but BEFORE the keycap so "1".."5" stays legible
+		# while the socket is dark. Explicit position/size (a Panel is not a container, so children keep their
+		# own rect) and mouse IGNORE like everything else in this bar. Hidden until a cooldown is charged.
+		var cd := ColorRect.new()
+		cd.color = Color(0.04, 0.05, 0.08, 0.72)
+		cd.position = Vector2.ZERO
+		cd.size = Vector2(SLOT_PX, SLOT_PX)
+		cd.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cd.visible = false
+		slot.add_child(cd)
+		_ability_cooldown_fills.append(cd)
+		_ability_cooldown_tweens.append(null)
 		# Keycap "1".."5" drawn OVER the icon (added LAST so it paints on top).
 		var cap := Label.new()
 		cap.text = str(i + 1)
@@ -854,8 +919,14 @@ func _refresh_abilities(player_class: PlayerClass) -> void:
 		if ability != null:
 			_ability_atlases[i].region = WorldGrid.atlas_region(ability.atlas_coords)
 			_ability_icons[i].visible = true
+			_ability_names[i] = ability.display_name
 		else:
 			_ability_icons[i].visible = false
+			_ability_names[i] = ""
+		# A class change re-keys the sockets, so any overlay still draining belongs to the OLD loadout — clear
+		# it rather than leave a stale scrim over a different ability (v0.26.0). The referee's cooldown map is
+		# untouched by this: the cooldown is still charged, the eye just stops being told about the wrong socket.
+		_clear_ability_cooldown(i)
 
 
 ## Paint the BAG grid (v0.18.0 chunk B; v0.19.x adds weapons; renamed from _refresh_hotbar in v0.21.0) from the
