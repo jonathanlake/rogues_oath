@@ -900,20 +900,19 @@ func _on_entity_entered(node: Node) -> void:
 		_stamina[node.entity_id] = { "points": max_points, "max": max_points }
 
 
-## Stamina experiment (v0.24.0, bonus-shape v0.24.5): an entity's pool max = the GLOBAL
-## config.stamina_max baseline (the `/config stamina_max` knob) + the player's class
-## bonus_stamina (rogue +1). Resolved LAZILY at every seed/reset — a mid-session /class change or
-## knob turn lands at the next battle entry. Duck-typed node.get like CombatReferee._passives_of
-## (players and monsters share the container contract, no class_name cast). Floor 1: a pool of 0
+## Stamina experiment (v0.24.0; bonus-shape v0.24.5; player/monster split v0.24.7): an entity's
+## pool max — PLAYERS = config.stamina_max + their class bonus_stamina (rogue +1); MONSTERS =
+## config.monster_stamina_max (its own independent dial, Jon's tune-them-differently ask).
+## Resolved LAZILY at every seed/reset — a mid-session /class change or knob turn lands at the
+## next battle entry. Duck-typed node.get like CombatReferee._passives_of. Floor 1: a pool of 0
 ## would make every tactical step an exhausted crawl with no counterplay.
 func _stamina_max_of(entity_id: int) -> int:
-	var base := GameManager.config.stamina_max
 	var node = _node_of_id(entity_id)
 	if node != null:
 		var player_class = node.get("player_class")
 		if player_class != null:
-			base += int(player_class.bonus_stamina)
-	return maxi(1, base)
+			return maxi(1, GameManager.config.stamina_max + int(player_class.bonus_stamina))
+	return maxi(1, GameManager.config.monster_stamina_max)
 
 
 ## v0.24.3: is this entity's pool sitting at 0? (Cue bookkeeping — the exhausted event's edge reads.)

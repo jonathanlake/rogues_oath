@@ -9,6 +9,13 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.24.7 (2026-07-25) — split stamina dials: players vs monsters (Jon).** `stamina_max` is now
+  the PLAYER baseline only (+ class bonus_stamina); monsters get their own independent
+  `monster_stamina_max` (`/config monster_stamina_max N`, 1–12). Lower monster stamina = enemies
+  gas out first and kiters get run down; higher = tireless pursuers — the asymmetric-tuning
+  question the /winded A/B was already pointing at. Both land at the next battle entry;
+  /stamina off/on reseeds immediately.
+
 - **v0.24.6 (2026-07-25) — `/winded`: hard-stop exhaustion as a live A/B (Jon).** New toggle: ON =
   0 stamina refuses movement outright (the original v0.24.0 shape — distinct "winded" reject + log
   line, players AND monsters through the one validator); OFF (default) = the v0.24.1 slow crawl.

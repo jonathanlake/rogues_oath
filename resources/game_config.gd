@@ -113,10 +113,15 @@ extends Resource
 ## dev command flips this live (off = exactly pre-experiment movement); revert = one commit.
 @export var stamina_enabled: bool = true
 
-## Stamina pool max BASELINE for everyone — monsters use it directly, players add their class's
-## bonus_stamina on top (rogue +1). THE pip-count knob (v0.24.5): `/config stamina_max 5` live;
-## pools re-resolve at the next battle entry (or a /stamina off/on for an immediate reseed).
+## PLAYER stamina baseline (v0.24.7 split — monsters have their own dial below): players get this
+## plus their class's bonus_stamina (rogue +1). `/config stamina_max 5` live; pools re-resolve at
+## the next battle entry (or a /stamina off/on for an immediate reseed).
 @export var stamina_max: int = 3
+
+## MONSTER stamina pool (v0.24.7, Jon: "tune players and enemies differently") — every monster's
+## max, independent of the player dial above. `/config monster_stamina_max N` live. Lower = enemies
+## gas out first (kiters get caught sooner); higher = tireless pursuers.
+@export var monster_stamina_max: int = 3
 
 ## The exhausted CRAWL (v0.24.1, Jon: "still able to move, just very slow"): a tactical step taken
 ## at 0 stamina commits at THIS many beats per tile instead of the mover's normal tier — the
