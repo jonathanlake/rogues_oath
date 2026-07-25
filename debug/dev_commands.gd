@@ -461,6 +461,13 @@ func _dev_config_game_row(alias: String, field: String, value_token: String, by:
 			var think_max := clampi(int(value_token.to_float()), 0, 30)
 			GameManager.config.monster_think_max_beats = think_max
 			return { "ok": true, "note": "monster think max → %d beats" % think_max }
+		"stamina_max":
+			# v0.24.5 pip-count knob (Jon): the GLOBAL pool baseline (players add class bonus_stamina
+			# on top — rogue +1). Host-side write, resolved lazily at each pool seed/reset, so it lands
+			# at the next battle entry; /stamina off/on force-reseeds everyone immediately.
+			var pool_max := clampi(int(value_token.to_float()), 1, 12)
+			GameManager.config.stamina_max = pool_max
+			return { "ok": true, "note": "stamina max → %d (+class bonus; applies at next battle entry)" % pool_max }
 		"stamina_refill_lockout_beats":
 			# v0.24.3 pace-flicker fix dial: how long (explore beats) after leaving battle a re-entry
 			# still counts as the SAME battle (no refill). 0 restores refill-on-every-entry.

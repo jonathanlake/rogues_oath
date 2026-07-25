@@ -91,7 +91,7 @@ const DEV_MONSTER_CLAMPS := {
 ## stamp), so their branches are plain host-side config writes — no broadcast, no client ever reads them.
 const DEV_GAME_FIELDS := ["tactical_beat_sec", "regen_idle_beats", "regen_interval_beats",
 		"exhausted_step_beats", "monster_think_min_beats", "monster_think_max_beats",
-		"stamina_refill_lockout_beats"]
+		"stamina_refill_lockout_beats", "stamina_max"]
 
 ## Dev CONFIG PRESETS (v0.19.7): `/config <alias>` applies a whole BUNDLE of /w + /m tunings in one command, so
 ## a repeated test loadout is a single keystroke instead of five. Lives HERE (beside the DEV_* allowlists) so

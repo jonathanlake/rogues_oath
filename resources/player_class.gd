@@ -43,11 +43,13 @@ extends Resource
 ## knight → [shield_bash], rogue → [kick]. Ability sets swap with the class (the /class equip flow).
 @export var active_abilities: Array[ActiveAbility] = []
 
-## Stamina pool max for this class (v0.24.0 experiment, renamed v0.24.1 — the first per-class STAT
-## field, exactly what the header above reserved this file for). Resolved HOST-side and LAZILY (at
-## each pool seed/reset, never cached at spawn) so a mid-session /class change takes effect at the
-## next battle entry. 3 = the config baseline; rogue ships 4 (Jeff: the rogue is the mobile class).
-@export var stamina_max: int = 3
+## Stamina BONUS for this class (v0.24.0's absolute max, reshaped v0.24.5 into the codebase's
+## bonus_* convention — the first per-class STAT field): the class's offset ON TOP of the global
+## GameConfig.stamina_max baseline, so the ONE live knob (`/config stamina_max N`) scales every
+## class together and the rogue stays ahead. Resolved HOST-side and LAZILY (at each pool
+## seed/reset, never cached at spawn) so a mid-session /class change or knob turn takes effect at
+## the next battle entry. 0 = baseline; rogue ships +1 (Jeff: the rogue is the mobile class).
+@export var bonus_stamina: int = 0
 
 ## The class's WEAPON ROSTER (v0.17.0) — the loadout this class carries and Tab-cycles through. EMPTY (the
 ## default) = use the GLOBAL GameConfig.weapon_roster fallback (the shipped dagger↔longsword cycle); NON-EMPTY

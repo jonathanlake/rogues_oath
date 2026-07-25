@@ -63,12 +63,12 @@ const STARTING_ITEM_TILES: Array[Vector2i] = [
 # dropping it into a wall. The autostart goblin=N knob caps how many actually spawn
 # (GameManager.monster_spawn_cap); menu play spawns them all.
 const GOBLIN_SPAWN_TILES: Array[Vector2i] = [
-	Vector2i(38, 6),   # room B
 	Vector2i(21, 13),  # room C — trio, NW
 	Vector2i(27, 13),  # room C — trio, NE
 	Vector2i(24, 16),  # room C — trio, S
-	Vector2i(39, 21),  # room E
 ]
+# (v0.24.5: the old room-B and room-E singles left this list — those rooms now hold the authored
+# PACKS declared below WARREN_SPAWNS, per Jon's room pass. Room C keeps the plain trio between them.)
 
 # THE WARREN (v0.23.0, DESIGN §2.12) — the showcase encounter for the weighted utility AI, replacing the
 # v0.19.4/v0.19.6 shaman support pack in room D (south of the starting room A, cols 2–13 / rows 19–25).
@@ -104,6 +104,28 @@ const WARREN_SPAWNS: Array[Dictionary] = [
 	{"tile": Vector2i(9, 23), "path": GOBLIN_AMBUSH_TYPE_PATH},   # skirmisher — east wing
 	{"tile": Vector2i(7, 24), "path": SHAMAN_MENDER_TYPE_PATH},   # sustain, one tile behind the brute
 	{"tile": Vector2i(12, 22), "path": SHAMAN_ZEALOT_TYPE_PATH},  # artillery, mouth of the east flank lane
+]
+
+# ROOM-B PACK (v0.24.5, Jon: "the east room, a little simpler than room D") — the Warren's lesson at
+# training scale: TWO regular goblins flank the row-5 west entrance as the wall, ONE MENDER stands
+# deep east at (42,6) — its heal range 5 covers both from behind, so "kill the wall first" visibly
+# fails here too, but with no zealot artillery and no brute anvil to complicate the read. Every tile
+# verified '.' in WorldGrid.ROOM_LAYOUT (B = cols 32–45, rows 2–9; gate walls at (40,5)/(41,4)).
+# Declared BELOW WARREN_SPAWNS because it shares its type-path consts (no forward references).
+const EAST_PACK_SPAWNS: Array[Dictionary] = [
+	{"tile": Vector2i(36, 4), "path": GOBLIN_TYPE_PATH},          # wall — north flank
+	{"tile": Vector2i(36, 7), "path": GOBLIN_TYPE_PATH},          # wall — south flank
+	{"tile": Vector2i(42, 6), "path": SHAMAN_MENDER_TYPE_PATH},   # sustain, deep east
+]
+
+# ROOM-E PACK (v0.24.5, Jon's second composition): the BRUTE anvil plants on the row-22 corridor
+# mouth, ONE regular goblin wings it from the north, the ZEALOT (aggro 8, pinned radius) shells from
+# the deep southeast — the artillery half of the Warren without the sustain half. Tiles verified '.'
+# (E = cols 33–45, rows 18–25; row 22 is the D↔E corridor row).
+const SOUTHEAST_PACK_SPAWNS: Array[Dictionary] = [
+	{"tile": Vector2i(37, 22), "path": BRUTE_TYPE_PATH},          # the anvil, corridor mouth
+	{"tile": Vector2i(36, 20), "path": GOBLIN_TYPE_PATH},         # wing — north
+	{"tile": Vector2i(42, 23), "path": SHAMAN_ZEALOT_TYPE_PATH},  # artillery, deep southeast
 ]
 
 # Sentinel for _pick_room_spawn_tile (F6 summon): out-of-bounds, so it can never collide with a real
@@ -2035,11 +2057,11 @@ func _spawn_goblins() -> void:
 	# a warning if its tile is walled/occupied, exactly like a goblin.
 	_spawn_monster_at(DUMMY_SPAWN_TILE, DUMMY_TYPE_PATH)
 
-	# THE WARREN (v0.23.0) — room D's showcase encounter, NOT counted against the goblin cap (like the
-	# dummy), so the AI demo always spawns. Every row goes through the SAME guarded per-tile step, so a
-	# walled/occupied tile warns + skips that one body and the rest of the encounter still stands. See the
-	# WARREN_SPAWNS const above for the encounter's design intent (DESIGN §2.12).
-	for spawn in WARREN_SPAWNS:
+	# THE WARREN (v0.23.0) — room D's showcase encounter — plus the v0.24.5 room-B and room-E packs
+	# (Jon's room pass), all NOT counted against the goblin cap (like the dummy), so the authored
+	# encounters always spawn. Every row goes through the SAME guarded per-tile step, so a
+	# walled/occupied tile warns + skips that one body and the rest of the encounter still stands.
+	for spawn in WARREN_SPAWNS + EAST_PACK_SPAWNS + SOUTHEAST_PACK_SPAWNS:
 		_spawn_monster_at(spawn["tile"], spawn["path"])
 
 

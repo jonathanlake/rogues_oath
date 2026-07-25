@@ -113,8 +113,9 @@ extends Resource
 ## dev command flips this live (off = exactly pre-experiment movement); revert = one commit.
 @export var stamina_enabled: bool = true
 
-## Stamina pool max for monsters and any player whose class doesn't override it
-## (PlayerClass.stamina_max — rogue ships 4). Whole points; no fractional spends exist.
+## Stamina pool max BASELINE for everyone — monsters use it directly, players add their class's
+## bonus_stamina on top (rogue +1). THE pip-count knob (v0.24.5): `/config stamina_max 5` live;
+## pools re-resolve at the next battle entry (or a /stamina off/on for an immediate reseed).
 @export var stamina_max: int = 3
 
 ## The exhausted CRAWL (v0.24.1, Jon: "still able to move, just very slow"): a tactical step taken

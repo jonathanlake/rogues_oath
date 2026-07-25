@@ -9,6 +9,17 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.24.5 (2026-07-25) — THE ROOM PASS + the pip-count knob (Jon).** Room B (east) trades its
+  lone goblin for a TRAINING-SCALE pack: two regular goblins walling the west entrance, one mender
+  deep east covering both with heal range 5 — the Warren's "focus the wall fails" lesson with no
+  artillery and no anvil. Room E (southeast) trades its lone goblin for the ARTILLERY half: the
+  brute planted on the row-22 corridor mouth, one goblin wing, the zealot shelling from deep
+  southeast. Room C keeps its plain trio; room D keeps the full Warren — the map now reads as a
+  difficulty ladder (C → B → E → D). KNOB: `/config stamina_max N` (1–12) sets everyone's pip
+  count live (applies at the next battle entry; /stamina off/on reseeds immediately). To make one
+  knob scale every class, PlayerClass.stamina_max became **bonus_stamina** (the codebase's bonus_*
+  convention): players = baseline + class bonus, rogue ships +1.
+
 - **v0.24.4 (2026-07-25) — GOBLIN BANTER (Jon's ask, "should be a quick one").** Pivotal moments now
   get one-liners over a goblin's head, in a small outlined speech label that pops, holds ~2s and
   fades: the story-beat thinks may mutter ("fresh meat!" on entry, "you're next!" on retarget,
