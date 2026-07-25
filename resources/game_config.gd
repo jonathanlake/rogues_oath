@@ -138,6 +138,27 @@ extends Resource
 ## stamina playtest ("stamina still regens even without the regen boost"). 0 = old refill-always.
 @export var stamina_refill_lockout_beats: float = 20.0
 
+## GOBLIN BANTER (v0.24.4): overhead one-liners at pivotal moments, host-picked and broadcast (see
+## world/banter.gd). The line ARRAYS below are the authoring surface — rewrite goblin dialogue here
+## or in the .tres, never in code. Empty array = that moment is silent.
+@export var banter_enabled: bool = true
+## Per-bark chance (0-1) for the think-moment barks; the ally-died revenge bark always fires
+## (cooldown permitting) — that one is the marquee moment.
+@export var banter_chance: float = 0.6
+## Global minimum gap between ANY two barks (wall-clock seconds) — five goblins latching at once
+## must not produce a wall of text. One room, one voice at a time.
+@export var banter_cooldown_sec: float = 2.5
+@export var banter_engaged: Array[String] = [
+	"fresh meat!", "intruders!", "get 'em!!", "who goes there?!"]
+@export var banter_retarget: Array[String] = [
+	"you're next!", "one down...", "heh heh heh."]
+@export var banter_last_stand: Array[String] = [
+	"I ain't scared o' you!", "come on then!", "for the warren!!"]
+@export var banter_cornered: Array[String] = [
+	"back off!", "stay away!!", "no no no no"]
+@export var banter_ally_died: Array[String] = [
+	"you'll pay for that!", "murderers!!", "avenge!!", "no... NO!"]
+
 ## Monster hesitation (Jeff: "enemies think before moving"): on entering battle a monster rolls
 ## think beats uniformly in [min, max] (host RNG) and holds its WHOLE brain — no move, attack or
 ## cast — for that long, with a visible thinking cue. Beats at the monster's resolved pace.

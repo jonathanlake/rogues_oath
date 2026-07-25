@@ -152,6 +152,10 @@ var _think_fx_gen: int = 0
 # host owns when the crawl ends.
 var _exhausted_fx: Node2D = null
 var _exhausted_fx_tween: Tween = null
+# Overhead BANTER line (v0.24.4): a short speech Label shown for a beat at pivotal moments, above
+# the icon band so it can coexist with dots / "!" / sweat. Own slot — a new bark replaces.
+var _banter_label: Label = null
+var _banter_tween: Tween = null
 
 
 func _ready() -> void:
@@ -556,6 +560,43 @@ func play_exhausted() -> void:
 	_exhausted_fx_tween.parallel().tween_property(drop, "modulate:a", 0.25, 0.55).from(0.9)
 	_exhausted_fx_tween.tween_property(drop, "position:y", -46.0, 0.0)
 	_exhausted_fx_tween.tween_property(drop, "modulate:a", 0.9, 0.1)
+
+
+## Overhead BANTER (v0.24.4): show one short spoken line — small but readable (outlined, so it
+## survives any floor color), popped in, held, faded out. Presentation only; the host picked the
+## text. A new bark replaces the previous one (one mouth per goblin).
+func play_banter(text: String) -> void:
+	hide_banter()
+	var label := Label.new()
+	label.text = text
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 9)
+	label.add_theme_color_override("font_color", Color(0.95, 0.93, 0.8))
+	label.add_theme_color_override("font_outline_color", Color(0.05, 0.05, 0.08))
+	label.add_theme_constant_override("outline_size", 4)
+	# Wide centred box above the icon band (-50 slot) so speech never overlaps the dots/sweat.
+	label.position = Vector2(-70, -74)
+	label.size = Vector2(140, 14)
+	add_child(label)
+	_banter_label = label
+	label.scale = Vector2(0.4, 0.4)
+	label.pivot_offset = Vector2(70, 7)
+	_banter_tween = create_tween()
+	_banter_tween.tween_property(label, "scale", Vector2.ONE, 0.12)\
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	_banter_tween.tween_interval(1.8)
+	_banter_tween.tween_property(label, "modulate:a", 0.0, 0.4)
+	_banter_tween.tween_callback(hide_banter)
+
+
+## Clear the banter line. Idempotent (death teardown / replacement bark).
+func hide_banter() -> void:
+	if _banter_tween != null and _banter_tween.is_valid():
+		_banter_tween.kill()
+	_banter_tween = null
+	if _banter_label != null and is_instance_valid(_banter_label):
+		_banter_label.queue_free()
+	_banter_label = null
 
 
 ## Clear the sweat-drop (the `exhausted` off edge / death teardown). Idempotent.

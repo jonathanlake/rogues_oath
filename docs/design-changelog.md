@@ -9,6 +9,17 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.24.4 (2026-07-25) — GOBLIN BANTER (Jon's ask, "should be a quick one").** Pivotal moments now
+  get one-liners over a goblin's head, in a small outlined speech label that pops, holds ~2s and
+  fades: the story-beat thinks may mutter ("fresh meat!" on entry, "you're next!" on retarget,
+  "come on then!" at the last stand, "back off!" when cornered — chance-rolled), and a MONSTER
+  death always makes a random living packmate bark revenge ("you'll pay for that!" — the marquee
+  moment, forced past the chance roll). Host-picked and broadcast (`banter` event) so every peer
+  reads the SAME line; a global cooldown (2.5s) keeps five simultaneous latches from a wall of
+  text; the line also lands quoted in the combat log. ALL LINES ARE CONTENT: authored as
+  `banter_*` arrays on GameConfig — rewrite goblin dialogue in the .tres, never in code
+  (`banter_enabled` / `banter_chance` / `banter_cooldown_sec` beside them).
+
 - **v0.24.3 (2026-07-25) — THE TELL PASS + the pace-flicker refill fix (Jon+Jeff's first stamina
   session).** FIX: stamina no longer refills from mid-fight pace flicker — a tactical re-entry
   within `stamina_refill_lockout_beats` (default 20 explore beats) of the last exit keeps the

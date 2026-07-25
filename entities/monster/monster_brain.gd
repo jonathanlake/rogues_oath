@@ -933,6 +933,10 @@ func _begin_think(reason: String) -> void:
 	NetEvents.post_event("thinking", {
 		"entity_id": _entity_id, "duration_sec": think_sec, "reason": reason,
 	})
+	# Goblin banter (v0.24.4): the story beat may also get a one-liner — chance + global cooldown
+	# live in Banter, lines in GameConfig. A thinking monster muttering over its dots is the bit.
+	var speaker_name: String = _monster_type.display_name if _monster_type != null else "Goblin"
+	Banter.bark(_entity_id, speaker_name, reason)
 
 
 ## LAST-STAND check (v0.24.3, once per life): this monster fought beside engaged allies and now

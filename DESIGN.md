@@ -145,7 +145,9 @@ untouched; monsters ride the identical check and additionally roll 1–6 beats o
 "…" dots), target-died retarget, last-stand (allies all dead — the finale pause), and a cornered
 stall (each once per life; v0.24.3). Any entity at 0 stamina shows a sweat-drop while it crawls,
 monsters included. Refills on battle entry are LOCKOUT-gated (`stamina_refill_lockout_beats`):
-a pace flicker back into the same fight keeps the earned pool. Intent: movement improves positioning but can no
+a pace flicker back into the same fight keeps the earned pool. The same story beats drive GOBLIN
+BANTER (v0.24.4): host-picked overhead one-liners (chance-rolled, globally cooldown-throttled;
+an ally's death always draws a revenge bark from a packmate) — lines are GameConfig content. Intent: movement improves positioning but can no
 longer invalidate attacks (the kiting thread) — a fleeing healer burns dry and crawls. `/stamina`
 (alias `/mp`) toggles the whole experiment live (off = pre-experiment behavior exactly); all dials
 live-tunable. Like the v0.6.x rhythm experiment, this section is provisional until the Jon+Jeff

@@ -252,6 +252,11 @@ func _on_event_received(event: Dictionary) -> void:
 			if bool(data.get("weapon_skipped", false)):
 				class_line += " (weapon not equipped — busy; Tab to equip.)"
 			add_line(class_line)
+		"banter":
+			# Goblin banter (v0.24.4): the spoken line also lands in the log, quoted, so a bark you
+			# missed on screen survives in the record. Host-authored text, escaped anyway (belt).
+			add_line("%s: \"%s\"" % [_escape_bbcode(str(data.get("name", "Goblin"))),
+					_escape_bbcode(str(data.get("text", "")))])
 		"stamina":
 			# Stamina experiment (v0.24.1): the EXHAUSTION line, own-player only. Fires exactly once per
 			# empty (the event posts on change, and hitting 0 is a change), so no throttle is needed —

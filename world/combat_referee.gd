@@ -1297,9 +1297,34 @@ func _kill_entity(entity_id: int, ent_name: String) -> void:
 	_stun_gen.erase(entity_id)
 	_move_referee.clear_entity(entity_id)
 	NetEvents.post_event("died", { "entity_id": entity_id, "name": ent_name })
+	# Goblin banter (v0.24.4): a MONSTER death makes a random living packmate bark revenge — Jon's
+	# marquee moment ("the healer dies and a goblin says 'you'll pay for that'"). Forced past the
+	# chance roll (the moment should reliably land) but still cooldown-gated. AFTER the erases above,
+	# so the dying monster can never be picked as its own mourner (_hp no longer holds it).
+	if entity_id < 0:
+		var mourner_id := _pick_living_monster_excluding(entity_id)
+		if mourner_id != 0:
+			var mourner := _node_of_id(mourner_id)
+			Banter.bark(mourner_id,
+					str(mourner.display_name) if mourner != null else "Goblin", "ally_died", true)
 	if node != null:
 		_drop_weapon_of(node, death_tile)
 		node.queue_free()
+
+
+## v0.24.4: a random LIVING BRAINED monster other than `dead_id`, or 0 when none survive. Liveness
+## reads the authoritative _hp map (the dying monster was erased before this runs), never node
+## state. has_brain gates the pick — the first kill-check run had the Training Dummy mourn a goblin
+## ("no... NO!"), which is funny exactly once; a mourner must be something that can think.
+func _pick_living_monster_excluding(dead_id: int) -> int:
+	var living: Array[int] = []
+	for child in _monsters.get_children():
+		if child is Entity and child.entity_id < 0 and child.entity_id != dead_id \
+				and _hp.has(child.entity_id):
+			var monster_type = child.get("monster_type")
+			if monster_type != null and monster_type.has_brain:
+				living.append(child.entity_id)
+	return living.pick_random() if not living.is_empty() else 0
 
 
 ## Drop a dead MONSTER's equipped weapon as a ground item on its death tile (v0.19.x loot). Host-only, called

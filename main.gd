@@ -876,6 +876,10 @@ func _on_net_event(event: Dictionary) -> void:
 			# A stamina pool crossed the 0 edge (v0.24.3, host-authored, ANY entity kind): on = show the
 			# sweat-drop (the crawl must read as winded), off = clear it.
 			_handle_exhausted_event(event)
+		"banter":
+			# A goblin one-liner (v0.24.4, host-picked so every peer reads the same line). Overhead
+			# speech label on the speaker; the log line comes from game_log's own handler.
+			_handle_banter_event(event)
 		"status_applied":
 			# A host-applied status effect started (v0.20.0 — stun). Every peer shows the overhead icon for the
 			# broadcast window on the affected entity (player or monster).
@@ -1317,6 +1321,14 @@ func _handle_thinking_event(event: Dictionary) -> void:
 	if ent != null:
 		ent.play_thinking(float(data.get("duration_sec", 0.0)),
 				str(data.get("reason", "")) == "engaged")
+
+
+## All peers: float a goblin's spoken line over its head (v0.24.4).
+func _handle_banter_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var ent := _node_for_peer(int(data.get("entity_id", 0))) as Entity
+	if ent != null:
+		ent.play_banter(str(data.get("text", "")))
 
 
 ## All peers: show/clear the sweat-drop on an exhausted entity (v0.24.3, the stamina 0-edge).

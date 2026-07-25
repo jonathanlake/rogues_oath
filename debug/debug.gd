@@ -957,7 +957,7 @@ func _log_net_event(event: Dictionary) -> void:
 	if not (action in ["glide_to", "windup", "heal_cast", "smite_cast", "heal", "attack", "died",
 			"status_applied", "status_expired",
 			"item_picked_up", "item_pickup_full", "item_pickup_available", "item_used", "equip_item",
-			"ai_decision", "stamina", "thinking", "exhausted"]):
+			"ai_decision", "stamina", "thinking", "exhausted", "banter"]):
 		return
 	_event_log_file.store_line("%9.2f  p%-5d  %-15s  %s" % [
 		float(event.get("server_time", 0.0)), int(event.get("peer", 0)), action, str(event.get("data", {}))])
