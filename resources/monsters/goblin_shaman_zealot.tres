@@ -1,14 +1,13 @@
-[gd_resource type="Resource" script_class="MonsterType" load_steps=6 format=3]
+[gd_resource type="Resource" script_class="MonsterType" load_steps=5 format=3]
 
 [ext_resource type="Resource" path="res://resources/speed_tiers/speed_slow.tres" id="1_dekqg"]
 [ext_resource type="Script" uid="uid://cl3pdmosdok4g" path="res://resources/monster_type.gd" id="1_type"]
 [ext_resource type="Resource" uid="uid://b3cmct5a57xr8" path="res://resources/weapons/club.tres" id="2_club"]
-[ext_resource type="Resource" path="res://resources/monsters/personality_supportive.tres" id="3_supp"]
 [ext_resource type="Resource" path="res://resources/monsters/personality_aggressive.tres" id="4_aggr"]
 
 [resource]
 script = ExtResource("1_type")
-display_name = "Goblin Shaman"
+display_name = "Shaman Zealot"
 atlas_coords = Vector2i(6, 0)
 max_hp = 8
 weapon = ExtResource("2_club")
@@ -25,4 +24,4 @@ smite_recovery_beats = 2.0
 flees_players = true
 flee_range_tiles = 3
 utility_ai = true
-personalities = Array[AiPersonality]([ExtResource("3_supp"), ExtResource("4_aggr")])
+personalities = Array[AiPersonality]([ExtResource("4_aggr")])

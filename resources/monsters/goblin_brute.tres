@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="MonsterType" load_steps=4 format=3]
+
+[ext_resource type="Resource" path="res://resources/speed_tiers/speed_slow.tres" id="1_lumb"]
+[ext_resource type="Script" uid="uid://cl3pdmosdok4g" path="res://resources/monster_type.gd" id="1_type"]
+[ext_resource type="Resource" uid="uid://b3cmct5a57xr8" path="res://resources/weapons/club.tres" id="2_club"]
+
+[resource]
+script = ExtResource("1_type")
+display_name = "Goblin Brute"
+atlas_coords = Vector2i(7, 0)
+max_hp = 28
+weapon = ExtResource("2_club")
+bonus_windup_beats = 1.0
+bonus_recovery_beats = 1.0
+glide_speed = ExtResource("1_lumb")
+aggro_range_tiles = 4
+tactical_radius_tiles = 5

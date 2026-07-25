@@ -617,6 +617,18 @@ a club now — it drops on death like any monster weapon), Flee/Approach movemen
 (backed → kite freely; alone → fleeing decays, stand and fight); the two personalities; pack rally; the
 `/ai` score overlay.
 
+**The Warren (v0.23.0) — the showcase encounter, room D.** A Goblin Brute (28 HP anvil) fronts two
+skirmishers; a pinned-supportive Shaman Mender posts one tile behind (heals land in 1.5s casts and its
+smite weight is authored DOWN — healer first); a pinned-aggressive Shaman Zealot holds the east flank lane.
+The room mouth is the tripwire: the Brute's aggro trips there and its authored rally bubble (5) pulls the
+whole pack, Zealot included. The intended arc — "focus the big one" fails visibly (heals out-pace the
+trade, verified: 5.6s unhealed vs 7.7s healed under identical focus), "kill the healer" is the real fight,
+and the last shaman turns and fights. Emergent, unauthored: the Zealot heals allies while its smite is
+pending-blocked, and the pack heals its own wounded Mender. Design findings the calibration runs bought:
+one monster's `tactical_radius_tiles` feeds BOTH the pace bubble and the rally bubble (splitting them is
+future work), and the chase model inverts tank order — a slow anvil arrives last, so the Brute runs at
+normal speed until a hold-position behavior exists (the authored `speed_lumbering` tier waits for it).
+
 **Still envisioned:** positional movement objectives (move *behind* allied melee, formation kiting,
 heal-range approach as its own scored candidate); more personalities; a crowded-top-set tie-break (today
 only the top two enter the coin flip); utility AI for the plain goblin chassis once the shaman proves the

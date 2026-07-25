@@ -293,7 +293,14 @@ Not scheduled — pulled in when their moment comes:
   candidate remedies: shorter casts, tankier flankers, or config-1 tempo. That retune decision is
   Jon+Jeff's. Tendencies read = FEEL item, watched live via `/ai`. REMAINING beyond that: positional
   movement objectives (behind-ally kiting), plain-goblin migration, threat memory, crowded-top-set
-  tie-break.
+  tie-break. **v0.23.0 (the Warren showcase, DESIGN §2.12) added two findings from its calibration
+  battles:** (1) `tactical_radius_tiles` feeds BOTH the player-pace bubble and the pack-rally bubble — a
+  separate `rally_radius_tiles` export is wanted before any monster needs them to differ more than the
+  Warren brute's does; (2) the chase model inverts tank order (a slow anvil arrives LAST — fast allies
+  lead every charge), so a hold-position/guard-post behavior is prerequisite for heavy frontliners; the
+  authored-but-unused `speed_lumbering` tier (1.5 glide-beats) waits on it. **FEEL queue (next Jon+Jeff
+  session, `/ai` + F3 live):** red-tile dodge cadence vs double artillery (scripted non-dodgers wipe —
+  dodging IS the survival skill), the Warren at config-1 tempo, whether the brute-trap reads.
 - **AUTOPLAY bot** (Zorbus "Behind the Scenes", research doc §G.4 — promoted to a real bullet v0.22.1): a
   player-policy driver in debug.gd (`bot=1` — approach, attack, drink when low, through the REAL intent
   pipe) looped headless overnight, grepping for invariant violations (stuck busy records, desyncs,

@@ -9,7 +9,36 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
-- **v0.22.1 (2026-07-24) — `/config 1` sets the tactical beat + the room-D battle got PLAYED (and it
+- **v0.23.0 (2026-07-24) — THE WARREN: room D becomes the utility-AI showcase battle (designed, then
+  PLAYED into shape).** Jon asked for a fight that demonstrates the AI and is actually fun; this is it,
+  calibrated across ~8 scripted two-instance battles that reshaped the design three times. (1) **The cast**
+  (all data): the GOBLIN BRUTE — a real 32rogues brute cell (7,0), 28 HP, club, aggro 4 — anchors the wall
+  at (7,23) with two ambush skirmishers on its wings (5,23)/(9,23); the SHAMAN MENDER (pinned supportive,
+  `heal_cast_beats 3`, `utility_smite_weight 40` — a healer first, artillery second) posts at (7,24); the
+  SHAMAN ZEALOT (pinned aggressive, aggro 3) holds the east flank lane at (12,22). Pinned personalities use
+  the existing one-entry `personalities` list — no code; the generic shaman keeps its random roll and gains
+  only the faster heal cast (a PARTIAL triage fix: it widens windows; an ally that dies in ~1.1s still
+  can't be saved — the Brute is what gives triage a patient). (2) **THE TRAP, verified in the HP
+  arithmetic**: under identical one-player god-focus, the Brute dies in 5.6s unhealed vs 7.7s healed — the
+  trace shows 23→18→17→12→7→6→1 (two +4 heals landing mid-focus, a third mid-cast when it died — spent for
+  nothing, the Commitment Rule). Killing the Mender first (2 longsword hits, 8 HP) collapses the sustain —
+  the "kill the healer" lesson pays off in the traces. Emergent bonuses nobody authored: the ZEALOT heals
+  allies whenever its own smite is pending-blocked (artillery triages while reloading), and after the Brute
+  fell it HEALED THE WOUNDED MENDER — the pack protects its healer. (3) **Calibration journey, recorded
+  honestly**: the Zealot began at aggro 8 = its smite range, which reached 8 rows up the corridor — it
+  sniped approaching parties and its rally dragged the wall out of the room (fight never assembled). Worse,
+  the `tactical_radius_tiles=3` pace pin ALSO shrank its RALLY bubble to 3 (one knob feeds two subsystems —
+  now a ROADMAP note to split them), so only one skirmisher ever rallied and the Brute/Mender slept through
+  a party wipe. Fixed: Zealot aggro 3 (joins via the Brute's rally — brute `tactical_radius_tiles 5`
+  authored to reach it), making the room MOUTH the tripwire; the pack assembles on the open floor inside
+  Mender coverage. And the planned `speed_lumbering` (1.5 glide-beats) Brute proved the chase model inverts
+  tank order — fast skirmishers lead every charge, so the slow anvil arrived LAST and players carved the
+  squishies first; the Brute ships at speed 1.0 and the lumbering tier stays authored, awaiting a
+  hold-position/guard behavior (ROADMAP). (4) **Named limits**: scripted non-dodging players WIPE to
+  double artillery — red-tile dodging is the survival skill and its feel is exactly the Jon+Jeff session's
+  question (with `/ai` + F3 live); the config-1-tempo Warren and the full focus-fire/healer-first profile
+  matrix are queued for that session. `main.gd`'s `WARREN_SPAWNS` table replaces the old shaman-pack
+  consts; spawns still route through the guarded, warn-on-bad-tile path outside the goblin=N cap. — `/config 1` sets the tactical beat + the room-D battle got PLAYED (and it
   found three bugs).** (1) **Game-level preset rows.** `/config` grows a third row kind `g` beside `w`/`m`,
   allowlisted by `GameManager.DEV_GAME_FIELDS` and dispatched per-field (a per-field switch, not a generic
   pipeline); the one field today is `tactical_beat_sec`, snapped/clamped to the shared tempo band and

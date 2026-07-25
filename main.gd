@@ -70,20 +70,41 @@ const GOBLIN_SPAWN_TILES: Array[Vector2i] = [
 	Vector2i(39, 21),  # room E
 ]
 
-# Goblin Shaman support pack (v0.19.4), room D (south of the starting room A, cols 2–13 / rows 19–25 —
-# previously EMPTY of monsters). A healer flanked by two ordinary goblins it can heal: damage a flanking
-# goblin and the shaman channels a heal onto the lowest-HP ally within 14 tiles. Spawned UNCONDITIONALLY
-# (like the training dummy), so the heal demo always appears regardless of the goblin=N cap. Each tile is
-# guarded (walkable + free) by _spawn_monster_at, so a future room edit that walls a tile skips that spawn.
-# v0.19.6 — the pack sits at the SOUTH END of room D (row 24, not the row-20 hallway mouth) and uses a
-# TIGHT aggro range (3, via goblin_shaman.tres + goblin_ambush.tres) so a party can file down the widened
-# hallway and gather INSIDE the room before engaging all three at once (Jon: the old row-20/aggro-5 pack
-# woke from the hallway and split — two chased up, one peeled east). The flankers are the low-aggro
-# `goblin_ambush.tres` variant (still displays "Goblin"), leaving the B/C/E map goblins at aggro 5.
-const SHAMAN_TYPE_PATH := "res://resources/monsters/goblin_shaman.tres"
+# THE WARREN (v0.23.0, DESIGN §2.12) — the showcase encounter for the weighted utility AI, replacing the
+# v0.19.4/v0.19.6 shaman support pack in room D (south of the starting room A, cols 2–13 / rows 19–25).
+#
+# DESIGN INTENT — the trap arc. The party files down the col-7 corridor and gathers at the room mouth
+# (rows 19–20). The BRUTE is the anvil: 28 HP, lumbering (1.5 beats/tile), a legacy chaser because the
+# wall doesn't need nuance — it reads as the obvious threat and it is the wrong target. Behind it the
+# MENDER (supportive personality, pinned) out-sustains one player's damage, so "focus the big one" visibly
+# fails; from the east flank lane the ZEALOT (aggressive personality, pinned, aggro 8) opens with a
+# telegraphed smite the moment the party crosses into its long sight — artillery that warns before it
+# hurts. The two SKIRMISHERS are the wall's wings, and the wall is deliberately POROUS: the lesson is that
+# you must round it to reach the healer. Kill the wall and the Mender and the last shaman's flee weight
+# decays (alone-courage) — it turns and fights, a finale rather than a chase. Nothing here is scripted;
+# every beat falls out of the shipped scorer, rally, personality and Commitment-Rule systems.
+#
+# Placement notes (load-bearing): the Mender at (7,24) is one tile behind the brute — it has no "follow my
+# patient" objective, so it stands and casts; from row 24 its heal range 5 still covers the brute all the
+# way to the row-19 fight line, which is what makes the trap hold once the brute advances. The Zealot's
+# tactical_radius_tiles is pinned to 3 in its .tres so its aggro 8 does NOT drag the party into tactical
+# pace from eight tiles away.
+#
+# Every tile below is verified '.' floor in WorldGrid.ROOM_LAYOUT (row 22 is the D↔E corridor row, rows
+# 23–24 span cols 2–13), and each spawn still routes through the guarded _spawn_monster_at — a future room
+# edit that walls or fills a tile warns + skips that row instead of dropping a body into a wall. Spawned
+# UNCONDITIONALLY (like the training dummy), OUTSIDE the goblin=N cap, so the showcase always appears.
+const BRUTE_TYPE_PATH := "res://resources/monsters/goblin_brute.tres"
+const SHAMAN_MENDER_TYPE_PATH := "res://resources/monsters/goblin_shaman_mender.tres"
+const SHAMAN_ZEALOT_TYPE_PATH := "res://resources/monsters/goblin_shaman_zealot.tres"
 const GOBLIN_AMBUSH_TYPE_PATH := "res://resources/monsters/goblin_ambush.tres"
-const SHAMAN_SPAWN_TILE := Vector2i(7, 24)
-const SHAMAN_GUARD_TILES: Array[Vector2i] = [Vector2i(6, 24), Vector2i(8, 24)]
+const WARREN_SPAWNS: Array[Dictionary] = [
+	{"tile": Vector2i(7, 23), "path": BRUTE_TYPE_PATH},           # the anvil, room-D centre
+	{"tile": Vector2i(5, 23), "path": GOBLIN_AMBUSH_TYPE_PATH},   # skirmisher — west wing
+	{"tile": Vector2i(9, 23), "path": GOBLIN_AMBUSH_TYPE_PATH},   # skirmisher — east wing
+	{"tile": Vector2i(7, 24), "path": SHAMAN_MENDER_TYPE_PATH},   # sustain, one tile behind the brute
+	{"tile": Vector2i(12, 22), "path": SHAMAN_ZEALOT_TYPE_PATH},  # artillery, mouth of the east flank lane
+]
 
 # Sentinel for _pick_room_spawn_tile (F6 summon): out-of-bounds, so it can never collide with a real
 # free tile. Returned when a room has no free walkable tile at all, so the validator refuses cleanly.
@@ -1950,13 +1971,12 @@ func _spawn_goblins() -> void:
 	# a warning if its tile is walled/occupied, exactly like a goblin.
 	_spawn_monster_at(DUMMY_SPAWN_TILE, DUMMY_TYPE_PATH)
 
-	# Goblin Shaman support pack (v0.19.4) — room D, NOT counted against the goblin cap (like the dummy), so
-	# the heal demo always spawns. The shaman first, then its two flanking goblins adjacent to it. The flankers
-	# use the low-aggro `goblin_ambush.tres` variant (v0.19.6) so the whole pack holds until the party is in
-	# the room (see the SHAMAN_* consts above).
-	_spawn_monster_at(SHAMAN_SPAWN_TILE, SHAMAN_TYPE_PATH)
-	for tile in SHAMAN_GUARD_TILES:
-		_spawn_monster_at(tile, GOBLIN_AMBUSH_TYPE_PATH)
+	# THE WARREN (v0.23.0) — room D's showcase encounter, NOT counted against the goblin cap (like the
+	# dummy), so the AI demo always spawns. Every row goes through the SAME guarded per-tile step, so a
+	# walled/occupied tile warns + skips that one body and the rest of the encounter still stands. See the
+	# WARREN_SPAWNS const above for the encounter's design intent (DESIGN §2.12).
+	for spawn in WARREN_SPAWNS:
+		_spawn_monster_at(spawn["tile"], spawn["path"])
 
 
 ## Host-only per-tile monster spawn step (v0.17.2 extract), shared by _spawn_goblins (each map goblin +
