@@ -91,7 +91,7 @@ const DEV_MONSTER_CLAMPS := {
 ## stamp), so their branches are plain host-side config writes — no broadcast, no client ever reads them.
 const DEV_GAME_FIELDS := ["tactical_beat_sec", "regen_idle_beats", "regen_interval_beats",
 		"exhausted_step_beats", "monster_think_min_beats", "monster_think_max_beats",
-		"stamina_refill_lockout_beats", "stamina_max", "monster_stamina_max"]
+		"stamina_refill_lockout_beats", "stamina_max", "monster_stamina_max", "swing_catches_adjacent"]
 
 ## Dev CONFIG PRESETS (v0.19.7): `/config <alias>` applies a whole BUNDLE of /w + /m tunings in one command, so
 ## a repeated test loadout is a single keystroke instead of five. Lives HERE (beside the DEV_* allowlists) so
@@ -131,6 +131,12 @@ const CONFIG_PRESETS := {
 		["w", "dagger", "windup_beats", 2.0],
 		["w", "dagger", "recovery_beats", 4.0],
 		["g", "tempo", "tactical_beat_sec", 0.25],
+		# v0.24.8 (Jon): the stamina loadout joins the fight-feel preset — ONE pip each side
+		# (every step is precious), regen starts fast (4 idle beats) and refills fast (2/point).
+		["g", "stamina", "regen_idle_beats", 4.0],
+		["g", "stamina", "regen_interval_beats", 2.0],
+		["g", "stamina", "stamina_max", 1],
+		["g", "stamina", "monster_stamina_max", 1],
 	],
 }
 

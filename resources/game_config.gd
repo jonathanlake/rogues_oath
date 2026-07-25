@@ -129,6 +129,16 @@ extends Resource
 ## still carry the diagonal multiplier. Live-tunable via the /config g-row.
 @export var exhausted_step_beats: float = 5.0
 
+## STICKY SWING (v0.24.8 experiment, Jon: "swings still land if the target moved but is still
+## directly around the swinger"): when a melee wind-up resolves and its committed tile is empty,
+## the INTENDED victim is still hit if it merely sidestepped — alive, hostile, and currently
+## Chebyshev-adjacent to the attacker. Escaping beyond adjacency still dodges; ground-aimed
+## windups keep pure tile commitment; symmetric for players and monsters. This deliberately
+## bends "commits to ground, not to a name" (DESIGN §2.3) INSIDE the §2.2.10 experiment — the
+## kiting-thread fix in its adjacency form. `/config swing_catches_adjacent 0` restores pure
+## ground commitment live.
+@export var swing_catches_adjacent: bool = true
+
 ## HARD-STOP mode (v0.24.6, Jon's toggle — the `/winded` dev command): when true, 0 stamina means
 ## you CANNOT move at all (distinct "winded" reject, the original v0.24.0 shape) instead of the
 ## crawl above — players and monsters alike (one validator gates both). Rooted movers still regen

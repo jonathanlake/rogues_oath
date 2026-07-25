@@ -486,6 +486,12 @@ func _dev_config_game_row(alias: String, field: String, value_token: String, by:
 			var monster_max := clampi(int(value_token.to_float()), 1, 12)
 			GameManager.config.monster_stamina_max = monster_max
 			return { "ok": true, "note": "MONSTER stamina max → %d (applies at next battle entry)" % monster_max }
+		"swing_catches_adjacent":
+			# v0.24.8 sticky-swing A/B: nonzero = a sidestepping target still adjacent to the swinger
+			# is caught at resolve; 0 = pure tile commitment. Host-side write, read at each resolve.
+			var sticky := value_token.to_float() != 0.0
+			GameManager.config.swing_catches_adjacent = sticky
+			return { "ok": true, "note": "sticky swing → %s" % ("ON (adjacent sidesteps are caught)" if sticky else "off (pure ground commit)") }
 		"stamina_refill_lockout_beats":
 			# v0.24.3 pace-flicker fix dial: how long (explore beats) after leaving battle a re-entry
 			# still counts as the SAME battle (no refill). 0 restores refill-on-every-entry.

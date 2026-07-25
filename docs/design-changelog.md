@@ -9,6 +9,16 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.24.8 (2026-07-25) — STICKY SWINGS + config 2 learns the stamina loadout (Jon).** A melee
+  wind-up whose committed tile is empty at resolve now still CATCHES its intended victim if that
+  body merely sidestepped — alive, hostile, and currently adjacent to the swinger ("you can't dodge
+  a blade by shuffling one square"). Escaping beyond adjacency still whiffs, ground-aimed windups
+  keep pure tile commitment, a different body on the tile still eats the hit first, and it cuts
+  both ways (player and monster swings). This deliberately bends §2.3's "commits to ground, not to
+  a name" INSIDE the §2.2.10 experiment — the kiting-thread fix in its adjacency form; `/config
+  swing_catches_adjacent 0` restores pure ground commit live. PRESET: `/config 2` now also sets the
+  stamina loadout — 1 pip both sides, regen after 4 idle beats at 2 beats/point (11 settings).
+
 - **v0.24.7 (2026-07-25) — split stamina dials: players vs monsters (Jon).** `stamina_max` is now
   the PLAYER baseline only (+ class bonus_stamina); monsters get their own independent
   `monster_stamina_max` (`/config monster_stamina_max N`, 1–12). Lower monster stamina = enemies

@@ -401,7 +401,11 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 	# before_attack observation seam (v0.11.0), fired at wind-up ENTRY before any stamp/telegraph. The
 	# target is whatever hostile currently occupies the committed tile (best-effort — the real occupant
 	# is re-resolved at strike time); a monster/no-passive attacker no-ops. Read-only per the contract.
-	fire_before_attack(attacker_id, _move_referee.entity_at(target_tile), "windup")
+	# The INTENDED victim (v0.24.8 sticky swing): whoever stands on the committed tile NOW. Threaded
+	# through to _resolve_windup so a sidestep that stays adjacent to the attacker can still be caught
+	# (swing_catches_adjacent). _NO_ENTITY for a ground-aimed windup — pure tile commitment then.
+	var intended_id: int = _move_referee.entity_at(target_tile)
+	fire_before_attack(attacker_id, intended_id, "windup")
 	var windup_sec := _windup_duration_of(attacker)
 	if GameManager.debug_windup_override_sec > 0.0:
 		windup_sec = GameManager.debug_windup_override_sec
@@ -416,7 +420,7 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 	if windup_sec <= 0.0:
 		if not _move_referee.commit_in_place(attacker_id, recovery_sec):
 			return -1.0
-		_resolve_windup(attacker_id, target_tile, "strike", recovery_sec)
+		_resolve_windup(attacker_id, target_tile, "strike", recovery_sec, intended_id)
 		return recovery_sec
 
 	# Telegraphed wind-up path (dial > 0). Commit the FULL window — windup + recovery — as ONE referee-busy
@@ -445,7 +449,7 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 	# landed event's duration (swing + spent tell, same as the instant path); occupancy stays
 	# windup-only — recovery remains brain pacing (added to the return), not a referee record.
 	get_tree().create_timer(windup_sec).timeout.connect(
-			_resolve_windup.bind(attacker_id, target_tile, "windup", recovery_sec))
+			_resolve_windup.bind(attacker_id, target_tile, "windup", recovery_sec, intended_id))
 	return windup_sec + recovery_sec
 
 
@@ -1239,7 +1243,8 @@ func _build_attack_data(attacker: Node, attacker_id: int, target: Node, target_i
 ## whatever hostile-to-the-attacker LIVING entity occupies the tile NOW (MoveReferee's authoritative
 ## occupancy): a target that glided off whiffs; a different hostile that stepped onto the tile eats
 ## it (the attack commits to ground, not a name). No occupant / no hostile / dead → a WHIFF event.
-func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, recovery_sec: float) -> void:
+func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, recovery_sec: float,
+		intended_id: int = _NO_ENTITY) -> void:
 	if not is_alive(attacker_id):
 		return
 	# INTERRUPT (v0.20.2): an attacker STUNNED mid-windup deals NOTHING — the stun cancels the in-flight strike
@@ -1255,6 +1260,23 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 		if occ != null and is_alive(occ_id) and attacker != null and attacker.is_hostile_to(occ):
 			apply_damage(attacker_id, occ_id, damage_of(attacker), kind, recovery_sec)
 			return
+	# STICKY SWING (v0.24.8 experiment, Jon: "swings still land if the target moved but is still
+	# directly around the swinger"): the committed tile has no valid hostile, but the INTENDED victim
+	# (the body on the tile at commit) may have only SIDESTEPPED — if it is alive, still hostile, and
+	# its authoritative tile is Chebyshev-adjacent to the attacker's NOW, the blade catches it anyway.
+	# Escaping beyond adjacency still dodges (the whiff below), a ground-aimed windup (no intended
+	# victim) keeps pure tile commitment, and a DIFFERENT body on the tile was already hit above —
+	# ground commit stays primary. Symmetric: player swings and monster swings alike.
+	if GameManager.config.swing_catches_adjacent and intended_id != _NO_ENTITY and is_alive(intended_id):
+		var victim := _node_of_id(intended_id)
+		var attacker_tile: Vector2i = _move_referee.tile_of_entity(attacker_id)
+		var victim_tile: Vector2i = _move_referee.tile_of_entity(intended_id)
+		if victim != null and attacker != null and attacker.is_hostile_to(victim) \
+				and not WorldGrid.is_wall(attacker_tile) and not WorldGrid.is_wall(victim_tile) \
+				and maxi(absi(victim_tile.x - attacker_tile.x), absi(victim_tile.y - attacker_tile.y)) == 1:
+			apply_damage(attacker_id, intended_id, damage_of(attacker), kind, recovery_sec)
+			return
+
 	# Whiff: swing into empty/vacated ground. Distinct outcome — no damage, hp_after -1 (absent),
 	# target_tile carried so the client renders the swing toward the committed tile. recovery_sec
 	# still rides so the instant-strike attacker shows its recovery tell even on a (rare) whiff.
