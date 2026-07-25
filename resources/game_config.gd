@@ -154,6 +154,16 @@ extends Resource
 ## until max or until the next activity cancels the regenerative state.
 @export var regen_interval_beats: float = 4.0
 
+## INSTANT-REFILL mode (v0.24.9, Jon's toggle): when true, the moment the rest wait
+## (regen_idle_beats) completes, the WHOLE pool refills at once — no per-point trickle
+## (regen_interval_beats is then unused). `/config regen_refills_full 1|0` live.
+@export var regen_refills_full: bool = false
+
+## PASSIVE regen (v0.24.9, OFF by default): when > 0, every entity regains one stamina point every
+## this-many beats NO MATTER WHAT it is doing — moving, attacking, anything. Independent of (and
+## stacking with) the rest-to-recover regen above. 0 = off. `/config passive_regen_beats 6` live.
+@export var passive_regen_beats: float = 0.0
+
 ## Refill lockout (v0.24.3, the pace-flicker fix): a tactical re-entry within this many EXPLORE
 ## beats of the last tactical exit keeps its current pool instead of refilling — brief pace flaps
 ## mid-fight (bubble edge, leash hopping to a teammate) are not "a new battle". Found in the first

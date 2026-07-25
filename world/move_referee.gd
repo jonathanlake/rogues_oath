@@ -125,6 +125,10 @@ var _stamina_generation: Dictionary = {}
 # pool — only a genuinely fresh fight refills. Written by note_tactical_exit (wired to
 # PaceReferee.tactical_exited); erased with the other per-entity records.
 var _last_tactical_exit_msec: Dictionary = {}
+# Passive-regen chain latch (v0.24.9): entity_id -> true while a passive chain is armed. NOT
+# generation-guarded (activity must never cancel passive regen — that's its point); membership +
+# the enable knobs are its guards. Erased at each fire and re-set by the re-arm.
+var _passive_regen_running: Dictionary = {}
 
 # Monotonic per-glide id, stamped into each _gliding record so a completion timer can tell "my"
 # glide from a later one for the same peer (disconnect+rejoin, or any superseding glide).
@@ -393,6 +397,7 @@ func clear_entity(entity_id: int) -> void:
 	_stamina.erase(entity_id)
 	_stamina_generation[entity_id] = int(_stamina_generation.get(entity_id, 0)) + 1
 	_last_tactical_exit_msec.erase(entity_id)
+	_passive_regen_running.erase(entity_id)
 
 
 # ── Private methods ───────────────────────────────────────────────────────────
@@ -898,6 +903,8 @@ func _on_entity_entered(node: Node) -> void:
 		# case is covered by construction. Seeded even while /stamina is off (enable reseeds anyway).
 		var max_points := _stamina_max_of(node.entity_id)
 		_stamina[node.entity_id] = { "points": max_points, "max": max_points }
+		# Passive regen (v0.24.9): arm the always-on chain at seed when the knob is live.
+		start_passive_regen(node.entity_id)
 
 
 ## Stamina experiment (v0.24.0; bonus-shape v0.24.5; player/monster split v0.24.7): an entity's
@@ -913,6 +920,25 @@ func _stamina_max_of(entity_id: int) -> int:
 		if player_class != null:
 			return maxi(1, GameManager.config.stamina_max + int(player_class.bonus_stamina))
 	return maxi(1, GameManager.config.monster_stamina_max)
+
+
+## Sticky-swing support (v0.24.9): EVERY authoritative tile in this entity's motion record — its
+## occupancy tile, plus the from/to of any in-flight glide, plus the from/to of any pipelined
+## pending step. The victim's VISIBLE body always lies on/between these points, so an adjacency
+## test over ALL of them can never catch something that renders outside the ring (the "hit from
+## two tiles away" report: occupancy leads the visual by up to two tiles under pipelining).
+func motion_tiles_of(entity_id: int) -> Array[Vector2i]:
+	var tiles: Array[Vector2i] = []
+	var occupancy := tile_of_entity(entity_id)
+	if occupancy != _NO_TILE:
+		tiles.append(occupancy)
+	if _gliding.has(entity_id):
+		tiles.append(_gliding[entity_id]["from"])
+		tiles.append(_gliding[entity_id]["to"])
+	if _pending.has(entity_id):
+		tiles.append(_pending[entity_id]["from"])
+		tiles.append(_pending[entity_id]["to"])
+	return tiles
 
 
 ## v0.24.3: is this entity's pool sitting at 0? (Cue bookkeeping — the exhausted event's edge reads.)
@@ -952,15 +978,59 @@ func _stamina_regen_tick(entity_id: int, generation: int) -> void:
 	var pool: Dictionary = _stamina[entity_id]
 	if int(pool["points"]) >= int(pool["max"]):
 		return
-	pool["points"] = int(pool["points"]) + 1
+	var was_exhausted := int(pool["points"]) <= 0
+	# INSTANT-REFILL mode (v0.24.9, Jon's toggle): the completed rest wait grants the WHOLE pool in
+	# one go — one event, no trickle chain.
+	if GameManager.config.regen_refills_full:
+		pool["points"] = int(pool["max"])
+	else:
+		pool["points"] = int(pool["points"]) + 1
 	_post_stamina(entity_id)
 	# Crossing OUT of exhaustion (v0.24.3): the first regained point ends the crawl — clear the cue.
-	if int(pool["points"]) == 1:
+	if was_exhausted and int(pool["points"]) > 0:
 		_post_exhausted(entity_id, false)
 	if int(pool["points"]) < int(pool["max"]):
 		var interval_sec: float = GameManager.config.regen_interval_beats \
 				* PaceReferee.beat_or_explore(_pace, entity_id)
 		get_tree().create_timer(interval_sec).timeout.connect(_stamina_regen_tick.bind(entity_id, generation))
+
+
+## PASSIVE regen chain (v0.24.9, off by default): +1 point every passive_regen_beats regardless of
+## activity — deliberately generation-FREE (activity must NOT cancel it; that is its whole point)
+## and guarded instead by membership + the enable checks at each fire. One chain per entity
+## (_passive_regen_running); the chain dies when the knob is 0 at fire time and is re-armed for
+## everyone by the /config branch when the knob turns back on.
+func start_passive_regen(entity_id: int) -> void:
+	if bool(_passive_regen_running.get(entity_id, false)):
+		return
+	if GameManager.config.passive_regen_beats <= 0.0 or not _stamina.has(entity_id):
+		return
+	_passive_regen_running[entity_id] = true
+	var interval_sec: float = GameManager.config.passive_regen_beats \
+			* PaceReferee.beat_or_explore(_pace, entity_id)
+	get_tree().create_timer(interval_sec).timeout.connect(_passive_regen_tick.bind(entity_id))
+
+
+## Host-only (v0.24.9): arm the passive chain for every tracked entity — the /config
+## passive_regen_beats branch calls this so flipping the knob on mid-session reaches everyone.
+func start_passive_regen_all() -> void:
+	for entity_id in _stamina.keys():
+		start_passive_regen(entity_id)
+
+
+func _passive_regen_tick(entity_id: int) -> void:
+	_passive_regen_running.erase(entity_id)
+	if not GameManager.config.stamina_enabled or GameManager.config.passive_regen_beats <= 0.0 \
+			or not _stamina.has(entity_id):
+		return
+	var pool: Dictionary = _stamina[entity_id]
+	if int(pool["points"]) < int(pool["max"]):
+		var was_exhausted := int(pool["points"]) <= 0
+		pool["points"] = int(pool["points"]) + 1
+		_post_stamina(entity_id)
+		if was_exhausted:
+			_post_exhausted(entity_id, false)
+	start_passive_regen(entity_id)
 
 
 ## Forget an entity wholesale as its node leaves (disconnect / despawn / teardown): drop its resting
@@ -985,6 +1055,7 @@ func _on_entity_exiting(node: Node) -> void:
 	_stamina.erase(entity_id)
 	_stamina_generation[entity_id] = int(_stamina_generation.get(entity_id, 0)) + 1
 	_last_tactical_exit_msec.erase(entity_id)
+	_passive_regen_running.erase(entity_id)
 
 
 ## Remove every tile->peer entry whose value is this peer (a peer holds at most one of each, but

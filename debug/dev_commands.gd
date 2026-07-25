@@ -486,6 +486,21 @@ func _dev_config_game_row(alias: String, field: String, value_token: String, by:
 			var monster_max := clampi(int(value_token.to_float()), 1, 12)
 			GameManager.config.monster_stamina_max = monster_max
 			return { "ok": true, "note": "MONSTER stamina max → %d (applies at next battle entry)" % monster_max }
+		"regen_refills_full":
+			# v0.24.9 instant-refill toggle: nonzero = the completed rest wait grants the whole pool
+			# at once; 0 = the per-point trickle. Host-side write, read at each regen tick.
+			var full := value_token.to_float() != 0.0
+			GameManager.config.regen_refills_full = full
+			return { "ok": true, "note": "rest refill → %s" % ("FULL POOL at once" if full else "per-point trickle") }
+		"passive_regen_beats":
+			# v0.24.9 always-on regen (off by default): > 0 = +1 point every N beats no matter what
+			# the entity is doing. Turning it on re-arms the chain for every tracked entity NOW.
+			var passive := clampf(value_token.to_float(), 0.0, 100.0)
+			GameManager.config.passive_regen_beats = passive
+			if passive > 0.0:
+				_move_referee.start_passive_regen_all()
+				return { "ok": true, "note": "passive regen → +1 every %.1f beats (always on)" % passive }
+			return { "ok": true, "note": "passive regen → off" }
 		"swing_catches_adjacent":
 			# v0.24.8 sticky-swing A/B: nonzero = a sidestepping target still adjacent to the swinger
 			# is caught at resolve; 0 = pure tile commitment. Host-side write, read at each resolve.

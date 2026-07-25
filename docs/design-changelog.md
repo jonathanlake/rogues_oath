@@ -9,6 +9,17 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.24.9 (2026-07-25) — WIDE HALLS, two regen modes, and the sticky-swing reach fix (Jon).**
+  MAP: every corridor is now 2 tiles wide like the A↔D tunnel — A↔B gains row 4, the C connector
+  gains col 26, C↔E gains its parallel row/col pair, D↔E gains row 23 (no 1-wide tunnels remain;
+  connectivity flood-verified). REGEN MODES: `/config regen_refills_full 1` = the completed rest
+  wait refills the WHOLE pool at once (no trickle); `/config passive_regen_beats N` = +1 point
+  every N beats NO MATTER WHAT you're doing (off by default at 0; stacks with rest regen). FIX:
+  the v0.24.8 sticky swing could catch a victim whose rendered body was two tiles out (occupancy
+  leads the visual under pipelining) — the catch now requires the victim's ENTIRE motion record
+  (occupancy + glide from/to + pipelined from/to) inside the swinger's 8-ring, so a caught target
+  can never LOOK out of reach.
+
 - **v0.24.8 (2026-07-25) — STICKY SWINGS + config 2 learns the stamina loadout (Jon).** A melee
   wind-up whose committed tile is empty at resolve now still CATCHES its intended victim if that
   body merely sidestepped — alive, hostile, and currently adjacent to the swinger ("you can't dodge

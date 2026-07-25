@@ -16,15 +16,15 @@ const TILE_PX := 32
 
 ## 48 columns × 28 rows. '#' = wall, '.' = floor. Read as ROOM_LAYOUT[row][col], i.e.
 ## ROOM_LAYOUT[tile.y][tile.x]. Disposable multi-room fixture (M3.5 — the screen-size /
-## camera question; M4a's procedural generation replaces it). Five rooms joined by 1–2-tile
-## corridors:
+## camera question; M4a's procedural generation replaces it). Five rooms joined by corridors —
+## ALL 2 tiles wide since v0.24.9 (Jon: "like the south tunnel to room D"; no 1-wide tunnels):
 ##  - A  start room, top-left      (cols 2–13, rows 2–8)
 ##  - B  top-right                 (cols 32–45, rows 2–9)
 ##  - C  centre                    (cols 19–30, rows 12–18)
 ##  - D  bottom-left               (cols 2–13, rows 19–25)
 ##  - E  bottom-right              (cols 33–45, rows 18–25)
-## Corridors: A↔B along row 5; A↔D down col 7; the A–B corridor↔C down col 25; C↔E along
-## row 16; D↔E along row 22.
+## Corridors: A↔B along rows 4–5; A↔D down cols 7–8; the A–B corridor↔C down cols 25–26;
+## C↔E rows 16–17 turning south at cols 33–34; D↔E along rows 22–23.
 ## Features preserved from the M2 fixture, spread across the map:
 ##  - full wall border ((0,0) MUST stay wall — MoveReferee's _NO_TILE sentinel assumes it),
 ##  - a single pillar in A at (10,4) and a 2-tile pillar in C at (24,15)/(25,15),
@@ -36,26 +36,26 @@ const ROOM_LAYOUT: Array[String] = [
 	"################################################",  # row 1
 	"##............##################..............##",  # row 2
 	"##............##################..............##",  # row 3
-	"##........#...##################.........#....##",  # row 4  — A pillar (10,4); gate wall (41,4)
+	"##........#..............................#....##",  # row 4  — A↔B corridor (2-wide with row 5); A pillar (10,4); gate wall (41,4) stands
 	"##......................................#.....##",  # row 5  — A↔B corridor; gate wall (40,5)
-	"##............###########.######..............##",  # row 6
-	"##............###########.######..............##",  # row 7
-	"##............###########.######..............##",  # row 8
-	"#######..################.######..............##",  # row 9  — A↔D corridor widened to 2 (cols 7-8)
-	"#######..################.######################",  # row 10
-	"#######..################.######################",  # row 11
+	"##............###########..#####..............##",  # row 6  — ↕C corridor cols 25-26
+	"##............###########..#####..............##",  # row 7
+	"##............###########..#####..............##",  # row 8
+	"#######..################..#####..............##",  # row 9  — A↔D corridor cols 7-8; ↕C cols 25-26
+	"#######..################..#####################",  # row 10
+	"#######..################..#####################",  # row 11
 	"#######..##########............#################",  # row 12
 	"#######..##########............#################",  # row 13
 	"#######..##########............#################",  # row 14
 	"#######..##########.....##.....#################",  # row 15 — C pillar (24,15)/(25,15)
-	"#######..##########...............##############",  # row 16 — C↔E corridor
-	"#######..##########............##.##############",  # row 17 — C↔E corridor turns south
+	"#######..##########................#############",  # row 16 — C↔E corridor (2-wide, v0.24.9)
+	"#######..##########................#############",  # row 17 — C↔E corridor turns south (cols 33-34)
 	"#######..##########............##.............##",  # row 18
 	"##............###################.............##",  # row 19
 	"##............###################.............##",  # row 20
 	"##............###################.............##",  # row 21
-	"##............................................##",  # row 22 — D↔E corridor
-	"##............###################.............##",  # row 23
+	"##............................................##",  # row 22 — D↔E corridor (2-wide with row 23)
+	"##............................................##",  # row 23 — D↔E corridor, v0.24.9
 	"##............###################.............##",  # row 24
 	"##............###################.............##",  # row 25
 	"################################################",  # row 26

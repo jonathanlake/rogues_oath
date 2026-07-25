@@ -1270,10 +1270,18 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 	if GameManager.config.swing_catches_adjacent and intended_id != _NO_ENTITY and is_alive(intended_id):
 		var victim := _node_of_id(intended_id)
 		var attacker_tile: Vector2i = _move_referee.tile_of_entity(attacker_id)
-		var victim_tile: Vector2i = _move_referee.tile_of_entity(intended_id)
+		# v0.24.9 tightening (Jon: "never two tiles away"): the catch requires the victim's ENTIRE
+		# motion record — occupancy + in-flight glide from/to + pipelined step from/to — inside the
+		# attacker's 8-ring. Under pipelining the occupancy tile can lead the rendered body by two
+		# tiles; testing every trace point means a caught victim can never LOOK out of reach.
+		var motion_tiles: Array[Vector2i] = _move_referee.motion_tiles_of(intended_id)
+		var all_adjacent := not motion_tiles.is_empty()
+		for motion_tile in motion_tiles:
+			if maxi(absi(motion_tile.x - attacker_tile.x), absi(motion_tile.y - attacker_tile.y)) != 1:
+				all_adjacent = false
+				break
 		if victim != null and attacker != null and attacker.is_hostile_to(victim) \
-				and not WorldGrid.is_wall(attacker_tile) and not WorldGrid.is_wall(victim_tile) \
-				and maxi(absi(victim_tile.x - attacker_tile.x), absi(victim_tile.y - attacker_tile.y)) == 1:
+				and not WorldGrid.is_wall(attacker_tile) and all_adjacent:
 			apply_damage(attacker_id, intended_id, damage_of(attacker), kind, recovery_sec)
 			return
 
