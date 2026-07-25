@@ -505,6 +505,9 @@ func _ready() -> void:
 		# edge (players: flip diff; monsters: became-engaged), the move referee owns the pool — wired
 		# here per the component rule (referees never reach sideways). Host-only like everything above.
 		_pace.tactical_entered.connect(_referee.reset_stamina)
+		# v0.24.3: the exit edge stamps the refill lockout — a pace flicker back into battle keeps
+		# the earned pool (the "free refill" hole from the first stamina playtest).
+		_pace.tactical_exited.connect(_referee.note_tactical_exit)
 		# Host-only: activate the combat referee AFTER the movement + pace referees are set up and BEFORE
 		# any spawn — its container enter hooks then seed HP for every entity (host player + goblin), and
 		# the referees hold each other's references so bump/AoO/wind-up/death can cross-call and every attack
@@ -866,9 +869,13 @@ func _on_net_event(event: Dictionary) -> void:
 			# battle-entry reset, or a rest-to-recover regen tick). Own-player HUD renders the pips.
 			_handle_stamina_event(event)
 		"thinking":
-			# A monster rolled its battle-entry hesitation (v0.24.0, host-authored). Every peer shows the grey
-			# "…" cue over it for the rolled window — self-clearing, no expire event.
+			# A monster rolled a hesitation (v0.24.0; reasons v0.24.3 — engaged/retarget/last_stand/
+			# cornered). Every peer shows the cue for the rolled window — self-clearing, no expire event.
 			_handle_thinking_event(event)
+		"exhausted":
+			# A stamina pool crossed the 0 edge (v0.24.3, host-authored, ANY entity kind): on = show the
+			# sweat-drop (the crawl must read as winded), off = clear it.
+			_handle_exhausted_event(event)
 		"status_applied":
 			# A host-applied status effect started (v0.20.0 — stun). Every peer shows the overhead icon for the
 			# broadcast window on the affected entity (player or monster).
@@ -1300,12 +1307,28 @@ func _handle_stamina_event(event: Dictionary) -> void:
 				int(data.get("points", 0)), int(data.get("max", 0)))
 
 
-## All peers: show the grey thinking cue over a hesitating monster (v0.24.0 stamina experiment).
+## All peers: show the thinking cue over a hesitating monster (v0.24.0). The `reason` field
+## (v0.24.3) picks the flavor: "engaged" leads with the "!" alert pop ("it noticed you") before the
+## dots; the story beats (retarget / last_stand / cornered) are dots only — the fight already
+## explained itself, the dots just mark the pause. Never says WHAT it decided (§2.3 abstraction).
 func _handle_thinking_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
 	var ent := _node_for_peer(int(data.get("entity_id", 0))) as Entity
 	if ent != null:
-		ent.play_thinking(float(data.get("duration_sec", 0.0)))
+		ent.play_thinking(float(data.get("duration_sec", 0.0)),
+				str(data.get("reason", "")) == "engaged")
+
+
+## All peers: show/clear the sweat-drop on an exhausted entity (v0.24.3, the stamina 0-edge).
+func _handle_exhausted_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var ent := _node_for_peer(int(data.get("entity_id", 0))) as Entity
+	if ent == null:
+		return
+	if bool(data.get("on", false)):
+		ent.play_exhausted()
+	else:
+		ent.hide_exhausted()
 
 
 func _handle_status_applied_event(event: Dictionary) -> void:

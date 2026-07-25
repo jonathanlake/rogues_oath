@@ -132,6 +132,12 @@ extends Resource
 ## until max or until the next activity cancels the regenerative state.
 @export var regen_interval_beats: float = 4.0
 
+## Refill lockout (v0.24.3, the pace-flicker fix): a tactical re-entry within this many EXPLORE
+## beats of the last tactical exit keeps its current pool instead of refilling — brief pace flaps
+## mid-fight (bubble edge, leash hopping to a teammate) are not "a new battle". Found in the first
+## stamina playtest ("stamina still regens even without the regen boost"). 0 = old refill-always.
+@export var stamina_refill_lockout_beats: float = 20.0
+
 ## Monster hesitation (Jeff: "enemies think before moving"): on entering battle a monster rolls
 ## think beats uniformly in [min, max] (host RNG) and holds its WHOLE brain — no move, attack or
 ## cast — for that long, with a visible thinking cue. Beats at the monster's resolved pace.

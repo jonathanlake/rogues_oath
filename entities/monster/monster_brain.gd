@@ -65,6 +65,14 @@ var _thinking_until_msec: int = 0
 # Edge detector for the hesitation roll: the last aggro state this brain reported. Reset never —
 # a monster that genuinely un-aggros (aggro_persists false) re-rolls on its next latch, by design.
 var _last_reported_engaged: bool = false
+# v0.24.3 story-beat thinks. _last_reported_target: the previous leash target, for the
+# retarget-after-a-kill detect (a target switch to a LIVING player — crossing fights — rolls
+# nothing; only a vanished/dead old target does). The two once-latches keep last-stand and
+# cornered at one roll per life — story beats, not recurring noise.
+var _last_reported_target: int = 0
+var _saw_engaged_allies: bool = false
+var _last_stand_done: bool = false
+var _cornered_done: bool = false
 # The host's MoveReferee, handed in by the parent at activation. The brain reads occupancy truth
 # and submits monster intents through it (host-local — no RPC; monsters have no RTT). It never
 # reaches up to Main or the monster; the referee is its one injected dependency. Untyped so its
@@ -313,6 +321,11 @@ func _think() -> void:
 		_reschedule()
 		return
 
+	# LAST-STAND story beat (v0.24.3): fought beside allies, now alone — pause and turn (once per life).
+	if _check_last_stand():
+		_reschedule()
+		return
+
 	# CASTER / KITER (v0.19.10): a flees_players monster (the goblin shaman) NEVER chases into melee. Having
 	# already checked heal above, it now backs off from a too-close player, else smites a random player from
 	# range, else holds. Handled here, BEFORE the chase/attack branch a normal monster runs.
@@ -527,6 +540,10 @@ func _think_utility(my_tile: Vector2i, targets: Array) -> void:
 	if _is_thinking():
 		_reschedule()
 		return
+	# LAST-STAND story beat (v0.24.3), utility leg — same once-per-life pause as the legacy path.
+	if _check_last_stand():
+		_reschedule()
+		return
 	var candidates: Array = UtilityScorer.score_candidates(_build_utility_context(my_tile, targets, engaged))
 	if not engaged:
 		var heal_only: Array = []
@@ -555,6 +572,15 @@ func _think_utility(my_tile: Vector2i, targets: Array) -> void:
 		if _execute_candidate(c, my_tile, targets):
 			_post_ai_decision(candidates, str(c["action"]))
 			return
+	# CORNERED story beat (v0.24.3, once per life): NOTHING committed this think AND the top pick was
+	# flee — the classic walled-in kiter (the r2 trace case). The stall was already happening; the
+	# dots just make it readable as "trapped — now what?". If a lower candidate committed above
+	# (e.g. the cornered smite), no roll — the cast IS the answer, dots would only mud it.
+	if not _cornered_done and not candidates.is_empty() \
+			and float(candidates[0]["score"]) > 0.0 \
+			and str(candidates[0]["action"]) == UtilityScorer.ACTION_FLEE:
+		_cornered_done = true
+		_begin_think("cornered")
 	_reschedule()
 
 
@@ -872,18 +898,58 @@ func _report_engagement(aggroed: bool, target_id: int) -> void:
 	# beats at this monster's resolved pace (engaged = tactical). The `thinking` event drives the
 	# overhead cue on every peer. Tied to the /stamina master toggle: off = pre-experiment AI exactly.
 	var was_engaged := _last_reported_engaged
+	var old_target := _last_reported_target
 	_last_reported_engaged = aggroed
+	_last_reported_target = target_id
 	if _pace != null:
 		_pace.report_engagement(_entity_id, aggroed, target_id)
 	# Roll AFTER the referee records the engagement (boot-check finding, v0.24.0): beat_or_explore
 	# resolves a monster tactical iff its engagement is on record, so rolling first priced the
 	# hesitation at the EXPLORE beat. Order fixed — the think window now scales with the fight tempo.
-	if aggroed and not was_engaged and GameManager.config.stamina_enabled:
-		var think_beats := randi_range(
-				GameManager.config.monster_think_min_beats, GameManager.config.monster_think_max_beats)
-		var think_sec := think_beats * PaceReferee.beat_or_explore(_pace, _entity_id)
-		_thinking_until_msec = Time.get_ticks_msec() + int(think_sec * 1000.0)
-		NetEvents.post_event("thinking", { "entity_id": _entity_id, "duration_sec": think_sec })
+	if aggroed and not was_engaged:
+		_begin_think("engaged")
+		return
+	# RETARGET-after-a-kill (v0.24.3 story beat): still engaged, the leash moved, and the OLD target
+	# is GONE from the referee (dead / disconnected — an untracked id reads the wall sentinel). A
+	# switch between two LIVING players (crossing fight) deliberately rolls nothing — that would be
+	# recurring noise, not a beat. Gives the survivors a breath while it picks its next victim.
+	if aggroed and was_engaged and target_id != old_target and old_target != 0 \
+			and WorldGrid.is_wall(_referee.tile_of_entity(old_target)):
+		_begin_think("retarget")
+
+
+## Roll one hesitation window (v0.24.0, reasons v0.24.3): monster_think_min/max_beats (host RNG,
+## min/maxi-ordered so a live retune that momentarily inverts the pair can't crash randi_range) at
+## this monster's resolved pace, hold the whole brain, and post the cue event. `reason` rides the
+## event so presentation can flavor it ("engaged" gets the "!" alert lead-in; story beats get dots
+## only) and scripted runs can assert which trigger fired. Gated on the /stamina master toggle.
+func _begin_think(reason: String) -> void:
+	if not GameManager.config.stamina_enabled:
+		return
+	var lo := mini(GameManager.config.monster_think_min_beats, GameManager.config.monster_think_max_beats)
+	var hi := maxi(GameManager.config.monster_think_min_beats, GameManager.config.monster_think_max_beats)
+	var think_sec := randi_range(lo, hi) * PaceReferee.beat_or_explore(_pace, _entity_id)
+	_thinking_until_msec = Time.get_ticks_msec() + int(think_sec * 1000.0)
+	NetEvents.post_event("thinking", {
+		"entity_id": _entity_id, "duration_sec": think_sec, "reason": reason,
+	})
+
+
+## LAST-STAND check (v0.24.3, once per life): this monster fought beside engaged allies and now
+## fights alone — the Warren finale moment (the survivor's flee weight decays and it turns). The
+## engaged-ally count comes from the pace referee's engagement map (no container ref needed).
+## Returns true when it just rolled, so the caller reschedules instead of acting this think.
+func _check_last_stand() -> bool:
+	if _pace == null or not _last_reported_engaged or _last_stand_done:
+		return false
+	if _pace.engaged_count_excluding(_entity_id) > 0:
+		_saw_engaged_allies = true
+		return false
+	if not _saw_engaged_allies:
+		return false
+	_last_stand_done = true
+	_begin_think("last_stand")
+	return _is_thinking()
 
 
 ## THINKING hold read (v0.24.0): true while this brain's hesitation deadline is in the future.

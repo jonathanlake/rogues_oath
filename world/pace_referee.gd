@@ -7,6 +7,12 @@ extends Node
 ## never reaches sideways). NOT fired on the explore exit or on seed events.
 signal tactical_entered(entity_id: int)
 
+## The exit twin (v0.24.3): fired when an entity LEAVES tactical — players on the flip-to-explore
+## diff, monsters on the engagement drop. Main wires it to MoveReferee.note_tactical_exit, which
+## timestamps it for the refill lockout (a re-entry inside the lockout keeps its pool — closes the
+## pace-flicker free-refill hole found in the first stamina playtest).
+signal tactical_exited(entity_id: int)
+
 ## The HOST-ONLY pace resolver (DESIGN §2.8.7 — Tactical Zones v1). It is the SINGLE place the two
 ## tempo dials (explore vs tactical) are chosen from: every stamp site (MoveReferee's step/rest,
 ## CombatReferee's windup/recovery, MonsterBrain's pacing) asks THIS referee, per entity, what beat
@@ -139,6 +145,13 @@ func is_tactical(entity_id: int) -> bool:
 	return _resolve_tactical(entity_id)
 
 
+## How many OTHER monsters are currently engaged (v0.24.3, the last-stand read): the size of the
+## engagement map minus this monster's own entry. Host-only; brains call it through their injected
+## _pace ref to detect "my pack is gone" without ever holding a container reference.
+func engaged_count_excluding(entity_id: int) -> int:
+	return _engagements.size() - (1 if _engagements.has(entity_id) else 0)
+
+
 ## THE single "no resolver → explore" policy site (§2.8.7), shared by the three stamp-site referees
 ## (MoveReferee, CombatReferee, MonsterBrain) so none keeps a private copy of the fallback rule. Given a
 ## (possibly null) PaceReferee and an entity id, returns that entity's resolved beat (seconds) — tactical
@@ -193,6 +206,7 @@ func report_engagement(monster_id: int, aggroed: bool, target_id: int) -> void:
 		if not _engagements.has(monster_id):
 			return
 		_engagements.erase(monster_id)
+		tactical_exited.emit(monster_id)
 	# Flush immediately so an ENTRY / EXIT cue (a player just entered a bubble / became a leash target, or
 	# a monster just dropped aggro) fires on this frame rather than waiting up to pace_poll_sec for the poll.
 	_flush_pace_changes()
@@ -281,10 +295,12 @@ func _flush_pace_changes() -> void:
 		if not _last_broadcast.has(player_id) or bool(_last_broadcast[player_id]) != tactical:
 			_last_broadcast[player_id] = tactical
 			NetEvents.post_event("pace_changed", { "entity_id": player_id, "pace": _pace_name(tactical) })
-			# Entry edge only (v0.24.0 stamina experiment): the flip INTO tactical resets the pool; the
-			# flip out is deliberately silent here (pools refill by rest, not by leaving).
+			# Both edges (v0.24.3): the flip INTO tactical refills the pool (lockout-gated, see
+			# MoveReferee.reset_stamina); the flip OUT timestamps the exit for that lockout.
 			if tactical:
 				tactical_entered.emit(player_id)
+			else:
+				tactical_exited.emit(player_id)
 
 
 ## The wire label for a resolved pace — the ONE mapping bool -> the string the cue reads, so the event

@@ -141,7 +141,11 @@ Jon v0.24.1: "very slow, never stopped") and the Commitment Rule does the punish
 on battle entry; otherwise ONLY by resting — 10 quiet beats starts regen, +1 point per 4 beats,
 any move/action cancels (Jon's rest-to-recover spec). Attacks never spend; explore movement
 untouched; monsters ride the identical check and additionally roll 1–6 beats of visible hesitation
-("…" cue, whole brain held) on entering battle. Intent: movement improves positioning but can no
+(whole brain held; range live-tunable) at story-beat moments — battle entry (a "!" alert pop, then
+"…" dots), target-died retarget, last-stand (allies all dead — the finale pause), and a cornered
+stall (each once per life; v0.24.3). Any entity at 0 stamina shows a sweat-drop while it crawls,
+monsters included. Refills on battle entry are LOCKOUT-gated (`stamina_refill_lockout_beats`):
+a pace flicker back into the same fight keeps the earned pool. Intent: movement improves positioning but can no
 longer invalidate attacks (the kiting thread) — a fleeing healer burns dry and crawls. `/stamina`
 (alias `/mp`) toggles the whole experiment live (off = pre-experiment behavior exactly); all dials
 live-tunable. Like the v0.6.x rhythm experiment, this section is provisional until the Jon+Jeff

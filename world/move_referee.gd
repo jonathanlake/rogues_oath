@@ -120,6 +120,11 @@ var _stamina: Dictionary = {}
 # /stamina toggle bumps it; a regen timer that fires holding a stale generation no-ops (stun-system
 # precedent). This is the sole stale-timer guard — one regen chain per entity by construction.
 var _stamina_generation: Dictionary = {}
+# Refill lockout (v0.24.3, the pace-flicker fix): entity_id -> Time.get_ticks_msec() of the last
+# tactical EXIT. A tactical re-entry within stamina_refill_lockout_beats of this keeps its current
+# pool — only a genuinely fresh fight refills. Written by note_tactical_exit (wired to
+# PaceReferee.tactical_exited); erased with the other per-entity records.
+var _last_tactical_exit_msec: Dictionary = {}
 
 # Monotonic per-glide id, stamped into each _gliding record so a completion timer can tell "my"
 # glide from a later one for the same peer (disconnect+rejoin, or any superseding glide).
@@ -312,18 +317,45 @@ func commit_in_place(entity_id: int, duration_sec: float) -> bool:
 ## max. Wired by Main to PaceReferee.tactical_entered (battle entry = fresh pool) and used as the
 ## seed on entity enter. Bumping the generation kills any regen chain from a previous engagement,
 ## closing the stale-timer race (an orphaned timer fires, sees a newer generation, no-ops).
-func reset_stamina(entity_id: int) -> void:
+func reset_stamina(entity_id: int, force: bool = false) -> void:
+	# Refill LOCKOUT (v0.24.3): a re-entry within stamina_refill_lockout_beats (explore-beat clock)
+	# of the last tactical exit is pace flicker, not a new battle — keep the earned pool exactly as
+	# it stands (regen chains, if resting, keep ticking; activity gates still apply). `force` (the
+	# /stamina enable reseed) bypasses the gate — a toggle flip is an explicit clean slate.
+	if not force and _last_tactical_exit_msec.has(entity_id):
+		var lockout_ms := int(GameManager.config.stamina_refill_lockout_beats
+				* GameManager.explore_beat_sec * 1000.0)
+		if Time.get_ticks_msec() - int(_last_tactical_exit_msec[entity_id]) < lockout_ms:
+			return
+	var was_exhausted := _is_exhausted(entity_id)
 	var max_points := _stamina_max_of(entity_id)
 	_stamina[entity_id] = { "points": max_points, "max": max_points }
 	_stamina_generation[entity_id] = int(_stamina_generation.get(entity_id, 0)) + 1
 	_post_stamina(entity_id)
+	if was_exhausted:
+		_post_exhausted(entity_id, false)
+
+
+## Host-only (v0.24.3): timestamp a tactical EXIT for the refill lockout. Wired by Main to
+## PaceReferee.tactical_exited.
+func note_tactical_exit(entity_id: int) -> void:
+	_last_tactical_exit_msec[entity_id] = Time.get_ticks_msec()
 
 
 ## Host-only (v0.24.0): reseed EVERY tracked entity to max. Called by the /stamina toggle on ENABLE
 ## only (clean slate — nobody resumes a fight with an unearned partial pool). Disable mutates nothing.
 func reseed_all_stamina() -> void:
 	for entity_id in _stamina.keys():
-		reset_stamina(entity_id)
+		reset_stamina(entity_id, true)
+
+
+## Host-only (v0.24.3): clear every showing sweat-drop — the /stamina DISABLE path calls this so a
+## crawl that just stopped existing doesn't keep its exhausted cue (a presentation event, not a pool
+## mutation; the pools themselves stay untouched on disable, per the toggle contract).
+func clear_exhaustion_cues() -> void:
+	for entity_id in _stamina.keys():
+		if _is_exhausted(entity_id):
+			_post_exhausted(entity_id, false)
 
 
 ## Host-only (v0.24.0): register activity — an accepted glide or any committed busy window. Bumps
@@ -356,9 +388,11 @@ func clear_entity(entity_id: int) -> void:
 	_erase_by_value(_reserved, entity_id)
 	# Stamina experiment (v0.24.0): drop the pool and bump the generation so any in-flight regen
 	# timer for this entity no-ops (ids are never recycled in-session, but a respawn reuses a PEER
-	# id — the bump makes the old chain stale either way).
+	# id — the bump makes the old chain stale either way). v0.24.3: the exit stamp goes too, so a
+	# respawned peer's first battle entry is never lockout-blocked by its previous life.
 	_stamina.erase(entity_id)
 	_stamina_generation[entity_id] = int(_stamina_generation.get(entity_id, 0)) + 1
+	_last_tactical_exit_msec.erase(entity_id)
 
 
 # ── Private methods ───────────────────────────────────────────────────────────
@@ -511,6 +545,11 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 		else:
 			stamina_pool["points"] = int(stamina_pool["points"]) - 1
 			_post_stamina(sender_peer_id)
+			# Crossing INTO exhaustion (v0.24.3): the sweat-drop cue rides its own event, for every
+			# entity kind — a crawling MONSTER must read as winded, not glitchy-slow (players get the
+			# pips + log line on top). 0-crossings only, so the wire cost is a handful per fight.
+			if int(stamina_pool["points"]) == 0:
+				_post_exhausted(sender_peer_id, true)
 	# EVERY accepted glide — budgeted, exhausted, or explore-pace — is ACTIVITY: it cancels any
 	# rest-to-recover regen in progress (Jon: "moving... will stop the regeneration").
 	note_activity(sender_peer_id)
@@ -869,6 +908,19 @@ func _stamina_max_of(entity_id: int) -> int:
 	return GameManager.config.stamina_max
 
 
+## v0.24.3: is this entity's pool sitting at 0? (Cue bookkeeping — the exhausted event's edge reads.)
+func _is_exhausted(entity_id: int) -> bool:
+	var pool: Dictionary = _stamina.get(entity_id, {})
+	return not pool.is_empty() and int(pool["points"]) <= 0
+
+
+## v0.24.3: broadcast an exhaustion EDGE (on = the sweat-drop shows, off = it clears) for ANY entity
+## kind — this is the one stamina signal monsters also get, because a 5-beat crawl with no cue reads
+## as a bug (§2.3.4). Edges only, never per-step.
+func _post_exhausted(entity_id: int, on: bool) -> void:
+	NetEvents.post_event("exhausted", { "entity_id": entity_id, "on": on })
+
+
 ## Stamina experiment (v0.24.0): broadcast a PLAYER's pool state (monsters budget silently — their
 ## tell is the burst-pause movement itself). On-change only: called from spend, reset and each regen
 ## tick, never per-frame (§2.5). Negative ids return without posting.
@@ -895,6 +947,9 @@ func _stamina_regen_tick(entity_id: int, generation: int) -> void:
 		return
 	pool["points"] = int(pool["points"]) + 1
 	_post_stamina(entity_id)
+	# Crossing OUT of exhaustion (v0.24.3): the first regained point ends the crawl — clear the cue.
+	if int(pool["points"]) == 1:
+		_post_exhausted(entity_id, false)
 	if int(pool["points"]) < int(pool["max"]):
 		var interval_sec: float = GameManager.config.regen_interval_beats \
 				* PaceReferee.beat_or_explore(_pace, entity_id)
@@ -922,6 +977,7 @@ func _on_entity_exiting(node: Node) -> void:
 	# Stamina experiment (v0.24.0): same teardown as clear_entity (idempotent re-erase is a no-op).
 	_stamina.erase(entity_id)
 	_stamina_generation[entity_id] = int(_stamina_generation.get(entity_id, 0)) + 1
+	_last_tactical_exit_msec.erase(entity_id)
 
 
 ## Remove every tile->peer entry whose value is this peer (a peer holds at most one of each, but

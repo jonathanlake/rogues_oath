@@ -147,6 +147,11 @@ var _stun_wobble_tween: Tween = null
 var _think_fx: Node2D = null
 var _think_fx_tween: Tween = null
 var _think_fx_gen: int = 0
+# Overhead EXHAUSTED cue (v0.24.3): a cyan sweat-drop shown while an entity's stamina pool sits at
+# 0 (the crawl). Own slot; driven by the `exhausted` on/off edge events, not a local timer — the
+# host owns when the crawl ends.
+var _exhausted_fx: Node2D = null
+var _exhausted_fx_tween: Tween = null
 
 
 func _ready() -> void:
@@ -470,10 +475,40 @@ func hide_stun(gen: int = -1) -> void:
 ## Overhead THINKING cue (v0.24.0 stamina experiment, §2.3.4-distinct): three grey dots that pulse over the
 ## head for `hold_sec` — a hesitating monster reads as "considering", never confusable with the yellow
 ## stun starburst or a cast symbol. Self-clearing (generation-guarded local timer); a re-roll replaces.
-func play_thinking(hold_sec: float) -> void:
+func play_thinking(hold_sec: float, alert: bool = false) -> void:
 	hide_thinking()
 	_think_fx_gen += 1
 	var gen := _think_fx_gen
+	var fx := Node2D.new()
+	fx.position = Vector2(0, -50)
+	add_child(fx)
+	_think_fx = fx
+	# ALERT lead-in (v0.24.3, the aggro flavor): a bright "!" pops first — "it noticed you" — then
+	# hands over to the pondering dots. Built from polygons like every other cue (bar + dot); the
+	# swap is a one-shot timer capped at the hold (a 1-beat think is nearly all "!", which is right).
+	var alert_sec := minf(0.35, hold_sec) if alert else 0.0
+	if alert:
+		var mark := Node2D.new()
+		var bar := Polygon2D.new()
+		bar.polygon = PackedVector2Array([
+			Vector2(-2, -9), Vector2(2, -9), Vector2(1.2, 2), Vector2(-1.2, 2)])
+		bar.color = Color(1.0, 0.85, 0.3)  # alarm yellow-gold — brighter kin of the stun family
+		mark.add_child(bar)
+		var dot := Polygon2D.new()
+		dot.polygon = PackedVector2Array([
+			Vector2(-1.6, 5), Vector2(1.6, 5), Vector2(1.6, 8), Vector2(-1.6, 8)])
+		dot.color = bar.color
+		mark.add_child(dot)
+		mark.scale = Vector2(0.2, 0.2)
+		fx.add_child(mark)
+		# Pop-in scale — the "!" lands with a snap, unlike the dots' lazy bob.
+		var pop := create_tween()
+		pop.tween_property(mark, "scale", Vector2(1.15, 1.15), 0.12)\
+				.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		pop.tween_property(mark, "scale", Vector2.ONE, 0.08)
+		get_tree().create_timer(alert_sec).timeout.connect(func():
+			if gen == _think_fx_gen and is_instance_valid(mark):
+				mark.queue_free())
 	var dots := Node2D.new()
 	for i in 3:
 		var dot := Polygon2D.new()
@@ -485,15 +520,52 @@ func play_thinking(hold_sec: float) -> void:
 		dot.color = Color(0.75, 0.75, 0.78)  # neutral grey — deliberately NOT stun yellow
 		dot.position = Vector2((i - 1) * 8.0, 0)
 		dots.add_child(dot)
-	dots.position = Vector2(0, -50)
-	add_child(dots)
-	_think_fx = dots
+	dots.visible = not alert
+	fx.add_child(dots)
+	if alert:
+		get_tree().create_timer(alert_sec).timeout.connect(func():
+			if gen == _think_fx_gen and is_instance_valid(dots):
+				dots.visible = true)
 	# Gentle bob loop — reads as pondering, visually quieter than the stun spin.
 	_think_fx_tween = create_tween().set_loops()
-	_think_fx_tween.tween_property(dots, "position:y", -54.0, 0.35).from(-50.0)
-	_think_fx_tween.tween_property(dots, "position:y", -50.0, 0.35)
+	_think_fx_tween.tween_property(fx, "position:y", -54.0, 0.35).from(-50.0)
+	_think_fx_tween.tween_property(fx, "position:y", -50.0, 0.35)
 	if hold_sec > 0.0:
 		get_tree().create_timer(hold_sec).timeout.connect(hide_thinking.bind(gen))
+
+
+## Overhead EXHAUSTED cue (v0.24.3, §2.3.4-distinct): a cyan sweat-drop that drips while this
+## entity's stamina sits at 0 — a crawling body must read as WINDED, never as lag or glitchy-slow.
+## Loops until hide_exhausted (the host's `exhausted` off-edge event); no local timer.
+func play_exhausted() -> void:
+	hide_exhausted()
+	var drop := Polygon2D.new()
+	# Teardrop: a fan from a top point over a round bottom.
+	var pts := PackedVector2Array([Vector2(0, -6)])
+	for i in 9:
+		var ang := PI * i / 8.0
+		pts.append(Vector2(cos(ang) * 3.2, 2.0 + sin(ang) * 3.2))
+	drop.polygon = pts
+	drop.color = Color(0.45, 0.8, 1.0, 0.9)  # sweat cyan — kin to the stamina pips, not a status
+	drop.position = Vector2(10, -46)  # offset beside the head so it can coexist with a think/stun
+	add_child(drop)
+	_exhausted_fx = drop
+	# Drip loop: swell, fall a few px, fade, reset — reads as panting/sweating at a glance.
+	_exhausted_fx_tween = create_tween().set_loops()
+	_exhausted_fx_tween.tween_property(drop, "position:y", -40.0, 0.55).from(-46.0)
+	_exhausted_fx_tween.parallel().tween_property(drop, "modulate:a", 0.25, 0.55).from(0.9)
+	_exhausted_fx_tween.tween_property(drop, "position:y", -46.0, 0.0)
+	_exhausted_fx_tween.tween_property(drop, "modulate:a", 0.9, 0.1)
+
+
+## Clear the sweat-drop (the `exhausted` off edge / death teardown). Idempotent.
+func hide_exhausted() -> void:
+	if _exhausted_fx_tween != null and _exhausted_fx_tween.is_valid():
+		_exhausted_fx_tween.kill()
+	_exhausted_fx_tween = null
+	if _exhausted_fx != null and is_instance_valid(_exhausted_fx):
+		_exhausted_fx.queue_free()
+	_exhausted_fx = null
 
 
 ## Clear the thinking cue. No-arg = unconditional (death teardown); a bound generation no-ops if a

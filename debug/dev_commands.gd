@@ -200,6 +200,8 @@ func _dev_cmd_stamina(by: String) -> Dictionary:
 	if GameManager.config.stamina_enabled:
 		_move_referee.reseed_all_stamina()
 		return { "ok": true, "data": { "line": "%s turned STAMINA ON (pools reset to full)." % by } }
+	# v0.24.3: clear any showing sweat-drops (presentation only — pools stay untouched on disable).
+	_move_referee.clear_exhaustion_cues()
 	return { "ok": true, "data": { "line": "%s turned stamina off." % by } }
 
 
@@ -449,6 +451,22 @@ func _dev_config_game_row(alias: String, field: String, value_token: String, by:
 			var crawl := clampf(value_token.to_float(), 1.0, 100.0)
 			GameManager.config.exhausted_step_beats = crawl
 			return { "ok": true, "note": "exhausted crawl → %.1f beats/tile" % crawl }
+		"monster_think_min_beats":
+			# v0.24.3 think-roll dials (Jon: "a knob for both"). Host-side writes, read at each roll;
+			# the brain min/max-orders the pair at roll time, so a momentarily inverted pair is safe.
+			var think_min := clampi(int(value_token.to_float()), 0, 30)
+			GameManager.config.monster_think_min_beats = think_min
+			return { "ok": true, "note": "monster think min → %d beats" % think_min }
+		"monster_think_max_beats":
+			var think_max := clampi(int(value_token.to_float()), 0, 30)
+			GameManager.config.monster_think_max_beats = think_max
+			return { "ok": true, "note": "monster think max → %d beats" % think_max }
+		"stamina_refill_lockout_beats":
+			# v0.24.3 pace-flicker fix dial: how long (explore beats) after leaving battle a re-entry
+			# still counts as the SAME battle (no refill). 0 restores refill-on-every-entry.
+			var lockout := clampf(value_token.to_float(), 0.0, 200.0)
+			GameManager.config.stamina_refill_lockout_beats = lockout
+			return { "ok": true, "note": "stamina refill lockout → %.1f beats" % lockout }
 	# Unreachable while DEV_GAME_FIELDS and this match stay in step — but a field added to the allowlist
 	# without its branch must fail LOUDLY here, not silently no-op into a "success" line.
 	return { "ok": false, "reason": "config %s: game field '%s' has no handler" % [alias, field] }

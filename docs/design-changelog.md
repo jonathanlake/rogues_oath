@@ -9,6 +9,20 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.24.3 (2026-07-25) — THE TELL PASS + the pace-flicker refill fix (Jon+Jeff's first stamina
+  session).** FIX: stamina no longer refills from mid-fight pace flicker — a tactical re-entry
+  within `stamina_refill_lockout_beats` (default 20 explore beats) of the last exit keeps the
+  earned pool; only a genuinely fresh fight refills ("stamina still regens even without the regen
+  boost" — the flicker reset was the leak; every attack path was verified to route through the one
+  activity chokepoint). CUES: the thinking event grew a `reason` — battle entry now leads with a
+  bright "!" pop ("it noticed you") before the dots; three once-per-life story-beat thinks joined
+  it: **retarget** (its target died — a breath before it picks the next victim), **last-stand**
+  (fought beside allies, now alone — the Warren finale pause), and **cornered** (top-pick flee had
+  nowhere to go and nothing else committed). A cyan **sweat-drop** now drips over ANY entity at 0
+  stamina (the `exhausted` 0-edge event, monsters included) so the crawl reads as winded, never as
+  lag. KNOBS (Jon's ask): `/config monster_think_min_beats` / `monster_think_max_beats` (the
+  hesitation roll's range) and `/config stamina_refill_lockout_beats` join the direct-form dials.
+
 - **v0.24.2 (2026-07-25) — `/config <field> <value>`: the stamina dials are now actually typeable.**
   The v0.24.x game-level dials (`regen_idle_beats`, `regen_interval_beats`, `exhausted_step_beats`,
   and `tactical_beat_sec`) were allowlisted but reachable only through preset table rows — `/config`
