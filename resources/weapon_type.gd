@@ -29,13 +29,16 @@ extends Resource
 
 # ── Gameplay (read HOST-side by CombatReferee; never the wire) ─────────────────
 
-## BEATS this attack OCCUPIES on the attacker's one timeline (DESIGN §2.3.7 / §2.8). The whole
-## action window — there are no separate cooldowns (Part 4 Q9): the attacker is BUSY for this many
-## beats and cannot act, exactly like a step reserves its beats. The referee stamps it to seconds
-## at the attacker's resolved pace (beats × beat) as the bump's occupied window; the attack event
-## carries that duration, so the recovery tell + the weapon rig auto-align to it. dagger 1.0,
-## longsword 2.0 (the longer commitment carries a damage premium — see `damage`).
-@export var attack_beats: float = 2.0
+## RECOVERY BEATS after the strike/loose (renamed from `attack_beats`, v0.23.1 — Jon: the strike is
+## INSTANT at the window's start since v0.7.0, so this was always the recovery tail; the name now matches
+## the monsters' heal_recovery_beats/smite_recovery_beats/bonus_recovery_beats vocabulary). The attacker's
+## total committed window is windup_beats + recovery_beats — ADDITIVE for melee AND ranged alike (v0.23.1
+## unified: a bow's draw is windup_beats and this is purely the after-loose tail; pre-rename, ranged
+## attack_beats CONTAINED the draw). No separate cooldowns (Part 4 Q9): the attacker is BUSY for the whole
+## window and cannot act, exactly like a step reserves its beats. Stamped to seconds at the attacker's
+## resolved pace (beats × beat); the attack event carries the duration, so the recovery tell + the weapon
+## rig auto-align to it. dagger 1.0, longsword 2.0 (the longer commitment carries a damage premium).
+@export var recovery_beats: float = 2.0
 
 ## Hit points removed per landed strike (deterministic — no to-hit roll, DESIGN §2.3 amendment).
 ## dagger 2 over 1 beat = 2.0 DPS; longsword 5 over 2 beats = 2.5 DPS — the longer lock carries a

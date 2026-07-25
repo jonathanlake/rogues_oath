@@ -81,7 +81,7 @@ enum Category { POTION, EQUIPMENT, WEAPON }
 
 ## BEATS the USE action OCCUPIES on the user's one timeline (DESIGN's "N-beat commit" for item use, §2.1 /
 ## §2.8) — the whole committed window during which the user is BUSY and cannot act, exactly like an attack's
-## attack_beats or a step's glide. The referee stamps it to SECONDS at the user's resolved pace (beats ×
+## recovery_beats or a step's glide. The referee stamps it to SECONDS at the user's resolved pace (beats ×
 ## beat_sec) when it accepts the use, so the commitment scales with tempo like every other action. Read
 ## HOST-side by the use referee at commit; the use event carries the stamped seconds so the busy/recovery
 ## window matches on every peer. Once started it plays to completion — no drinking-cancel (Commitment Rule).

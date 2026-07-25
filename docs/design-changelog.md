@@ -9,7 +9,19 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
-- **v0.23.0 (2026-07-24) — THE WARREN: room D becomes the utility-AI showcase battle (designed, then
+- **v0.23.1 (2026-07-24) — `attack_beats` → `recovery_beats` (Jon's rename), and ranged becomes ADDITIVE.**
+  Jon, from play: "windup_beats fits its name; attack_beats feels like a recovery animation after the swing"
+  — and the code agreed: the strike has been INSTANT at the window's start since v0.7.0 (the field was
+  always the after-strike tail), the referee's own helper was already named `_recovery_duration_of`, and
+  every monster spell says `*_recovery_beats`. Renamed everywhere (export, 4 weapon `.tres`, `/w`
+  allowlist + clamps, `/config 1` rows, docs). Bonus unification the rename exposed: melee composed
+  ADDITIVELY (windup, then the tail) but ranged attack_beats CONTAINED the draw — so the bow is now
+  additive too (`windup 2 + recovery 1`, total unchanged at 3), `total commit = windup_beats +
+  recovery_beats` holds for every weapon, and the old windup-exceeds-attack misconfiguration guard is
+  deleted because the bad state is unrepresentable. Behavior-identical by construction and by trace
+  (post-rename longsword bump stamps `duration_sec 1.0`, same as every pre-rename log); the bow's
+  arithmetic is identical (loose at 2 beats, busy 3) but was not re-run — no harness knob equips a bow,
+  noted honestly. `/w <weapon> attack_beats` no longer exists; use `recovery_beats`. — THE WARREN: room D becomes the utility-AI showcase battle (designed, then
   PLAYED into shape).** Jon asked for a fight that demonstrates the AI and is actually fun; this is it,
   calibrated across ~8 scripted two-instance battles that reshaped the design three times. (1) **The cast**
   (all data): the GOBLIN BRUTE — a real 32rogues brute cell (7,0), 28 HP, club, aggro 4 — anchors the wall

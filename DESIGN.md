@@ -204,17 +204,17 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
 7. **§2.3.7 — Weapons as objects; actions as beats (v0.9.0, M3.7).** A player's weapon is a
    designer resource (`WeaponType`, `resources/weapons/*.tres`) — add a weapon by dropping a
    `.tres`, never by touching code (the §2.5 designer rule). Two field groups:
-   - **Gameplay** (read HOST-side by the combat referee; never the wire): `attack_beats` (the
+   - **Gameplay** (read HOST-side by the combat referee; never the wire): `recovery_beats` (renamed from `attack_beats` v0.23.1 — the
      BEATS this attack OCCUPIES on the attacker's one timeline — the whole action window, no
      separate cooldown, per Part 4 Q9), `damage` (deterministic), and `windup_beats` (0 = the
      instant strike at commit — today's default for both weapons; > 0 = the preserved
      telegraph/whiff machinery for a future heavy weapon). HONEST STATUS (v0.9.0): the
-     referee reads the equipped weapon's `damage` and `attack_beats` when it stamps a bump;
+     referee reads the equipped weapon's `damage` and `recovery_beats` when it stamps a bump;
      `windup_beats` is AUTHORED-BUT-NOT-YET-WIRED for players — the player-side referee hookup
      (bump-with-windup through the proven monster machinery) ships with the first windup
      weapon, a deliberate M3.7 scope cut. The legacy player exports
      (`melee_damage`/`attack_recovery_beats`) are the no-weapon fallback only.
-   - **Base + wielder modifier (v0.19.0).** A weapon's `damage`/`windup_beats`/`attack_beats`
+   - **Base + wielder modifier (v0.19.0).** A weapon's `damage`/`windup_beats`/`recovery_beats`
      are the BASE; the wielder adds a SIGNED modifier on top, floored at 0 by the referee —
      `MonsterType.bonus_damage`/`bonus_windup_beats`/`bonus_recovery_beats` and `Player.bonus_damage`
      (the future strength-stat hook). This is how the SAME weapon is slower in a monster's hands than
@@ -739,7 +739,7 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    Friendly fire ON by default (Jon: first-occupant body-blocking is on-brand). Mouse-click
    aiming (click a tile in range = commit request; server adjudicates; wall-clicks = "fire
    down this lane"). Bow v1: ranger roster [longsword, bow], 7-tile Chebyshev range,
-   3 attack_beats (2-beat draw + 1 recovery), damage 4, sky-to-horizontal draw telegraph +
+   windup 2 + recovery 1 (the 2-beat draw, then the after-loose tail — additive since v0.23.1), damage 4, sky-to-horizontal draw telegraph +
    nocked arrow + pitched draw/loose sounds (Jon's spec — no string animation). Ranged
    kiting pressure: the 3-beat rooted draw IS the hard choice; a mid-draw move request
    pipelines (Q7 slot) and starts only after the window. STILL OPEN in this question:
@@ -833,7 +833,7 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    "never tests your reflexes"). So the PLANTED recovery stays: a multi-beat action roots you,
    weight as cost. Movement remains the fastest action (1 beat). Counterplay to a long attack is
    POSITIONAL (the whiff machinery, stepping out of a telegraphed tile) or lethal, never a free
-   input-cancel. This is what M3.7 (v0.9.0) builds on: `WeaponType.attack_beats` IS the occupied
+   input-cancel. This is what M3.7 (v0.9.0) builds on: `WeaponType.recovery_beats` (né attack_beats) IS the occupied
    window (§2.3.7), dagger 1 beat vs longsword 2 beats — a weapon's whole cost is the beats it
    locks, not a cooldown bolted beside it. Still PAIRED with the §2.2.6 AoO re-enable as the next
    feel pass: once the beat-cost contrast reads well, turn AoO back on so stepping away from a

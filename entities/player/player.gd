@@ -26,7 +26,7 @@ extends Entity
 ## record; the local attacker mirrors that window as blocked input (commit_in_place) and every peer
 ## plays the recovery tell for it. 2.0 → attack rate = movement rate (a step is glide + 1 rest beat).
 ## NO-WEAPON FALLBACK (M3.7): this and melee_damage are read by the referee ONLY when equipped_weapon
-## is null — a weapon's attack_beats/damage win when one is equipped. equipped_weapon itself, the rig
+## is null — a weapon's recovery_beats/damage win when one is equipped. equipped_weapon itself, the rig
 ## reference, set_weapon, and play_weapon_swing now live on Entity (v0.9.3, shared with Monster); this
 ## node keeps only the player-specific swap flow (the swap intent/validator/event and late-join sync).
 @export var attack_recovery_beats: float = 2.0

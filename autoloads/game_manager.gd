@@ -14,11 +14,11 @@ const MENU_SCENE := "res://ui/main_menu/main_menu.tscn"
 ## documents them. Each CLAMPS entry is [min, max]; a value outside it is REJECTED (not silently
 ## clamped), naming the range, at the validator. The field is stored as an int when it appears in the
 ## matching *_INT_FIELDS list, else as a float.
-const DEV_WEAPON_FIELDS := ["damage", "attack_beats", "windup_beats"]
+const DEV_WEAPON_FIELDS := ["damage", "recovery_beats", "windup_beats"]
 const DEV_WEAPON_INT_FIELDS := ["damage"]
 const DEV_WEAPON_CLAMPS := {
 	"damage": [0, 999],
-	"attack_beats": [0.05, 30.0],
+	"recovery_beats": [0.05, 30.0],
 	"windup_beats": [0.0, 30.0],
 }
 const DEV_MONSTER_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles",
@@ -103,9 +103,9 @@ const DEV_GAME_FIELDS := ["tactical_beat_sec"]
 const CONFIG_PRESETS := {
 	"1": [
 		["w", "longsword", "windup_beats", 1.0],
-		["w", "longsword", "attack_beats", 3.0],
+		["w", "longsword", "recovery_beats", 3.0],
 		["w", "club", "windup_beats", 1.0],
-		["w", "club", "attack_beats", 3.0],
+		["w", "club", "recovery_beats", 3.0],
 		["m", "goblin", "bonus_windup_beats", 1.0],
 		# The fight-feel row (v0.22.1): halve the TACTICAL beat from its 0.50s default so this preset's
 		# cadence (windup 1 beat / attack 3 beats) lands at 0.25s telegraphs and 0.75s swings for anyone

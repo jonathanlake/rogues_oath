@@ -2302,7 +2302,7 @@ func _pick_room_spawn_tile(room: Rect2i, presser: Vector2i) -> Vector2i:
 ## occupancy predicate, which covers glides AND attack commit_in_place records, so a swap can never
 ## interrupt a committed action — the Commitment Rule). Otherwise it toggles within the fixed roster
 ## (GameConfig.weapon_roster — the ONE authoring site), applies HOST-side authoritatively (so the
-## referee's next damage/attack_beats read is the new weapon), and broadcasts under its own action
+## referee's next damage/recovery_beats read is the new weapon), and broadcasts under its own action
 ## name; every peer adopts it in _handle_swap_weapon_event. Late-join is handled separately (sync_player_field
 ## in peer_ready). Returns the entity id + the new weapon name + the requester's server-resolved name.
 func _validate_swap_weapon(sender_peer_id: int, _data: Dictionary) -> Dictionary:

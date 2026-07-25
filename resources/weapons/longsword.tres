@@ -5,7 +5,7 @@
 [resource]
 script = ExtResource("1_weapon")
 display_name = "longsword"
-attack_beats = 2.0
+recovery_beats = 2.0
 damage = 5
 windup_beats = 0.0
 atlas_coords = Vector2i(3, 0)

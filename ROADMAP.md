@@ -143,7 +143,7 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   approved by Jon+Jeff)*
   Weapons become designer objects and actions become the animation system's beats (DESIGN §2.3.7).
   Part 4 Q9 answered — unified occupancy, no separate cooldowns (orb-walking is the anti-pillar).
-  New `WeaponType` resource (gameplay: `attack_beats`/`damage`/`windup_beats`; animation: atlas +
+  New `WeaponType` resource (gameplay: `recovery_beats` — attack_beats until the v0.23.1 rename — /`damage`/`windup_beats`; animation: atlas +
   style + phase fractions + tween knobs); the client-side weapon RIG plays the three phases as
   NORMALIZED fractions of the stamped window (anticipation-cap doctrine: startup ≤ ~0.15 for the
   instant strike, so a telegraphed greatsword — `windup_beats > 0` — stays a `.tres` away). Two

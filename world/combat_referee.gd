@@ -997,22 +997,22 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# was rejected above). The occupant re-resolves at loose — this is best-effort observation, as in wind_up.
 	_move_referee.set_facing(sender_peer_id, (target_tile - shooter_tile).sign())
 	fire_before_attack(sender_peer_id, _move_referee.entity_at(target_tile), "shoot")
-	# Stamp-and-bake (§2.8): the FULL attack_beats window is the shooter's committed occupancy; the DRAW
-	# (windup_beats) looses the arrow partway through it. Both stamped ONCE now at the shooter's resolved pace.
-	var busy_sec := _recovery_duration_of(shooter)   # weapon.attack_beats × pace beat — the whole occupied window
+	# Stamp-and-bake (§2.8): the shooter's committed occupancy is DRAW + RECOVERY, ADDITIVE (v0.23.1 —
+	# ranged now composes exactly like melee: windup_beats is the draw before the loose, recovery_beats the
+	# after-loose tail; pre-rename, ranged attack_beats CONTAINED the draw and needed a misconfiguration
+	# guard against windup > attack ending the commit before the loose — additive composition makes that
+	# state unrepresentable, so the guard is gone). Both stamped ONCE now at the shooter's resolved pace.
+	# A windupsec= override stretches only the draw; the recovery tail rides on top unchanged.
 	var windup_sec := _windup_duration_of(shooter)   # weapon.windup_beats × pace beat — the draw before loose
 	if GameManager.debug_windup_override_sec > 0.0:
 		windup_sec = GameManager.debug_windup_override_sec
-	# Misconfiguration guard (GLM milestone review #2): a .tres with windup_beats > attack_beats (or a big
-	# windupsec= override) would end the commit BEFORE the loose — a free-action window while the draw timer
-	# still pends (Commitment Rule violation). The commit always covers the draw.
-	busy_sec = maxf(busy_sec, windup_sec)
+	var busy_sec := windup_sec + _recovery_duration_of(shooter)   # draw + after-loose tail = the occupied window
 	# LOOSE timer armed BEFORE commit_in_place (v0.17.1 review #8). Co-due SceneTreeTimers fire in CREATION
-	# order, and commit_in_place creates its OWN completion timer internally — so at the misconfiguration TIE
-	# (busy_sec == windup_sec: windup_beats >= attack_beats, or a windupsec= override) the loose must be the
-	# earlier-created timer, else the commit-completion promotes a pipelined move BEFORE the arrow launches.
-	# In normal play busy_sec > windup_sec (recovery tail), so the two land in different frames and order is
-	# moot — this only bites at the tie. The commit miss below is purely defensive: is_entity_moving was
+	# order, and commit_in_place creates its OWN completion timer internally — so at the TIE
+	# (busy_sec == windup_sec, reachable v0.23.1 only when recovery_beats is authored 0 — a zero after-loose
+	# tail) the loose must be the earlier-created timer, else the commit-completion promotes a pipelined move
+	# BEFORE the arrow launches. In normal play busy_sec > windup_sec (the recovery tail rides on top), so
+	# the two land in different frames and order is moot — this only bites at the tie. The commit miss below is purely defensive: is_entity_moving was
 	# checked at entry and nothing yields between (single-threaded host), so the commit cannot actually fail
 	# here and the loose is never orphaned. Host SceneTreeTimer (survives despawn by construction, like
 	# _resolve_windup). Capture PRIMITIVES only (never node refs): the round generation (review #4), shooter
@@ -1439,17 +1439,18 @@ func _pace_beat_sec(node: Node) -> float:
 	return GameManager.explore_beat_sec
 
 
-## The attacker's recovery tail (seconds): the equipped weapon's BASE recovery (attack_beats — its whole
-## occupied window, Part 4 Q9) plus the wielder's MELEE recovery bonus (v0.19.0), stamped at the ATTACKER's
-## resolved pace (§2.8.7: an engaged attacker recovers at the tactical beat; a player's bump tail stamps
-## tactical because _begin_bump armed the forcing window first). Bonus is melee-only + floored at 0. A
-## weaponless Player keeps attack_recovery_beats (vestigial fallback); a weaponless Monster has 0. The one
-## conversion for a bump tail (bump_duration_of) and an instant strike's busy (wind_up).
+## The attacker's recovery tail (seconds): the equipped weapon's BASE recovery (recovery_beats — renamed
+## from attack_beats v0.23.1, and now purely the post-strike/post-loose tail for melee AND ranged; no
+## separate cooldowns, Part 4 Q9) plus the wielder's MELEE recovery bonus (v0.19.0), stamped at the
+## ATTACKER's resolved pace (§2.8.7: an engaged attacker recovers at the tactical beat; a player's bump
+## tail stamps tactical because _begin_bump armed the forcing window first). Bonus is melee-only + floored
+## at 0. A weaponless Player keeps attack_recovery_beats (vestigial fallback); a weaponless Monster has 0.
+## The one conversion for a bump tail (bump_duration_of) and an instant strike's busy (wind_up).
 func _recovery_duration_of(node: Node) -> float:
 	if node is Entity and node.equipped_weapon != null:
 		var w: WeaponType = node.equipped_weapon
 		var bonus := 0.0 if w.range_tiles > 0 else _bonus_recovery_beats_of(node)
-		return maxf(0.0, w.attack_beats + bonus) * _pace_beat_sec(node)
+		return maxf(0.0, w.recovery_beats + bonus) * _pace_beat_sec(node)
 	if node is Player:
 		return node.attack_recovery_beats * _pace_beat_sec(node)
 	return 0.0

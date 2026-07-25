@@ -227,7 +227,7 @@ func _validate_use_item(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# same re-pack from its own mirror — the referee and the mirrors stay in lockstep without sending the whole bag.
 	bag.remove_at(slot)
 	# b. Stamp the committed window at the user's RESOLVED pace (beats × beat_sec — the shared stamp rule, so a
-	# use scales with tempo exactly like an attack's attack_beats or a step's glide).
+	# use scales with tempo exactly like an attack's recovery_beats or a step's glide).
 	var use_sec: float = item.use_beats * PaceReferee.beat_or_explore(_pace, sender_peer_id)
 	# c. Root the drinker for the WHOLE window through the universal busy record (from==to — no occupancy move,
 	# the Commitment Rule tail; the same record a bump/wind-up/shot uses). A false means the entity went busy
