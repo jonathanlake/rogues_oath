@@ -22,11 +22,40 @@ restart restores every authored value (no command saves to disk).
 | `/stun [me\|<monster>] [beats]` | Apply a STUN (v0.20.0). No arg / `me` / `self` stuns you; a monster display_name stuns the first live monster of that name. A numeric token = beats (default 3). Host-authoritative; the overhead icon shows on every peer. Stun blocks *starting* a new action AND — since v0.20.2 — INTERRUPTS an in-flight attack/cast (its resolve fizzles); movement is not interrupted. This is the one sanctioned exception to the Commitment Rule (DESIGN §2.11). |
 | `/config <alias>` | Apply a preset **bundle** of tunings in one command (v0.19.7). Aliases live in `GameManager.CONFIG_PRESETS`; a bad row rejects the whole `/config` naming that row. Rows come in three kinds: `w` (weapon) and `m` (monster) run through the same allowlist + clamp path as `/w`/`/m`; **`g` (game-level, v0.22.1)** is allowlisted by `GameManager.DEV_GAME_FIELDS` and dispatched per-field instead — today only `tactical_beat_sec`, which is snapped/clamped to the shared tempo band and then published as a normal **`set_tactical_tempo` broadcast**, so every peer adopts it exactly as a `[`/`]` nudge does (never a direct host-side write, which would leave clients' dials stale). Currently `1` = longsword & club `windup_beats 1`/`recovery_beats 3`, goblin `bonus_windup_beats 1`, **tactical beat `0.25`s** (halved from the 0.50s default, so the preset's 1-beat windup / 3-beat swing lands at 0.25s / 0.75s in a fight). Presets **clobber live values by design** — re-applying an alias restamps every row, including a tempo someone had nudged; a re-apply is idempotent (the `g` row skips the host validator's "no change" reject so it can't fail the bundle). `2` (v0.23.2) = the heavier-telegraph loadout: longsword/club `windup 3`/`recovery 4`, dagger `windup 2`/`recovery 4`, tactical beat `0.25`s. Add a loadout by adding an alias entry — no code change (a new `g` *field*, though, needs its dispatch branch). |
 | `/ai` | Toggle the **utility-AI score broadcast** (v0.22.0, host-side gate, default OFF). While on, every **committed** utility-brain decision posts an `ai_decision` event (personality, per-action scores, the action that actually committed) that ALL peers' F3 overlays render — one line per monster. Idle thinks and fully-declined walks post nothing (v0.22.1 — they drowned the traces), and `chosen` names what COMMITTED, so a higher score beside a different chosen action reads as "top pick declined" (e.g. a cornered flee) at a glance. Zero wire noise while off. The `/m` allowlist includes the 13 `utility_*`/`backup_radius_tiles` weights, so you can watch a retune move the numbers live; `ai_decision` is in the `eventlog=` allowlist for scripted runs. |
-| `/stamina` (alias `/mp`) | Toggle the **stamina experiment** (v0.24.0, renamed v0.24.1) live. OFF = byte-for-byte pre-experiment movement and AI (no pool mutation; sweat-drops clear); ON = every pool reseeds to full. Host-authoritative (all reads are host-side). Dials (v0.24.2 direct form; v0.24.3 additions): `/config regen_idle_beats 10`, `/config regen_interval_beats 4`, `/config exhausted_step_beats 5` (crawl speed), `/config monster_think_min_beats 1` / `monster_think_max_beats 6` (hesitation roll range), `/config stamina_refill_lockout_beats 20` (how long after leaving battle a re-entry still counts as the same fight — no refill), `/config stamina_max 3` (PLAYER pip baseline, 1–12; players add class `bonus_stamina` — rogue +1), `/config monster_stamina_max 3` (the MONSTERS' own independent pool, v0.24.7). Both land at the next battle entry, or /stamina off/on to reseed now. `/config swing_catches_adjacent 1|0` (v0.24.8): sticky swings — a sidestep that stays adjacent to the swinger is still caught at resolve; 0 = pure ground commit. `/config regen_refills_full 1|0` (v0.24.9): rest completion refills the whole pool at once. `/config passive_regen_beats N` (v0.24.9, 0=off): +1 stamina every N beats regardless of activity. |
-| `/winded` | Toggle **hard-stop exhaustion** (v0.24.6): on = 0 stamina refuses movement outright (distinct "winded" reject; players and monsters alike); off = the v0.24.1 slow crawl (`exhausted_step_beats`). Host-authoritative config flip, read at adjudication. |
+| `/stamina` (alias `/mp`) | Toggle stamina live — since **v0.26.0 stamina is a CORE RULE** (DESIGN §2.2.10, Jeff's verdict), so this is a **dev escape hatch**, not the revert switch it was while the mechanic was provisional. OFF = byte-for-byte pre-stamina movement and AI (no pool mutation; sweat-drops clear); ON = every pool reseeds to full. Host-authoritative (all reads are host-side). See the dial table below for every `/config` field — **note that every stamina dial has been a `player_`/`monster_` PAIR since v0.25.0**; the old unsplit names (`regen_idle_beats`, `regen_interval_beats`, `exhausted_step_beats`, `stamina_refill_lockout_beats`, `regen_refills_full`, `passive_regen_beats`) no longer exist and reject as unknown fields. |
+| `/winded` | Toggle **hard-stop exhaustion** (v0.24.6): on = 0 stamina refuses movement outright (distinct "winded" reject; players and monsters alike); off = the v0.24.1 slow crawl (`player_/monster_exhausted_step_beats`). One convergent toggle over the two `*_exhausted_blocks_movement` fields, which `/config` can also set per side. Since v0.26.0 the sweat-drop overhead cue means ONLY this mode — plain resting has its own recovery bar. |
 | `/mi <id> <field\|hp\|stamina\|stun\|kill\|reset> [v]` | **Per-INSTANCE monster tuning** (v0.25.0). `id` = entity id (negative; bare positive is negated). Stat fields run the same allowlist/clamps as `/m` but against a LAZY instance-local duplicate of the MonsterType — untouched monsters keep sharing the `.tres`, so `/m` stays global; `reset` rejoins the shared type. `hp`/`stamina` poke live referee state through the normal events; `kill` runs the real death path (drops, banter, all of it). |
 | `/snapshot` | Broadcast a `dev_snapshot` event carrying the full tuning truth (game fields, weapon + monster-type values, live instances with hp/stamina). The debug panel's refresh source; deferred verdict, so no log spam. |
 | `/help` | Print the command list (local only — never crosses the wire). |
+
+## Game-level `/config` fields (the direct `g` form)
+
+`/config <field> <value>` sets ONE game-level dial (v0.22.1's `g` kind, direct form v0.24.2) — the same
+allowlist (`GameManager.DEV_GAME_FIELDS`) and clamp table (`DevCommands._GAME_FIELD_SPECS`) the preset
+bundles run through, so a typed value can never poison the config past its clamp. Host-side write, read
+live at the referee's arm/stamp/resolve site; nothing persists past a restart. `/help` derives its list
+from the allowlist, so it is never stale — this table is the annotated version.
+
+| Field | Range | What it does |
+|---|---|---|
+| `tactical_beat_sec` | tempo band | The TACTICAL pace beat; published as a `set_tactical_tempo` broadcast (not a silent host write) so every peer adopts it exactly as a `[`/`]` nudge does. |
+| `stamina_max` | 1–12 | The PLAYER stamina pool (**default 1** since v0.26.0; classes may still add `bonus_stamina`, all 0 today). HUD pips only render when this is > 1. |
+| `monster_stamina_max` | 1–12 | The MONSTERS' own independent pool (default 1). |
+| `player_regen_idle_light_beats` | 0–100 | **v0.26.0** — the rest-to-recover idle wait for a LIGHT (or UNARMORED) class. Default 2.5. |
+| `player_regen_idle_medium_beats` | 0–100 | Same, MEDIUM armor weight. Default 3.0. |
+| `player_regen_idle_heavy_beats` | 0–100 | Same, HEAVY armor weight. Default 3.5. Heavier armor rests slower — that IS the armor cost curve (DESIGN §2.2.10 / §2.3.8). |
+| `monster_regen_idle_beats` | 0–100 | The monsters' single idle wait (default 3.5). *(These four replaced the one `player_regen_idle_beats` dial — the player side is no longer one number.)* |
+| `player_regen_interval_beats` / `monster_regen_interval_beats` | 0.25–100 | Beats per recovered point after the idle wait completes. **Moot at max 1** (the first tick fills the pool) but kept live-tunable. |
+| `player_exhausted_step_beats` / `monster_exhausted_step_beats` | 1–100 | Crawl speed at 0 stamina (the soft-exhaustion branch). |
+| `player_exhausted_blocks_movement` / `monster_exhausted_blocks_movement` | 0\|1 | Hard-stop at 0 instead of the crawl — the per-side halves of `/winded`. |
+| `player_refill_lockout_beats` / `monster_refill_lockout_beats` | 0–200 | How long after leaving battle a re-entry still counts as the same fight (no refill). |
+| `player_regen_refills_full` / `monster_regen_refills_full` | 0\|1 | Rest completion refills the WHOLE pool at once (no trickle). |
+| `player_passive_regen_beats` / `monster_passive_regen_beats` | 0–100 | +1 stamina every N beats regardless of activity; 0 = off. |
+| `monster_think_min_beats` / `monster_think_max_beats` | 0–30 | The visible-hesitation roll range at story-beat moments. |
+| `swing_catches_adjacent` | 0\|1 | Sticky swings (v0.24.8) — a sidestep that stays adjacent to the swinger is still caught at resolve; 0 = pure ground commit. |
+| `instant_abilities_enabled` | 0\|1 | **v0.26.0 experiment master toggle** (default ON) — Shield Block + Shadow Step (DESIGN §2.11.1). OFF = both abilities reject and nothing else anywhere behaves differently, i.e. the pre-v0.26 game exactly. This is the dial Jeff flips to answer the verdict question. |
+| `shield_block_cooldown_beats` | 0–600 | Knight Shield Block cooldown, charged on CONSUMPTION (default 30). |
+| `shadow_step_cooldown_beats` | 0–600 | Rogue Shadow Step cooldown (default 20). A blocked destination burns none of it. |
 
 ## The backtick debug panel (v0.25.0)
 
@@ -37,6 +66,12 @@ hp/stamina/stun/kill and per-instance stat forks = `/mi`). Every widget edit sub
 server-authoritative `dev_command` intent the typed command would (debounced 0.3s); displayed values
 come only from host-authored `dev_snapshot` events, so a client's panel shows host truth, never its
 own stale config. `debugpanel=1` is the autostart knob for scripted screenshots.
+
+**v0.26.0 rows.** The four REGEN-IDLE dials moved OUT of the paired players|monsters block into shared
+single-column rows — the player side is three ARMOR-WEIGHT bands (`LIGHT` also covers unarmored) plus
+the monsters' one, which a two-column row can't express; they stay adjacent so every idle wait reads as
+one group. The instants experiment added three more shared rows: the `instant abilities` toggle and the
+`shield block CD` / `shadow step CD` dials.
 
 ## Resolution notes
 
@@ -82,3 +117,15 @@ twice). Expected: exactly one `item_picked_up`, the rest `rejected pickup_item: 
 default anchor is the move anchor — so a run can walk onto a non-potion and then take it — and `pickupwait=`
 pins it. The `eventlog=` allowlist now carries `item_picked_up`, `item_pickup_full`, `item_pickup_available`,
 `item_used` and `equip_item`, which is how these assertions are made two-instance.
+
+`ability=<index>[,<index>...]` / `abilitywait=` / `abilitydelay=` script the 1-5 hotbar (0-based index)
+through the real `use_ability` intent from either role. The **list form is v0.26.0**, for the instants
+experiment: a COOLDOWN reject is only observable by pressing the SAME slot twice in one session
+(`ability=1,1`), and a reject reaches only the SENDER's stdout — so both presses have to come from one
+instance. `abilitywait=` is the first-fire delay, `abilitydelay=` the spacing between presses (default
+0.5s, tight enough to land the second press well inside any cooldown; widen it to watch one expire).
+
+`eventlog=` gained four actions in v0.26.0: **`stamina_recovery`** (the host-stamped armor-weight rest
+wait — the only way to assert 2.5 / 3.0 / 3.5 scaling in a scripted run) and the three instants
+observables **`blink`**, **`ability_used`** and **`ability_cooldown`** (`status_applied`/`status_expired`
+were already in, which is how the block's `"block"` status is asserted).

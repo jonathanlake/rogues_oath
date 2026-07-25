@@ -216,11 +216,25 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
 
 Not scheduled — pulled in when their moment comes:
 
-- **MP experiment follow-ups (v0.24.0, pending the Jon+Jeff playtest verdict)**: rogue
-  slip-through passive (needs a new movement seam in MoveReferee — the passive framework is
-  combat-only); monster MP counts in the F3 `/ai` overlay (two-line add to ai_decision);
-  the deferred two-instance verification matrix (recorded in the v0.24.0 plan file /
-  DESIGN §2.2.10); graduate-or-revert decision on the whole experiment.
+- **STAMINA follow-ups (v0.24.0 experiment → GRADUATED v0.26.0 by Jeff's verdict 2026-07-26; the
+  graduate-or-revert question is CLOSED and the living rule is DESIGN §2.2.10)**. Still open:
+  **confirm the units** — the recovery idle waits (light 2.5 / medium 3.0 / heavy 3.5 / monsters
+  3.5) are assumed BEATS because Jeff tuned beat-denominated panel dials; rogue slip-through
+  passive, IF still wanted now the rogue's edge is its lighter armor weight (needs a new movement
+  seam in MoveReferee — the passive framework is combat-only); monster stamina counts in the F3
+  `/ai` overlay (two-line add to ai_decision); the deferred two-instance verification matrix
+  (recorded in the v0.24.0 plan file), only insofar as it still describes shipped behavior.
+- **INSTANT ABILITIES — in-flight PROVISIONAL EXPERIMENT (v0.26.0, `instant_abilities_enabled`,
+  default ON)**: Shield Block (knight) + Shadow Step (rogue). Design + the exact suspensions live
+  in **DESIGN §2.11.1** — read that, not this bullet. Open: the **graduate-or-revert verdict** from
+  Jon+Jeff (yes ⇒ §2.1.3 and Part 4 Q9 get REWRITTEN, not excepted, and the cooldown model needs a
+  general home; no ⇒ the toggle goes off and the code comes out — nothing is built on top until
+  then); whether a shield should stop a magical smite (flagged for Jeff); whether Shadow Step
+  belongs on the rogue at all (Jon's assignment, Jeff left it unassigned).
+- **Weapon "attack range" (Jeff's v0.25.0 verdict: longsword 3-5, dagger 2-6, club 1-4)** —
+  deliberately NOT implemented (DESIGN Part 4 Q11). The likeliest reading is DAMAGE ranges, which
+  would overturn §2.3.1's deterministic combat; Jon asks Jeff what he meant before anything is
+  built.
 - Crit system + yellow damage numbers (v0.10.2 made player→enemy numbers white and
   deliberately reserved yellow for crits — Jon, 2026-07-21)
 - Class starting weapons (`PlayerClass.starting_weapon`; Jon deferred 2026-07-21 — Tab swap
@@ -324,6 +338,13 @@ Not scheduled — pulled in when their moment comes:
   resources do and nothing equips into a socket — the sockets are cosmetic. Its own milestone when
   it comes: what a worn item does, how it stacks with the held weapon, and the `[Off]`-hand shield
   the abilities track (§2.11) is waiting on. Coordinate with the build-system pass.
+  **PHASE 1 SHIPPED v0.26.0 at CLASS level** (DESIGN §2.3.8): `PlayerClass.armor_weight` +
+  `phys_damage_reduction` (rogue LIGHT/0.10, knight MEDIUM/0.25) give armor real mechanical weight
+  — percentage physical mitigation and a slower stamina recovery — without any item existing.
+  STILL PARKED here: armor/shield ITEMS and resources, the equip slots themselves, and the
+  weight-PROMOTION rule (a worn set's heaviest piece setting the wearer's band, so a knight in
+  leather rests light) — plus the envisioned spellcasting / mobility penalties the heavy band should
+  carry. Shield Block (§2.11.1) is likewise "the kite shield at class level" until this lands.
 - Ability-bar occlusion (v0.21.0, accepted at ship): the bottom-center bar covers ~10×2 tiles at the
   world frame's bottom edge — clicks pass through (`MOUSE_FILTER_IGNORE`), so it is occlusion only —
   and at very small window sizes it can overlap the bottom-left game-log CanvasLayer (identity-scaled

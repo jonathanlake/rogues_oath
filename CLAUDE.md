@@ -65,7 +65,10 @@ decision.
   against: *"does this let a player back out of a decision for free?"* If yes, redesign.
   ONE sanctioned exception: an opponent-imposed **STUN** interrupts an enemy's in-flight
   attack/cast (crowd control, not a self-take-back — the rule guards a player's OWN
-  commitment, not an enemy's). See DESIGN §2.11.
+  commitment, not an enemy's). See DESIGN §2.11. One further carve-out is **provisional and
+  toggled**: the v0.26.0 instants experiment (`instant_abilities_enabled`) suspends §2.1.3 for
+  Shield Block + Shadow Step only — DESIGN §2.11.1 is the spec and the verdict is pending; off =
+  the invariant holds everywhere. Do not extend it or build on it.
 
 - **Networking: server-authoritative intent → verdict, event-sync only** (DESIGN §2.5).
   Clients send commit requests; the server adjudicates and stamps duration/outcome. Gameplay

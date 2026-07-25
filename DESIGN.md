@@ -144,14 +144,14 @@ tactical-pace steps spend 1 stamina from a pool. **The pool is ONE point, both s
 verdict; the rogue's per-class +1 was dropped with it) — a tactical step is a single decision that
 spends everything, so the design question moved from "how many steps left" to "am I ready yet."
 What varies is RECOVERY: the rest-to-recover idle wait is picked from the mover's **armor weight**
-(§2.3 armor phase 1) — light/unarmored 2.5, medium 3.0, heavy 3.5, monsters 3.5 **beats**
+(§2.3.8 armor phase 1) — light/unarmored 2.5, medium 3.0, heavy 3.5, monsters 3.5 **beats**
 (*units pending Jeff confirmation — he tuned beat-denominated panel dials*). Heavier armor rests
 slower; that is the whole cost curve. The per-point interval and instant-refill dials survive
 live-tunable but are **moot at max 1** (the first tick fills the pool). At 0 stamina you can STILL
-move — the step commits as an exhausted **crawl** (`exhausted_step_beats`, default 5/tile; Jon
-v0.24.1: "very slow, never stopped") and the Commitment Rule does the punishing; `/winded` flips
-that side to a hard stop instead. Pool refills on battle entry (LOCKOUT-gated by
-`refill_lockout_beats` — a pace flicker back into the same fight keeps the earned pool); otherwise
+move — the step commits as an exhausted **crawl** (`player_`/`monster_exhausted_step_beats`, default
+5/tile; Jon v0.24.1: "very slow, never stopped") and the Commitment Rule does the punishing;
+`/winded` flips that side to a hard stop instead. Pool refills on battle entry (LOCKOUT-gated by
+`*_refill_lockout_beats` — a pace flicker back into the same fight keeps the earned pool); otherwise
 ONLY by resting, and any move or committed action restarts the clock. Attacks never spend; explore
 movement untouched; monsters ride the identical check and additionally roll 1–6 beats of visible
 hesitation (whole brain held) at story-beat moments — battle entry (a "!" alert pop, then "…"
@@ -290,6 +290,55 @@ revert switch it was while this was provisional.
    host-validated, broadcast, over a hardwired 2-weapon roster (`GameConfig.weapon_roster`). The
    real game costs beats to swap once inventory exists — **M5 owns acquisition and replaces the
    hardwired roster.** Monsters keep their MonsterType attack fields this pass (unify later).
+
+8. **§2.3.8 — Armor as class weight (PHASE 1, v0.26.0; Jeff's verdict 2026-07-26).** Armor is
+   **percentage mitigation**, not a to-hit modifier — §2.3.1 stands: every attack that resolves still
+   lands, it just lands for less. Two fields on `PlayerClass`: an **`armor_weight` band**
+   (unarmored / light / medium / heavy) and **`phys_damage_reduction`** (a 0–1 fraction absorbed).
+   Shipped: rogue LIGHT / 0.10 (leather), knight MEDIUM / 0.25 (chainmail — the kite shield is medium
+   too). MonsterType mirrors the reduction field (0 today) as the forward seam.
+   - **The kind split.** Reduction is **PHYSICAL only**. `smite` is magic and bypasses it (armor is
+     not a ward — a future magic-resistance stat is its own field), and **`admin` damage is exempt**
+     so `/mi hp` / `/mi kill` stay exact — a tuning tool that lies is worse than no tool.
+   - **Where it applies.** One host-side seam inside `apply_damage`, AFTER the attacker's passive
+     `modify_damage` chain and BEFORE the HP subtraction: a hit is priced (weapon base → wielder
+     bonus → passives, e.g. backstab) and only then armored. **Rounds half-up**, keeps the existing
+     0 floor, and read LIVE from the DEFENDER's class so a `/class` swap retunes the very next hit.
+     A reduced hit carries an **`armor` tag** on its event — §2.3.4 requires the mitigation be
+     visible, never a silent number change.
+   - **The tradeoff philosophy (Jeff).** Heavy armor is not free defense: the *cost* is TEMPO. The
+     armor weight band drives the stamina rest-to-recover wait (§2.2.10 — light 2.5, medium 3.0,
+     heavy 3.5), so a heavier class acts less often, which since v0.26.0 is the primary way classes
+     differ in movement. **Envisioned, not built:** the same band carrying spellcasting penalties (a
+     heavy-armored caster fumbling) and further mobility penalties — the field exists as that hook.
+   - **Phase 1 means CLASS level only.** Real armor ITEMS, the equipment slots they go in, and the
+     **weight-promotion rule** (the heaviest worn piece sets the wearer's band, so a knight who strips
+     to leather rests light) are all **future items-milestone material** — see §2.10 and the ROADMAP
+     equipment-slot bullet. Nothing here presumes an item exists; when items land, they promote the
+     band and supply the reduction, and these class fields become the unarmored baseline.
+
+9. **§2.3.9 — Recovery beats only on CONTACT (v0.26.0; Jeff's verdict 2026-07-26).** A committed
+   attack still owns its whole window when it LANDS — windup plus the planted recovery tail, exactly
+   as before (Part 4 Q9's unified occupancy is untouched, and so is the v0.19.0 same-window
+   double-hit fix). But when the same attack **whiffs** — the telegraphed tile was vacated, the
+   ability found nothing, the smite's target dodged — the remaining recovery is RELEASED at
+   resolution: you paid for the miss with the miss, not with a nap on top of it. Both sides,
+   symmetric: a whiffing goblin re-thinks that same frame.
+   - **Why.** The recovery tail is the *cost of having connected*; charging it for a swing at empty
+     air double-punished a mistake and made whiffs read as bugs ("why is he standing there?").
+     Dodging still WORKS — the attacker loses the hit — it just no longer freezes the attacker
+     longer than the dodger.
+   - **This is not a Commitment Rule leak.** The release is the referee's, at the host's own resolve
+     point, decided by the world's state (was anything there?) — no input cancels anything, and the
+     actor cannot choose to whiff for tempo (whiffing forfeits the damage). Rule-of-thumb check:
+     "can a player back out of a decision for free?" No — the decision already resolved.
+   - **Exceptions, each deliberate.** A **heal always contacts** (it has a target by construction).
+     A **stun-fizzled** action keeps its full window — the stun IS the punishment (§2.11), and
+     shortening it would reward being crowd-controlled. **Ranged keeps its full draw + tail** — the
+     arrow is an independent effect with its own timeline (§2.9), so the loose always "happened."
+   - **Presentation.** A whiff event carries a zero gameplay duration but still hands the client a
+     present-only swing time, so the weapon rig plays a complete arc — §2.3.4 requires the miss to
+     look like a miss, not like a dropped input.
 
 ### 2.4 Periodic Effects (DoTs / HoTs / regen / buffs)
 
@@ -555,7 +604,10 @@ manual G pickup as a host-adjudicated instant intent, and the config-driven 20-s
 
 **Still envisioned:** drop tables + the designer `.tres`-only authoring gate (= milestone **M5**,
 which owns that bar — this track points at it, doesn't restate its Done=); the EQUIPMENT slot model
-(wearables that actually equip — its own milestone, coordinate with the build-system pass); more
+(wearables that actually equip — its own milestone, coordinate with the build-system pass; **armor's
+phase 1 shipped WITHOUT items in v0.26.0 as class-level weight + mitigation, §2.3.8** — this track
+still owns the items, the slots, and the weight-promotion rule that would make a worn set set the
+wearer's band); more
 item categories (buffs, keys, scrolls, throwables); the open v1 questions — item stacking,
 drop/discard, numbers/cues (Feel=). Two known rough edges live with it: an item that lands
 *underneath* a standing player produces no arrival event and so no "press G" hint (G still works —
@@ -940,6 +992,13 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    feel pass: once the beat-cost contrast reads well, turn AoO back on so stepping away from a
    committed attacker carries its intended risk (and re-test the telegraphed `windup_beats > 0`
    heavy weapon in that configuration — the one where dodging finally costs something).
+   **Two v0.26.0 amendments, both recorded at their own sites:** (a) the recovery tail is charged
+   only when the attack CONTACTS — a whiff releases it at resolve (§2.3.9); the answer above is
+   unchanged for every landed action, and no cooldown was added. (b) The "no separate cooldowns,
+   EVER" clause is **suspended for exactly two abilities inside the `instant_abilities_enabled`
+   experiment** (§2.11.1) — an instant has no window to pay with, so it pays with a timer beside the
+   timeline. That suspension is provisional: if the experiment graduates, this answer needs
+   REWRITING (a general home for the cooldown model), not another exception bolted on.
 
 10. **Fixed world rect — how much world a player sees must not depend on their window.
     ANSWERED (Jeff, 2026-07-22): approved as proposed, camera recenter included.
@@ -998,6 +1057,23 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
     future server-side vision system trims visibility inside the rect, at which point this
     cap becomes pure presentation and data-level fairness takes over.
 
+11. **What did "attack range" mean? [BLOCKS IMPLEMENTATION of that line item]** Jeff's v0.25.0
+    playtest verdict (2026-07-26) listed an **"attack range" per weapon: longsword 3-5, dagger 2-6,
+    club 1-4** — and the phrase has at least three readings, one of which contradicts a settled
+    decision, so **nothing was built** in v0.26.0 (Jon's call, 2026-07-25). The readings:
+    (a) **DAMAGE ranges** — a random roll between the two numbers. This is the likeliest reading
+    (the spreads are damage-shaped: the dagger's 2-6 is swingier than the longsword's 3-5) and it
+    **overturns §2.3.1's deterministic combat** — the RF3-derived decision that outcome variety comes
+    from position, not dice. If that is what he wants, it is a pillar-level conversation and would
+    also need §2.3.6's RNG budget applied (low-magnitude, never erasing a correct decision).
+    (b) **REACH in tiles** — how far away the weapon can strike. That would be a real new mechanic
+    (multi-tile melee, and the numbers as min-max reach imply a dead zone up close, dagger 2-6 being
+    unable to hit an adjacent body, which reads wrong for a dagger).
+    (c) Something else entirely — beats, or a per-weapon damage band he wants tunable rather than
+    rolled.
+    **Ask Jeff which, then design.** Related, already answered nearby: ranged reach is
+    `WeaponType.range_tiles` (§2.9) and damage is a single deterministic `damage` number (§2.3.7),
+    so whichever reading wins, the change lands in `WeaponType` and is designer-editable.
 
 ---
 

@@ -9,6 +9,61 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.26.0 (2026-07-26) — THE JEFF VERDICT: stamina graduates, class armor, recovery only on
+  contact, and an instants experiment.** Driven end-to-end by **Jeff's overnight v0.25.0 playtest
+  verdict (2026-07-26)** — he tuned the backtick panel all night and sent back a design ruling.
+  **STAMINA IS NO LONGER AN EXPERIMENT** (DESIGN §2.2.10): the pool is **ONE point** on both sides
+  (`stamina_max` / `monster_stamina_max` = 1; the rogue's class `+1 bonus_stamina` was dropped — a
+  "+1" doubles a binary budget), so the question stopped being "how many steps do I have left" and
+  became "am I ready yet." What varies now is RECOVERY, keyed to **armor weight**: light/unarmored
+  rest 2.5, medium 3.0, heavy 3.5, monsters 3.5 — **units assumed BEATS** (Jeff tuned
+  beat-denominated panel dials; flagged for him to confirm). New presentation, players AND monsters:
+  a spent body goes semi-transparent and grows a thin green **recovery bar** beside it that fills
+  over the host-stamped wait and ends in a two-pulse ready blink (new `stamina_recovery` event
+  carries the duration; the bar restarts whenever activity restarts the clock). The **sweat drop now
+  means one thing only — hard-stop winded** (`/winded` mode), so "resting" and "cannot move" can
+  never read alike, and HUD **pips only appear when max > 1**. `/stamina` survives as a dev escape
+  hatch, not a revert switch. `/config 2` **dropped its regen-idle rows** — those waits are the
+  shipped defaults now, and a preset row would clobber Jeff's numbers with an older experimental one
+  every time someone pressed it. **RECOVERY BEATS ONLY ON CONTACT** (both sides): a whiffed
+  windup, ability or smite now RELEASES its recovery tail at resolve (`duration_sec 0` on the event;
+  the rig still plays a present-only swing arc), so missing costs you the swing but not the nap —
+  and a whiffing goblin re-thinks the same frame (brains wake on a new `busy_released` signal). A
+  hit keeps its full window byte-identically (the v0.19.0 double-hit fix is untouched); heals always
+  "contact"; the bow keeps its full draw + tail (the arrow has its own timeline); a stun-fizzle keeps
+  its window, because the stun is the punishment. **CLASS ARMOR, PHASE 1** (DESIGN §2.3.8): a
+  `PlayerClass` now carries an `armor_weight` band (unarmored/light/medium/heavy) and a
+  `phys_damage_reduction` fraction — rogue LIGHT / 0.10 (leather), knight MEDIUM / 0.25 (chainmail;
+  the kite shield is medium too). Reduction applies host-side at ONE seam, after the attacker's
+  passive chain, rounds half-up, keeps the 0 floor, and is **physical only** — smite is magic and
+  `admin` pokes (`/mi hp`, `/mi kill`) stay exact, or the tuning tools would lie. A reduced hit
+  carries an `armor` tag so the feedback rule still holds. MonsterType mirrors the field (0 today) as
+  the forward seam. Real armor ITEMS, slots and the weight-promotion rule stay the parked equipment
+  milestone. **SHAMAN RETUNE** (all three variants): heal 10, smite 10, both casts 10 beats,
+  recovery 2 — the artillery hits hard and telegraphs long. **INSTANT ABILITIES — A TOGGLEABLE
+  EXPERIMENT** (DESIGN §2.11.1, `instant_abilities_enabled`, default ON; OFF = the pre-v0.26 game
+  exactly): **Shield Block** (knight slot 2) raises a one-shot guard that negates the next blow
+  whole, cooldown charged on CONSUMPTION not on the raise (30 beats); **Shadow Step** (rogue slot 2)
+  teleports one tile directly opposite your facing, usable mid-action and interrupting your own
+  committed action (20 beats) — a blocked destination rejects and burns NO cooldown. Both are
+  suspensions, and only inside the toggle: **§2.1.3** ("no active dodge, block, or escape input") and
+  **Part 4 Q9** ("no separate cooldowns, ever") are on hold pending a Jon+Jeff verdict — if the game
+  reads better with them, those rules get rewritten properly; if not, the toggle goes off and the
+  code comes out. Rulings recorded: a stun blocks both instants, a potion is WASTED by a blink
+  mid-drink (mirrors killed-mid-drink), a blink looses no arrow and lands no swing (a per-entity
+  interrupt generation every deferred resolve re-checks at fire), facing is unchanged, no AoO and no
+  walk-over pickup on a blink, `admin` damage is exempt from the block, smite IS blockable (flagged
+  for Jeff), and Shadow Step was assigned to the rogue by **Jon** — Jeff left it unassigned (also
+  flagged). **DELIBERATELY NOT IN:** Jeff's weapon "attack range" numbers (longsword 3-5, dagger 2-6,
+  club 1-4) — the most likely reading is DAMAGE ranges, which would overturn §2.3.1's deterministic
+  combat, so Jon is asking him what he meant before anything is built (recorded as Part 4 Q11).
+  TOOLING: `/config player_regen_idle_light_beats` / `_medium_` / `_heavy_`,
+  `/config instant_abilities_enabled 1|0`, `/config shield_block_cooldown_beats`,
+  `/config shadow_step_cooldown_beats`, all four idle dials + all three instants dials on the
+  backtick panel, the harness knobs `ability=<i>[,<i>...]` / `abilitydelay=` (a cooldown reject is
+  only observable by pressing the same slot twice from ONE instance), and `blink` /
+  `ability_used` / `ability_cooldown` / `stamina_recovery` in the `eventlog=` allowlist.
+
 - **v0.25.0 (2026-07-25/26, overnight) — THE TUNING OVERHAUL: the backtick debug panel, the full
   player/monster stamina split, and per-instance monster tuning (Jon's brief).** Press **`** for
   an inspector-style DEBUG TUNING PANEL on any peer — every dial the slash commands reach, as
