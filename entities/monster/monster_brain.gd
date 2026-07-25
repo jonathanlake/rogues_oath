@@ -567,6 +567,8 @@ func _build_utility_context(my_tile: Vector2i, targets: Array, engaged: bool) ->
 		"heal_target_id": heal_target_id,
 		"heal_worst_frac": allies["worst_frac"],
 		"heal_injured_count": allies["injured_count"],
+		"heal_far_frac": allies["far_worst_frac"],
+		"heal_far_tile": allies["far_worst_tile"],
 		"smite_available": _monster_type.has_smite_ability(),
 		"smite_tile": smite_tile,
 		"smite_tile_valid": smite_tile_valid,
@@ -594,6 +596,8 @@ func _scan_allies(my_tile: Vector2i) -> Dictionary:
 	var has_backup := false
 	var injured_count := 0
 	var worst_frac := 1.0
+	var far_worst_frac := 1.0
+	var far_worst_tile := Vector2i.ZERO
 	var backup_radius: int = _monster_type.backup_radius_tiles
 	var heal_radius: int = _monster_type.heal_range_tiles
 	for tile in _referee.monster_tiles(_entity_id):
@@ -607,15 +611,24 @@ func _scan_allies(my_tile: Vector2i) -> Dictionary:
 			continue
 		if cheb <= backup_radius:
 			has_backup = true
-		if cheb <= heal_radius:
-			var ally_max: int = _combat.max_hp_of(id)
-			# A 0 max means the node is gone — never divide by it.
-			if ally_max > 0:
-				var frac := float(_combat.hp_of(id)) / float(ally_max)
-				if frac < 1.0:
+		var ally_max: int = _combat.max_hp_of(id)
+		# A 0 max means the node is gone — never divide by it.
+		if ally_max > 0:
+			var frac := float(_combat.hp_of(id)) / float(ally_max)
+			if frac < 1.0:
+				if cheb <= heal_radius:
 					injured_count += 1
 					worst_frac = minf(worst_frac, frac)
-	return { "has_backup": has_backup, "injured_count": injured_count, "worst_frac": worst_frac }
+				elif frac < far_worst_frac:
+					# Wounded ally BEYOND heal range but inside the scan (v0.23.2, Jon): the heal candidate
+					# can now score this patient and the executor WALKS toward it instead of shrugging into
+					# a smite — "if heal won the decision, move to your buddy." Worst-first, tile carried so
+					# the walk has a destination; the per-step re-think re-scores every tile (deterministic,
+					# so heal keeps winning until the patient is in range, healed, or dead).
+					far_worst_frac = frac
+					far_worst_tile = tile
+	return { "has_backup": has_backup, "injured_count": injured_count, "worst_frac": worst_frac,
+			"far_worst_frac": far_worst_frac, "far_worst_tile": far_worst_tile }
 
 
 ## TIE-BREAK (Jeff: close calls shouldn't be robotic). If the top two candidates land within
@@ -653,6 +666,16 @@ func _execute_candidate(candidate: Dictionary, my_tile: Vector2i, targets: Array
 	var data: Dictionary = candidate["data"]
 	var action := str(candidate["action"])
 	if action == UtilityScorer.ACTION_HEAL:
+		# OUT-OF-RANGE patient (v0.23.2): heal won the decision but the wounded ally is beyond
+		# heal_range_tiles — commit ONE STEP toward it instead of casting (Jon: "move TOWARDS his buddy").
+		# The glide boundary re-thinks and the deterministic score re-wins per tile until the patient is in
+		# range (then this branch's in_range case casts), healed by someone else, or dead (score collapses
+		# to whatever is next). A blocked/refused step falls through to the next candidate like any decline.
+		if not bool(data.get("in_range", true)):
+			var toward := _first_step_toward(my_tile, [data.get("approach_tile", Vector2i.ZERO)])
+			if toward == Vector2i.ZERO:
+				return false
+			return _referee.submit_monster_intent(_entity_id, toward)
 		var heal_wait: float = _combat.heal_cast(
 				_entity_id, int(data.get("target_id", 0)), _monster_type.heal_amount,
 				_monster_type.heal_cast_beats, _monster_type.heal_recovery_beats)

@@ -114,6 +114,18 @@ const CONFIG_PRESETS := {
 		# "tempo" is a label, not a resource name.
 		["g", "tempo", "tactical_beat_sec", 0.25],
 	],
+	# Preset 2 (v0.23.2, Jon): the heavier-telegraph loadout — every weapon gets a LONG windup and a fat
+	# recovery tail (dagger's shorter windup keeps it the fast option), on the same 0.25s tactical clock.
+	# At that beat: longsword/club 0.75s telegraph + 1.0s tail; dagger 0.5s + 1.0s.
+	"2": [
+		["w", "longsword", "windup_beats", 3.0],
+		["w", "longsword", "recovery_beats", 4.0],
+		["w", "club", "windup_beats", 3.0],
+		["w", "club", "recovery_beats", 4.0],
+		["w", "dagger", "windup_beats", 2.0],
+		["w", "dagger", "recovery_beats", 4.0],
+		["g", "tempo", "tactical_beat_sec", 0.25],
+	],
 }
 
 ## Designer contract: resources/game_config.tres is where Jeff flips playtest toggles

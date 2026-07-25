@@ -97,8 +97,15 @@ func _exit_tree() -> void:
 
 ## Keep the LAST utility-AI decision per monster (v0.22.0). Every other action on the pipe is ignored here —
 ## this overlay is a diagnostics surface, not a game-state consumer (main.gd and game_log own playback).
+## F5 round reset (v0.23.2, Jon): the dev_reset_round broadcast reaches every peer, so CLEAR the table —
+## the old round's monsters despawned and their ids will be reused by the fresh spawns; without the clear
+## the panel kept showing last round's decisions beside this round's (observed in testing).
 func _on_net_event(event: Dictionary) -> void:
-	if str(event.get("action", "")) != "ai_decision":
+	var action := str(event.get("action", ""))
+	if action == "dev_reset_round":
+		_ai_decisions.clear()
+		return
+	if action != "ai_decision":
 		return
 	var data: Dictionary = event.get("data", {})
 	_ai_decisions[int(data.get("entity_id", 0))] = data

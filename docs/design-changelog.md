@@ -9,7 +9,24 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
-- **v0.23.1 (2026-07-24) — `attack_beats` → `recovery_beats` (Jon's rename), and ranged becomes ADDITIVE.**
+- **v0.23.2 (2026-07-24) — `/config 2`, faster smites, the Mender WALKS to its patient, and the F3 AI
+  table clears on F5.** Four quick items from Jon's testing. (1) **Preset `2`** — the heavier-telegraph
+  loadout: longsword/club `windup 3`/`recovery 4`, dagger `windup 2`/`recovery 4` (the fast option keeps a
+  shorter windup), tactical beat 0.25s. (2) **Smite casts 6 → 4 beats** on all three shamans — the red
+  danger tile's lifetime IS the cast (`smite_cast_beats`, answered for Jon: it is not the weapon-style
+  windup), so it now lingers 2s at default tactical / 1s at config tempo. `/m <shaman> smite_cast_beats`
+  live-tunes it. (3) **Heal-approach** — a wounded brained ally beyond `heal_range_tiles` but inside the
+  scan (`backup_radius_tiles`) now prices the HEAL candidate on the same quadratic curve, and when heal
+  wins the decision the executor commits ONE STEP toward the patient instead of casting (previously the
+  score was 0 out of range and the Mender shrugged into a smite — exactly what Jon observed). The per-step
+  glide-boundary re-think re-scores deterministically, so the decision re-wins tile by tile until the
+  patient is in range (cast), healed by someone else, or dead (score collapses to the next candidate) —
+  Jon's own predicted loop, and it is precisely how the brain already worked. In-range patients always
+  outrank the walk. NOT trace-verified this release (time-boxed; the walk branch is parse-clean and
+  logic-reviewed) — the next `/ai` session will show it as `chosen: heal` while the Mender glides, the
+  unambiguous tell. (4) **F3 stale rows** — the overlay's per-monster decision table now clears on the
+  `dev_reset_round` broadcast; it previously kept last round's monsters beside the fresh spawns' (their
+  negative ids get reused, so the stale rows even looked plausible). — `attack_beats` → `recovery_beats` (Jon's rename), and ranged becomes ADDITIVE.**
   Jon, from play: "windup_beats fits its name; attack_beats feels like a recovery animation after the swing"
   — and the code agreed: the strike has been INSTANT at the window's start since v0.7.0 (the field was
   always the after-strike tail), the referee's own helper was already named `_recovery_duration_of`, and

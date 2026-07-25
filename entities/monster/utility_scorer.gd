@@ -109,22 +109,34 @@ static func sort_by_score(candidates: Array) -> Array:
 
 # ── Private methods ───────────────────────────────────────────────────────────
 
-## HEAL: 0 unless an injured ally is in heal_range_tiles. Else the QUADRATIC missing-HP curve
-## `utility_heal_weight × (1 - worst_frac)²`, plus utility_heal_per_injured_bonus for each ADDITIONAL
-## injured ally (the first is already priced by the curve). The square is the whole point: an ally at 90%
-## scores ~1 of 100 and one at 25% scores ~56, so a healer tends the dying and ignores scratches without
-## anyone authoring a threshold.
+## HEAL: 0 unless a wounded BRAINED ally is known to the scan. IN heal_range_tiles, the QUADRATIC
+## missing-HP curve `utility_heal_weight × (1 - worst_frac)²`, plus utility_heal_per_injured_bonus for
+## each ADDITIONAL injured ally (the first is already priced by the curve). The square is the whole point:
+## an ally at 90% scores ~1 of 100 and one at 25% scores ~56, so a healer tends the dying and ignores
+## scratches without anyone authoring a threshold.
+## OUT of heal range but inside the scan (backup_radius_tiles), the SAME curve prices the worst far
+## patient and `data.in_range=false` carries its tile — the executor WALKS a step toward it instead of
+## casting (v0.23.2, Jon: "if heal won the decision, move TOWARDS his buddy" — previously the healer
+## shrugged and smote). No per-injured bonus on the far branch (one patient, one destination); the
+## per-step re-think re-scores every tile, deterministically, so the decision re-wins until the patient
+## is in range, healed, or dead. An in-range patient always outranks the walk (the walk exists to CREATE
+## the in-range case).
 static func _score_heal(ctx: Dictionary, type: MonsterType) -> Dictionary:
 	var candidate := { "action": ACTION_HEAL, "score": 0.0,
-			"data": { "target_id": int(ctx.get("heal_target_id", 0)) } }
-	if not bool(ctx.get("heal_available", false)):
+			"data": { "target_id": int(ctx.get("heal_target_id", 0)), "in_range": true } }
+	if bool(ctx.get("heal_available", false)):
+		# Clamped: an over-heal / bad max would otherwise push the fraction outside [0,1] and invert the curve.
+		var worst_frac := clampf(float(ctx.get("heal_worst_frac", 1.0)), 0.0, 1.0)
+		var missing := 1.0 - worst_frac
+		var extra_injured := maxi(0, int(ctx.get("heal_injured_count", 1)) - 1)
+		candidate["score"] = maxf(0.0, type.utility_heal_weight * missing * missing
+				+ type.utility_heal_per_injured_bonus * float(extra_injured))
 		return candidate
-	# Clamped: an over-heal / bad max would otherwise push the fraction outside [0,1] and invert the curve.
-	var worst_frac := clampf(float(ctx.get("heal_worst_frac", 1.0)), 0.0, 1.0)
-	var missing := 1.0 - worst_frac
-	var extra_injured := maxi(0, int(ctx.get("heal_injured_count", 1)) - 1)
-	candidate["score"] = maxf(0.0, type.utility_heal_weight * missing * missing
-			+ type.utility_heal_per_injured_bonus * float(extra_injured))
+	var far_frac := clampf(float(ctx.get("heal_far_frac", 1.0)), 0.0, 1.0)
+	if far_frac < 1.0 and type.has_heal_ability():
+		var far_missing := 1.0 - far_frac
+		candidate["score"] = maxf(0.0, type.utility_heal_weight * far_missing * far_missing)
+		candidate["data"] = { "in_range": false, "approach_tile": ctx.get("heal_far_tile", Vector2i.ZERO) }
 	return candidate
 
 
