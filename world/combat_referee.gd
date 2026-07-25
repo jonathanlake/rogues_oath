@@ -556,6 +556,9 @@ func heal_cast(caster_id: int, target_id: int, amount: int, cast_beats: float, r
 ## pipe (which re-guards liveness + clamps to max, and posts the `heal` event: green +N popup, HP readout, log
 ## line). If that ally died during the channel, apply_heal's own is-alive guard no-ops cleanly — the ally's
 ## `died` line already told the story. source_name is the healer's, so the heal's flavor names its caster.
+##
+## No recovery release here (v0.26.0 recovery-on-contact): a heal ALWAYS "contacts" — it commits to an ALLY,
+## not to ground, so there is no whiff outcome to release on. The healer keeps its full cast + recovery record.
 func _resolve_heal_cast(caster_id: int, target_id: int, amount: int) -> void:
 	if not is_alive(caster_id):
 		return
@@ -716,7 +719,8 @@ func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int, recovery
 			return
 	# Dodged / empty ground — a distinct WHIFF (the target moved off in time). target_tile rides so the miss
 	# cue lands on the committed tile; kind "smite" so the log reads "fizzles — dodged!" not a melee miss.
-	# recovery_sec rides so the caster shows its spent tell on a dodge too (review #2).
+	# RECOVERY ONLY ON CONTACT (v0.26.0): a dodged smite stamps duration_sec 0.0 (no spent tell) and the
+	# caster's recovery tail is released below — the dodge robs the cast of its follow-through, not just its damage.
 	NetEvents.post_event("attack", {
 		"attacker_id": caster_id,
 		"attacker_name": _name_of(caster),
@@ -728,8 +732,11 @@ func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int, recovery
 		"target_max": 0,
 		"kind": "smite",
 		"whiff": true,
-		"duration_sec": recovery_sec,
+		"duration_sec": 0.0,
 	}, caster_id)
+	# LAST, after the fizzle event is on the wire (same ordering rule as the other two release sites).
+	# `recovery_sec` is unused on this branch by design — it was baked into the one cast+recovery record.
+	_move_referee.finish_busy_early(caster_id)
 
 
 # ── Active abilities (v0.20.0, the 1-5 hotbar — a player-triggered melee strike + stun) ──────
@@ -800,7 +807,8 @@ func _resolve_ability(attacker_id: int, target_tile: Vector2i, damage: int, stun
 			apply_stun(occ_id, stun_beats)
 			return
 	# Whiff — the target moved off / died. A distinct outcome (§2.3.4); kind "ability" + verb so the log reads
-	# "<verb> hits nothing". recovery_sec rides so the caster still shows its spent tell.
+	# "<verb> hits nothing". RECOVERY ONLY ON CONTACT (v0.26.0): duration_sec 0.0 (no spent tell) and the
+	# committed window is released below, so a missed ability leaves its user free at once.
 	NetEvents.post_event("attack", {
 		"attacker_id": attacker_id,
 		"attacker_name": _name_of(attacker),
@@ -812,9 +820,12 @@ func _resolve_ability(attacker_id: int, target_tile: Vector2i, damage: int, stun
 		"target_max": 0,
 		"kind": "ability",
 		"whiff": true,
-		"duration_sec": recovery_sec,
+		"duration_sec": 0.0,
 		"verb": verb,
 	}, attacker_id)
+	# LAST, for the same ordering reason as _resolve_windup's release: the miss event precedes any `glide_to`
+	# a promoted pipelined step posts. `recovery_sec` goes unused on this branch by design.
+	_move_referee.finish_busy_early(attacker_id)
 
 
 ## The ACTIVE ABILITY at `idx` on this node's class, or null (v0.20.0). Duck-typed off `player_class.active_abilities`
@@ -1045,6 +1056,11 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 ## Loose the arrow at the end of the draw (host-only, from the commit timer). Builds the flight path NOW,
 ## broadcasts projectile_launched, and starts the per-tile arrival chain. Everything is captured PRIMITIVES
 ## (no node refs), so a shooter that despawns MID-FLIGHT can't crash the arrow (its damage/identity are baked).
+##
+## RANGED IS OUT OF SCOPE for recovery-on-contact (v0.26.0): the bow keeps its full draw + recovery commit,
+## because the arrow resolves on its OWN timeline — a hit/miss can land many beats after the shooter's window
+## already closed, so there is no window left to release at the moment contact is known. Melee/casts release
+## their tail at resolve (see MoveReferee.finish_busy_early); the bow deliberately does not.
 func _loose_arrow(round_gen: int, shooter_id: int, shooter_tile: Vector2i, target_tile: Vector2i,
 		damage: int, weapon_name: String, tiles_per_beat: float) -> void:
 	# Round-generation guard FIRST (v0.17.1 review #4): a draw in flight when F5 reset the round must loose
@@ -1286,8 +1302,9 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 			return
 
 	# Whiff: swing into empty/vacated ground. Distinct outcome — no damage, hp_after -1 (absent),
-	# target_tile carried so the client renders the swing toward the committed tile. recovery_sec
-	# still rides so the instant-strike attacker shows its recovery tell even on a (rare) whiff.
+	# target_tile carried so the client renders the swing toward the committed tile. RECOVERY ONLY ON
+	# CONTACT (v0.26.0, Jeff's verdict): a swing that touched nothing owes no recovery beats, so the
+	# event stamps duration_sec 0.0 (no spent tell to play) and the busy window is released below.
 	var whiff_data := {
 		"attacker_id": attacker_id,
 		"attacker_name": _name_of(attacker),
@@ -1299,14 +1316,30 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 		"target_max": 0,
 		"kind": kind,
 		"whiff": true,
-		"duration_sec": recovery_sec,
+		"duration_sec": 0.0,
 	}
 	# Weapon stamp on the WHIFF too (v0.9.3): a whiffed weapon swing still animates the rig arc, so a
 	# missed strike plays the weapon (it composes with the monster's whiff bowstring, exactly as a
 	# landed hit's swing composes with play_attack). A weaponless attacker stamps no field.
+	#
+	# `swing_sec` (v0.26.0, present-only alongside the weapon stamp): the rig ARC's visual length, now
+	# split from the gameplay `duration_sec` because recovery-on-contact zeroed the latter on a whiff.
+	# Without it the rig's play_swing no-ops on a 0 window and the melee WINDUP POSE — which has no
+	# expiry and is handed over BY play_swing — would stay parked raised forever after every miss. So
+	# the miss still animates its full arc (§2.3.4: a whiff is a visible outcome) while the attacker is
+	# mechanically free at once. Only this whiff carries it; the ability / smite whiffs stamp no weapon.
 	if attacker is Entity and attacker.equipped_weapon != null:
 		whiff_data["weapon"] = attacker.equipped_weapon.display_name
+		whiff_data["swing_sec"] = recovery_sec
 	NetEvents.post_event("attack", whiff_data, attacker_id)
+	# Release the recovery remainder LAST (v0.26.0), after this resolve's own bookkeeping and after the
+	# event is on the wire — finish_busy_early can promote a pipelined step and post a `glide_to`, and the
+	# miss must be the earlier seq. `recovery_sec` is deliberately unused on this branch: it was baked into
+	# the single windup+recovery record at commit (the v0.19.0 double-hit fix), and dropping the tail is
+	# exactly what "recovery only on contact" means. The CONTACT branches above return before this and keep
+	# the full record byte-identically. A stunned / dead attacker returned at the top and keeps its window
+	# too (the stun IS the punishment; a dead attacker's record was torn down by clear_entity).
+	_move_referee.finish_busy_early(attacker_id)
 
 
 ## Resolve a lethal hit SYNCHRONOUSLY (decision 7, Q1 placeholder). Erase HP, then erase the dead

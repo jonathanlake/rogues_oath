@@ -317,6 +317,35 @@ func commit_in_place(entity_id: int, duration_sec: float) -> bool:
 	return true
 
 
+## Host-only (v0.26.0 recovery-on-contact): release an in-place BUSY record RIGHT NOW, ahead of its
+## own completion timer. The only callers are CombatReferee's WHIFF resolves — a swing that touched
+## nothing owes no recovery beats, so the remainder of the window is dropped the moment the miss is
+## adjudicated. Returns false when there is nothing releasable.
+##
+## Commitment Rule standing (§2.1; Jeff 2026-07-26, Jon approved): this REDEFINES the committed
+## duration, it does not cancel a commitment. A swing commits to its WINDUP unconditionally; only the
+## RECOVERY portion is now conditional on contact. No input path reaches here — it is called solely
+## from the server's own resolve functions, so no player can shorten their own window by pressing
+## anything, and nobody backs out of a decision (the swing already happened and missed).
+##
+## Guard: the record must exist AND be a from==to in-place commit. A real glide (from != to) is NEVER
+## released early — finishing one ahead of time would jump the mover's arrival forward, which IS a
+## redirect. Bump swings, wind-ups, casts and drinks are all from==to, so the whiff sites are covered.
+##
+## Body: run _finish_glide synchronously with the record's own token — its NORMAL completion, including
+## PROMOTING a pipelined pending step (intended: a whiff means the held next move starts sooner). The
+## original create_timer callback still fires later and no-ops on the token / missing-record stale-guard,
+## so nothing ever double-finishes.
+func finish_busy_early(entity_id: int) -> bool:
+	var rec = _gliding.get(entity_id)
+	if rec == null:
+		return false
+	if rec["from"] != rec["to"]:
+		return false
+	_finish_glide(entity_id, int(rec["token"]))
+	return true
+
+
 ## Host-only (v0.24.0 stamina experiment): reset an entity's stamina pool to its lazily-resolved
 ## max. Wired by Main to PaceReferee.tactical_entered (battle entry = fresh pool) and used as the
 ## seed on entity enter. Bumping the generation kills any regen chain from a previous engagement,

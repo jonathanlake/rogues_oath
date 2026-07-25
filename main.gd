@@ -1054,8 +1054,12 @@ func _handle_attack_event(event: Dictionary) -> void:
 	# player, the training dummy) carries no weapon field, so its existing cues stay untouched. It rides
 	# the SAME stamped duration_sec as the recovery tell, so the choreography auto-aligns to the
 	# occupied window; the rig normalizes the phase fractions inside it.
+	# EXCEPT on a recovery-on-contact WHIFF (v0.26.0): the host zeroes duration_sec there (no recovery
+	# owed for touching nothing), so a whiffed swing carries its arc length separately as `swing_sec`.
+	# Fall back to duration_sec when absent, which is every landed hit — unchanged choreography.
 	if attacker is Entity and data.has("weapon") and str(data.get("weapon", "")) != "":
-		attacker.play_weapon_swing(dir, float(data.get("duration_sec", 0.0)))
+		var swing_sec := float(data.get("swing_sec", data.get("duration_sec", 0.0)))
+		attacker.play_weapon_swing(dir, swing_sec)
 	# Local attacker's swing-busy mirror for a bump / kick / player WINDUP (decision 2; v0.17.1 kick; v0.19.3
 	# windup) — players only (positive id), so commit_in_place is Player surface: deliberate narrow cast, not
 	# cruft. A kick is a bump-shaped commit (a ranged weapon's point-blank strike). A player MELEE WINDUP
