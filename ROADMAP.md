@@ -298,9 +298,13 @@ Not scheduled — pulled in when their moment comes:
   separate `rally_radius_tiles` export is wanted before any monster needs them to differ more than the
   Warren brute's does; (2) the chase model inverts tank order (a slow anvil arrives LAST — fast allies
   lead every charge), so a hold-position/guard-post behavior is prerequisite for heavy frontliners; the
-  authored-but-unused `speed_lumbering` tier (1.5 glide-beats) waits on it. **FEEL queue (next Jon+Jeff
-  session, `/ai` + F3 live):** red-tile dodge cadence vs double artillery (scripted non-dodgers wipe —
-  dodging IS the survival skill), the Warren at config-1 tempo, whether the brute-trap reads.
+  authored-but-unused `speed_lumbering` tier (1.5 glide-beats) waits on it. **FUNCTION debt (v0.23.2,
+  first thing next harness session):** the Mender's heal-approach walk shipped parse-clean but NOT
+  trace-verified — assert `chosen: heal` in an `ai_decision` while the Mender is gliding toward an
+  out-of-range wounded ally, then the cast once in range (an isolated god-host run with the patient
+  pre-pulled beyond heal range 5 does it). **FEEL queue (next Jon+Jeff session, `/ai` + F3 live):**
+  red-tile dodge cadence vs double artillery (scripted non-dodgers wipe — dodging IS the survival
+  skill), the Warren at config-1/config-2 tempo, whether the brute-trap reads, the 4-beat smite window.
 - **AUTOPLAY bot** (Zorbus "Behind the Scenes", research doc §G.4 — promoted to a real bullet v0.22.1): a
   player-policy driver in debug.gd (`bot=1` — approach, attack, drink when low, through the REAL intent
   pipe) looped headless overnight, grepping for invariant violations (stuck busy records, desyncs,
