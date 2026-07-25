@@ -8,3 +8,5 @@ script = ExtResource("1_class")
 display_name = "knight"
 atlas_coords = Vector2i(0, 1)
 active_abilities = Array[ActiveAbility]([ExtResource("2_bash")])
+armor_weight = 2
+phys_damage_reduction = 0.25

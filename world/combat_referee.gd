@@ -301,6 +301,24 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 		# below has no ceiling, so a buggy passive returning a negative must never heal a target here.
 		amount = maxi(0, int(ctx["amount"]))
 		tags = ctx["tags"]
+	# ARMOR MITIGATION (v0.26.0 armor phase 1, Jeff's verdict 2026-07-26). Placed AFTER the attacker's
+	# passive chain and BEFORE the HP subtraction — the attacker's bonuses price the blow, then the
+	# DEFENDER's armor turns part of it aside, which is the only order where a backstab-then-armor and
+	# an armor-then-backstab can't disagree. PHYSICAL only (_is_physical_kind): a smite is magical and
+	# an "admin" poke must stay exact (/mi kill against an armored knight has to actually kill).
+	# The reduction is read LIVE off the defender each hit (never cached at spawn), so a /class swap
+	# retunes the very next hit. Round HALF-UP so a 5-damage hit at 0.25 reads as 4 taken, not 3 — the
+	# player-facing number a designer tunes against. maxi(0, …) keeps apply_damage's floor invariant.
+	# The "armor" tag rides the existing attack event payload ONLY when the number actually changed, so
+	# mitigation is visible rather than a silent nerf (feedback rule §2.3.4); the client/log rendering
+	# of that tag lands in a later chunk — the tag itself is on the wire now.
+	if _is_physical_kind(kind):
+		var reduction := _phys_reduction_of(target)
+		if reduction > 0.0 and amount > 0:
+			var reduced := maxi(0, int(floor(amount * (1.0 - reduction) + 0.5)))
+			if reduced != amount:
+				amount = reduced
+				tags.append("armor")
 	var new_hp: int = maxi(0, int(_hp[target_id]) - amount)
 	_hp[target_id] = new_hp
 	var target_name := _name_of(target)
@@ -1553,6 +1571,40 @@ func _bonus_damage_of(node: Node) -> int:
 	if node is Monster and node.monster_type != null:
 		return node.monster_type.bonus_damage
 	return 0
+
+
+## The DEFENDER's physical damage reduction as a fraction 0..1 (v0.26.0 armor phase 1), read LIVE at
+## the apply_damage mitigation seam. Duck-typed off the node exactly as MoveReferee._stamina_max_of
+## reads `player_class`: a PLAYER answers from its class (`player_class.phys_damage_reduction`), a
+## MONSTER from its authored type, and anything else (a null node, an untyped future entity) reads 0.0
+## — armor is opt-in, so an unknown defender is simply unarmored. Null-safe at every hop: a player
+## whose class hasn't been equipped yet falls through to 0.0 rather than crashing a hit. Clamped
+## defensively even though the export is range-bound, because /class can point at any authored .tres.
+func _phys_reduction_of(node: Node) -> float:
+	if node == null:
+		return 0.0
+	var pc = node.get("player_class")
+	if pc != null:
+		# Null-checked get (same shape as _ability_of): a hand-authored .tres pointing at some other
+		# Resource type would answer null here rather than crash the hit on a missing property.
+		var reduction = pc.get("phys_damage_reduction")
+		if reduction == null:
+			return 0.0
+		return clampf(float(reduction), 0.0, 1.0)
+	if node is Monster and node.monster_type != null:
+		return clampf(node.monster_type.phys_damage_reduction, 0.0, 1.0)
+	return 0.0
+
+
+## Is this damage `kind` PHYSICAL — i.e. does armor apply to it (v0.26.0)? Everything is physical
+## EXCEPT the two documented exemptions:
+##  - "smite" — a MAGICAL ground spell; plate turns aside a club, not a curse (flagged for Jeff if he
+##    wants a separate magic-resist dial later).
+##  - "admin" — the dev pokes (/mi hp, /mi kill) must stay EXACT: an armored knight has to die to
+##    "/mi kill" and land on the number "/mi hp" asked for, or the tuning tools lie.
+## Kept as a predicate (not an inline check) so every future kind decides its side here, in one place.
+func _is_physical_kind(kind: String) -> bool:
+	return kind != "smite" and kind != "admin"
 
 
 ## Wielder MELEE windup bonus in BEATS (v0.19.0): monsters only (MonsterType.bonus_windup_beats) — a player

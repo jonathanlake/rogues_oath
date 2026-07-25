@@ -1,6 +1,12 @@
 class_name PlayerClass
 extends Resource
 
+## ARMOR WEIGHT class (v0.26.0, Jeff's verdict 2026-07-26 — armor phase 1 at the CLASS level; real
+## equipment items + slots stay the parked milestone). The weight band a class's gear sits in, kept
+## as an enum (not a number) so a designer picks from a fixed vocabulary and every consumer maps the
+## band to its own dial rather than inventing a curve. Serialized in a .tres as its ordinal int.
+enum ArmorWeight { UNARMORED, LIGHT, MEDIUM, HEAVY }
+
 ## Designer-editable player-class template (v0.10.0, DESIGN §2 "add a .tres, not a script"). One
 ## PlayerClass per class; a non-coder adds a class or re-skins one by editing / dropping a .tres under
 ## resources/classes/, never by touching code. Today it carries only IDENTITY + APPEARANCE — the sprite
@@ -50,6 +56,24 @@ extends Resource
 ## seed/reset, never cached at spawn) so a mid-session /class change or knob turn takes effect at
 ## the next battle entry. 0 = baseline; rogue ships +1 (Jeff: the rogue is the mobile class).
 @export var bonus_stamina: int = 0
+
+## The class's ARMOR WEIGHT band (v0.26.0 armor phase 1). UNARMORED (default) = the safe empty state
+## for a fresh PlayerClass. Today it drives the stamina REST-TO-RECOVER idle wait (DESIGN §2.2.10 —
+## heavier armor rests slower; the per-weight dials land in a later chunk of this version), and it is
+## deliberately the hook for the ENVISIONED spell / mobility penalties that a weight band should carry
+## (a heavy-armored caster fumbling, a light class keeping its speed). Resolved HOST-side and LAZILY
+## at each read, never cached at spawn, so a mid-session /class change lands at the next read — the
+## same rule bonus_stamina follows. Shipped: rogue LIGHT, knight MEDIUM.
+@export var armor_weight: ArmorWeight = ArmorWeight.UNARMORED
+
+## PHYSICAL damage reduction as a FRACTION absorbed (v0.26.0 armor phase 1): 0.0 (default) = no armor,
+## 0.25 = a quarter of every physical hit turned aside, 1.0 = immune. Applied HOST-side at the ONE
+## apply_damage mitigation seam (CombatReferee._phys_reduction_of), AFTER the attacker's passive
+## modify_damage chain and BEFORE the HP subtraction, so a backstab is priced then armored. PHYSICAL
+## only: "smite" (magical) and "admin" (/mi hp pokes, /mi kill) pass through unreduced. Read LIVE on
+## every hit from the DEFENDER's class, so a /class swap retunes the very next hit. Rounds half-up and
+## keeps apply_damage's 0 floor. Shipped: rogue 0.10, knight 0.25.
+@export_range(0.0, 1.0) var phys_damage_reduction: float = 0.0
 
 ## The class's WEAPON ROSTER (v0.17.0) — the loadout this class carries and Tab-cycles through. EMPTY (the
 ## default) = use the GLOBAL GameConfig.weapon_roster fallback (the shipped dagger↔longsword cycle); NON-EMPTY

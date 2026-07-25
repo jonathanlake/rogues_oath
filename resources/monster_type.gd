@@ -68,6 +68,16 @@ extends Resource
 ## CombatReferee._recovery_duration_of and by MonsterBrain's post-attack pacing (via wind_up's return).
 @export var bonus_recovery_beats: float = 0.0
 
+## PHYSICAL damage reduction as a FRACTION absorbed (v0.26.0 armor phase 1) — the monster mirror of
+## PlayerClass.phys_damage_reduction, so "armor" means one thing on both sides of the fight. 0.0
+## (default) = no reduction, a no-op for every shipped monster; 0.25 = a quarter of each physical hit
+## turned aside; 1.0 = immune to physical. LIVE read path: CombatReferee._phys_reduction_of duck-types
+## the DEFENDER at the apply_damage mitigation seam, so a value set here takes effect on the next hit.
+## PHYSICAL only — "smite" (magical) and "admin" (dev hp pokes / kills) pass through unreduced. This is
+## the designer seam for armored monsters (a plated knight-monster, a stone golem): set it in a .tres,
+## no code. Deliberately NOT in the /m dev allowlist yet — it earns a live dial once a monster uses it.
+@export_range(0.0, 1.0) var phys_damage_reduction: float = 0.0
+
 ## Movement speed tier — a shared GlideSpeed resource, same mechanism players use. The referee
 ## reads glide_beats from here when it stamps each monster step's duration.
 @export var glide_speed: GlideSpeed
