@@ -340,7 +340,17 @@ func _dev_cmd_item(sender_peer_id: int, args: Array[String], by: String) -> Dict
 func _dev_cmd_config(args: Array[String], by: String) -> Dictionary:
 	var known := ", ".join(PackedStringArray(GameManager.CONFIG_PRESETS.keys()))
 	if args.is_empty():
-		return { "ok": false, "reason": "usage: /config <alias> (known: %s)" % known }
+		return { "ok": false, "reason": "usage: /config <alias> | /config <field> <value> (aliases: %s; fields: %s)" % [
+				known, ", ".join(PackedStringArray(GameManager.DEV_GAME_FIELDS))] }
+	# DIRECT game-field form (v0.24.2): `/config regen_idle_beats 5` sets ONE game-level field live,
+	# without a preset. Before this, the DEV_GAME_FIELDS dials were only reachable through preset table
+	# rows — allowlisted but untypeable (found while writing the stamina playtest instructions). Same
+	# per-field dispatch/clamps as a preset's g row; "live" is the alias label in its reject lines.
+	if args.size() >= 2 and str(args[0]) in GameManager.DEV_GAME_FIELDS:
+		var direct_verdict := _dev_config_game_row("live", str(args[0]), str(args[1]), by)
+		if not bool(direct_verdict.get("ok", false)):
+			return direct_verdict
+		return { "ok": true, "data": { "line": "%s set %s." % [by, str(direct_verdict.get("note", args[0]))] } }
 	var alias: String = args[0]
 	if not GameManager.CONFIG_PRESETS.has(alias):
 		return { "ok": false, "reason": "unknown config '%s' (known: %s)" % [alias, known] }

@@ -9,6 +9,14 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.24.2 (2026-07-25) — `/config <field> <value>`: the stamina dials are now actually typeable.**
+  The v0.24.x game-level dials (`regen_idle_beats`, `regen_interval_beats`, `exhausted_step_beats`,
+  and `tactical_beat_sec`) were allowlisted but reachable only through preset table rows — `/config`
+  accepted nothing but an alias, so the "tune it live in the first session" instruction in the
+  v0.24.1 release notes was untypeable (caught while explaining the syntax to Jon). `/config` now
+  also takes a direct field form (`/config regen_idle_beats 5`), dispatched through the same
+  per-field validator and clamps a preset g-row uses. Presets unchanged.
+
 - **v0.24.1 (2026-07-25) — STAMINA rename + the exhausted crawl (Jon's tweak, same session).**
   "Movement points" is now **stamina** everywhere (config fields, class stat, event name, HUD,
   command — `/stamina`, with `/mp` kept as an alias). Bigger change: running dry no longer STOPS
