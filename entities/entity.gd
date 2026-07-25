@@ -44,6 +44,11 @@ const _WINDUP_FALLBACK_TINT := Color(1.6, 1.6, 1.6)
 # hurt flash, the cool recovery dim, and the bright windup flash, so "drinking" never reads as any of them.
 const _DRINK_TINT := Color(0.45, 1.4, 0.55)
 
+# The SPRITE alpha held while an entity is resting off a spent stamina pool (v0.26.0, play_recovering):
+# semi-transparent = "spent, not ready". Written to the SPRITE's own modulate, never the root's, so it
+# composes with the root-modulate tint cues above instead of fighting them for the same slot.
+const _RECOVERING_ALPHA := 0.55
+
 # ── Signals ──────────────────────────────────────────────────────────────────
 
 ## Emitted the instant a glide begins (before the tween runs). Player wires it to block its own
@@ -156,6 +161,15 @@ var _exhausted_fx_tween: Tween = null
 # the icon band so it can coexist with dots / "!" / sweat. Own slot — a new bark replaces.
 var _banter_label: Label = null
 var _banter_tween: Tween = null
+# SIDE RECOVERY BAR (v0.26.0): a thin vertical fill beside the body while this entity rests off a spent
+# stamina pool, driven by the host's `stamina_recovery` event (its stamped duration IS the fill time).
+# Own slot like the other cues (a re-arm replaces). NO generation token here, unlike the think/cast/stun
+# cues: this bar has no self-clearing local timer to go stale — the HOST owns when recovery ends (the
+# `exhausted` off edge), so replace-on-recall is the only lifecycle it needs. The READY BLINK on
+# completion runs on its own tween so it can't be killed by a bar teardown mid-pulse.
+var _recovery_fx: Node2D = null
+var _recovery_fx_tween: Tween = null
+var _ready_blink_tween: Tween = null
 
 
 func _ready() -> void:
@@ -560,6 +574,102 @@ func play_exhausted() -> void:
 	_exhausted_fx_tween.parallel().tween_property(drop, "modulate:a", 0.25, 0.55).from(0.9)
 	_exhausted_fx_tween.tween_property(drop, "position:y", -46.0, 0.0)
 	_exhausted_fx_tween.tween_property(drop, "modulate:a", 0.9, 0.1)
+
+
+## RECOVERY presentation (v0.26.0, DESIGN §2.2.10 graduation — §2.3.4 distinct outcome): this entity's
+## stamina pool sits at ZERO and the host has armed a rest-to-recover wait of exactly `duration_sec`
+## (stamp-and-bake — the bar fills over the host's own span, never a locally re-derived beat count).
+## Two reads, both deliberately about the BODY rather than the icon band: the sprite goes SEMI-
+## TRANSPARENT ("spent" at a glance, even off-screen-edge or in a crowd) and a thin vertical bar beside
+## it fills bottom-up as the wait elapses ("ready in…"). Players AND monsters — a resting goblin is
+## readable intel, and the pool is binary now, so "how long until it can act again" is the whole story.
+##
+## Placement: the bar sits at the sprite's SIDE (x ≈ 14, centred on the body), deliberately clear of the
+## overhead icon band — sweat drop (10,-46), think dots / cast / stun (-50), banter (-74) — so a
+## recovering entity can still be thinking, stunned or talking without the cues colliding.
+##
+## Own fx slot + own generation, like every other cue here: a re-call REPLACES (the host re-posts the
+## event on every re-arm, i.e. every time activity restarts the clock, and the bar must restart with it).
+## A non-positive duration falls back to a static full-height bar rather than a zero-length tween, so a
+## degenerate dial can never leave the "spent" alpha with no visible explanation.
+func play_recovering(duration_sec: float) -> void:
+	_clear_recovery_fx()
+	var holder := Node2D.new()
+	holder.position = Vector2(14, -18)  # right of the body, vertically centred on it
+	add_child(holder)
+	_recovery_fx = holder
+	# Dark backing (2 x 24 px) so the fill reads against any floor colour.
+	var backing := Polygon2D.new()
+	backing.polygon = PackedVector2Array([
+		Vector2(-1, 0), Vector2(1, 0), Vector2(1, 24), Vector2(-1, 24)])
+	backing.color = Color(0.08, 0.09, 0.12, 0.75)
+	holder.add_child(backing)
+	# The fill: a full-height rect anchored at the BOTTOM (scale:y grows upward from y = 24), so one
+	# scale tween is the whole animation — no per-frame redraw, no polygon rebuild.
+	var fill := Polygon2D.new()
+	fill.polygon = PackedVector2Array([
+		Vector2(-1, -24), Vector2(1, -24), Vector2(1, 0), Vector2(-1, 0)])
+	fill.color = Color(0.35, 0.85, 0.45, 0.95)  # ready-green — deliberately NOT the sweat cyan
+	fill.position = Vector2(0, 24)
+	holder.add_child(fill)
+	# SPENT alpha on the SPRITE (not the root modulate): the root slot is owned by the flash/tint cues
+	# (hurt, recovery tint, drink), so writing the sprite's own alpha lets a hit still flash red over a
+	# recovering body without either cue clobbering the other.
+	if _sprite != null:
+		_sprite.modulate.a = _RECOVERING_ALPHA
+	if duration_sec <= 0.0:
+		fill.scale = Vector2(1.0, 1.0)
+		return
+	fill.scale = Vector2(1.0, 0.0)
+	_recovery_fx_tween = create_tween()
+	_recovery_fx_tween.tween_property(fill, "scale", Vector2(1.0, 1.0), duration_sec)\
+			.set_trans(Tween.TRANS_LINEAR)
+
+
+## End the recovery presentation (v0.26.0): drop the bar, restore the sprite's alpha, and play a brief
+## READY BLINK — two quick alpha pulses — so "I can act again" is its own positive tell rather than the
+## mere absence of a cue (§2.3.4). Driven by the host's `exhausted` OFF edge (the regained point), and
+## idempotent: safe to call on an entity that was never recovering (no bar, no blink queued twice) and
+## from the same teardown paths that clear the sweat-drop.
+func finish_recovering() -> void:
+	var was_recovering := _recovery_fx != null
+	_clear_recovery_fx()
+	if _sprite == null:
+		return
+	_sprite.modulate.a = 1.0
+	if not was_recovering:
+		return
+	if _ready_blink_tween != null and _ready_blink_tween.is_valid():
+		_ready_blink_tween.kill()
+	_ready_blink_tween = create_tween()
+	for _i in 2:
+		_ready_blink_tween.tween_property(_sprite, "modulate:a", 0.45, 0.05)
+		_ready_blink_tween.tween_property(_sprite, "modulate:a", 1.0, 0.05)
+
+
+## Tear down the recovery bar + its tween (v0.26.0). Idempotent; shared by play_recovering's replace
+## and finish_recovering. Deliberately does NOT touch the sprite alpha — the two callers want
+## different endings (replace keeps the spent look, finish restores + blinks).
+func _clear_recovery_fx() -> void:
+	if _recovery_fx_tween != null and _recovery_fx_tween.is_valid():
+		_recovery_fx_tween.kill()
+	_recovery_fx_tween = null
+	if _recovery_fx != null and is_instance_valid(_recovery_fx):
+		_recovery_fx.queue_free()
+	_recovery_fx = null
+
+
+## WHIFF feedback (§2.3.4) — a committed strike that resolved against empty ground. Lifted from Monster
+## to Entity in v0.26.0: a PLAYER can whiff too (a telegraphed melee windup, or an active ability whose
+## target stepped off), and §2.3.4 forbids an outcome being silently swallowed — before this, main.gd
+## warned and rendered NOTHING for a player whiff. The base cue is the same bowstring lunge a landed
+## strike uses plus the swing sound at normal pitch: on a whiff the swing STAYS audible (the v0.6.0
+## audio-trim rule suppresses the attacker's sound only on a LANDED hit), so "missed" reads audibly
+## apart from "landed". Monster OVERRIDES this to use its own designed whiff stream.
+func play_whiff(dir: Vector2i) -> void:
+	_bowstring(dir)
+	_attack_audio.pitch_scale = 1.0
+	_attack_audio.play()
 
 
 ## Overhead BANTER (v0.24.4): show one short spoken line — small but readable (outlined, so it

@@ -972,10 +972,13 @@ func _log_net_event(event: Dictionary) -> void:
 	# battle runs (per-think score tables, personality, chosen action), so it must reach this file.
 	# v0.24.x: stamina + thinking joined the set — the stamina experiment's spends/regen ticks and
 	# the monster hesitation roll are only assertable in scripted runs if they reach this file.
+	# v0.26.0: stamina_recovery joined the set — the armor-weight rest wait is only assertable in a
+	# scripted run if the host's stamped duration reaches this file.
 	if not (action in ["glide_to", "windup", "heal_cast", "smite_cast", "heal", "attack", "died",
 			"status_applied", "status_expired",
 			"item_picked_up", "item_pickup_full", "item_pickup_available", "item_used", "equip_item",
-			"ai_decision", "stamina", "thinking", "exhausted", "banter", "dev_snapshot"]):
+			"ai_decision", "stamina", "stamina_recovery", "thinking", "exhausted", "banter",
+			"dev_snapshot"]):
 		return
 	_event_log_file.store_line("%9.2f  p%-5d  %-15s  %s" % [
 		float(event.get("server_time", 0.0)), int(event.get("peer", 0)), action, str(event.get("data", {}))])

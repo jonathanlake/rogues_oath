@@ -28,8 +28,6 @@ extends CanvasLayer
 const _PAIRED_DIALS := [
 	{ "label": "stamina max", "p": "stamina_max", "m": "monster_stamina_max",
 		"min": 1, "max": 12, "step": 1 },
-	{ "label": "regen idle (beats)", "p": "player_regen_idle_beats", "m": "monster_regen_idle_beats",
-		"min": 0, "max": 100, "step": 0.5 },
 	{ "label": "regen interval (beats)", "p": "player_regen_interval_beats",
 		"m": "monster_regen_interval_beats", "min": 0.25, "max": 100, "step": 0.25 },
 	{ "label": "regen refills full", "p": "player_regen_refills_full",
@@ -45,7 +43,19 @@ const _PAIRED_DIALS := [
 ]
 
 ## Shared single-column dials.
+## The four REGEN-IDLE dials (v0.26.0) live here rather than in the paired block above because the
+## player side is no longer ONE number to pair against the monster one: it is three ARMOR-WEIGHT bands
+## (the light dial also covers UNARMORED), so a two-column row can't express it. The monsters' single
+## dial sits alongside them as the fourth row, keeping every idle wait in one visual group.
 const _SHARED_DIALS := [
+	{ "label": "regen idle LIGHT (beats)", "field": "player_regen_idle_light_beats",
+		"min": 0, "max": 100, "step": 0.5 },
+	{ "label": "regen idle MEDIUM (beats)", "field": "player_regen_idle_medium_beats",
+		"min": 0, "max": 100, "step": 0.5 },
+	{ "label": "regen idle HEAVY (beats)", "field": "player_regen_idle_heavy_beats",
+		"min": 0, "max": 100, "step": 0.5 },
+	{ "label": "regen idle MONSTERS (beats)", "field": "monster_regen_idle_beats",
+		"min": 0, "max": 100, "step": 0.5 },
 	{ "label": "tactical beat (sec)", "field": "tactical_beat_sec", "min": 0.05, "max": 1.0, "step": 0.05 },
 	{ "label": "think min (beats)", "field": "monster_think_min_beats", "min": 0, "max": 30, "step": 1 },
 	{ "label": "think max (beats)", "field": "monster_think_max_beats", "min": 0, "max": 30, "step": 1 },

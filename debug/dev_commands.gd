@@ -23,7 +23,11 @@ extends Node
 # GameManager.DEV_GAME_FIELDS (the allowlist /help derives from) — an allowlisted field missing
 # here AND missing a bespoke branch fails loudly in _dev_config_game_row.
 const _GAME_FIELD_SPECS := {
-	"player_regen_idle_beats": { "min": 0.0, "max": 100.0 },
+	# v0.26.0: the single player idle dial split into the three ARMOR-WEIGHT bands (the light one also
+	# covers UNARMORED); monsters keep their one dial.
+	"player_regen_idle_light_beats": { "min": 0.0, "max": 100.0 },
+	"player_regen_idle_medium_beats": { "min": 0.0, "max": 100.0 },
+	"player_regen_idle_heavy_beats": { "min": 0.0, "max": 100.0 },
 	"monster_regen_idle_beats": { "min": 0.0, "max": 100.0 },
 	"player_regen_interval_beats": { "min": 0.25, "max": 100.0 },
 	"monster_regen_interval_beats": { "min": 0.25, "max": 100.0 },

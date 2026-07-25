@@ -27,6 +27,14 @@ extends Node
 # (full border), so it can never be a real resting tile — an unambiguous "not found".
 const _NO_TILE := Vector2i(0, 0)
 
+## Emitted host-side the instant an in-place BUSY record is released EARLY (finish_busy_early — a
+## whiffed swing owes no recovery beats, v0.26.0). Past-tense, fire-and-forget: this referee never
+## reaches sideways to a brain, so Main wires it (the same rule PaceReferee.tactical_entered follows)
+## to wake the affected monster's AI at the moment its window actually ended. Without it a monster
+## paces itself on the FULL quoted windup+recovery and idles out beats the referee just refunded —
+## the players' own input revalidates naturally, so this is a monster-side seam only.
+signal busy_released(entity_id: int)
+
 ## Fallback per-step glide time in BEATS used only when a mover has no GlideSpeed resource
 ## assigned — a misconfiguration guard, warned once. The real value comes from the mover's tier.
 ## Converted to seconds at the mover's resolved pace (× beat) at stamp time like every authored beat value.
@@ -343,6 +351,11 @@ func finish_busy_early(entity_id: int) -> bool:
 	if rec["from"] != rec["to"]:
 		return false
 	_finish_glide(entity_id, int(rec["token"]))
+	# The window is genuinely over NOW — tell whoever paced themselves on the quoted duration (a
+	# monster's brain; see the signal's doc). Emitted AFTER _finish_glide so any promoted pipelined
+	# step is already broadcast and the listener reads a settled record (is_entity_moving is true in
+	# that case, which is exactly the "don't re-think, you're moving" answer the brain wants).
+	busy_released.emit(entity_id)
 	return true
 
 
@@ -429,6 +442,19 @@ func note_activity(entity_id: int) -> void:
 		return
 	var idle_sec: float = _regen_idle_beats_of(entity_id) * PaceReferee.beat_or_explore(_pace, entity_id)
 	get_tree().create_timer(idle_sec).timeout.connect(_stamina_regen_tick.bind(entity_id, generation))
+	# RECOVERY EVENT (v0.26.0, §2.3.4): an entity resting at ZERO is the read that matters now the pool
+	# is binary (max 1) — "am I ready yet" replaced "how many steps left", so the wait itself gets a cue.
+	# STAMP-AND-BAKE: the host posts the EXACT seconds it just armed the timer with, so every peer's bar
+	# fills over the same span the host will actually take to grant the point (no client-side beat math,
+	# no re-derivation if a dial or the tempo moves mid-wait — §2.8.2). Posted for BOTH kinds (unlike the
+	# player-only `stamina` pool event): a resting monster reads as recovering too.
+	# EVERY re-arm re-posts, deliberately — activity restarted the clock, so the client bar restarts with
+	# it. note_activity fires ONLY on accepted glides and this entity's OWN committed windows, never on
+	# incoming damage, so being hit can never restart someone's recovery bar (GLM-verified; keep it so).
+	if int(pool["points"]) <= 0:
+		NetEvents.post_event("stamina_recovery", {
+			"entity_id": entity_id, "duration_sec": idle_sec,
+		})
 
 
 ## Host-only: erase ALL of a dead entity's occupancy bookkeeping in ONE synchronous pass (decision 7)
@@ -960,7 +986,9 @@ func _on_entity_entered(node: Node) -> void:
 
 
 ## Stamina experiment (v0.24.0; bonus-shape v0.24.5; player/monster split v0.24.7): an entity's
-## pool max — PLAYERS = config.stamina_max + their class bonus_stamina (rogue +1); MONSTERS =
+## pool max — PLAYERS = config.stamina_max + their class bonus_stamina (0 for every shipped class
+## since v0.26.0 — the graduated pool is ONE point and recovery speed is the class differentiator,
+## see _regen_idle_beats_of); MONSTERS =
 ## config.monster_stamina_max (its own independent dial, Jon's tune-them-differently ask).
 ## Resolved LAZILY at every seed/reset — a mid-session /class change or knob turn lands at the
 ## next battle entry. Duck-typed node.get like CombatReferee._passives_of. Floor 1: a pool of 0
@@ -996,9 +1024,26 @@ func motion_tiles_of(entity_id: int) -> Array[Vector2i]:
 ## Per-side stamina dial reads (v0.25.0 split, Jon's overhaul): positive entity ids are players,
 ## negative are monsters — one boundary, seven paired dials. Every stamina read site below goes
 ## through these, so the side split can never drift per-site.
+## ARMOR-WEIGHT idle wait (v0.26.0, Jeff's verdict 2026-07-26 — DESIGN §2.2.10): a MONSTER reads its
+## one dial; a PLAYER's rest-to-recover wait is picked from its class's armor WEIGHT BAND, so heavier
+## armor rests slower. Duck-typed `player_class` read (exactly _stamina_max_of's pattern) resolved
+## LIVE at every arm — never cached — so a /class swap lands on the next idle timer. UNARMORED shares
+## the LIGHT dial (the lightest band is a floor, not a bonus), and so does any node without a class
+## (a future classless player, or a read racing the class seed): the fastest recovery is the safe
+## default, since the alternative would silently punish a mis-authored class.
 func _regen_idle_beats_of(entity_id: int) -> float:
-	return GameManager.config.player_regen_idle_beats if entity_id > 0 \
-			else GameManager.config.monster_regen_idle_beats
+	if entity_id <= 0:
+		return GameManager.config.monster_regen_idle_beats
+	var node = _node_of_id(entity_id)
+	if node != null:
+		var player_class = node.get("player_class")
+		if player_class != null:
+			match int(player_class.armor_weight):
+				PlayerClass.ArmorWeight.MEDIUM:
+					return GameManager.config.player_regen_idle_medium_beats
+				PlayerClass.ArmorWeight.HEAVY:
+					return GameManager.config.player_regen_idle_heavy_beats
+	return GameManager.config.player_regen_idle_light_beats
 
 
 func _regen_interval_beats_of(entity_id: int) -> float:
@@ -1037,11 +1082,19 @@ func _is_exhausted(entity_id: int) -> bool:
 	return not pool.is_empty() and int(pool["points"]) <= 0
 
 
-## v0.24.3: broadcast an exhaustion EDGE (on = the sweat-drop shows, off = it clears) for ANY entity
+## v0.24.3: broadcast an exhaustion EDGE (on = show the winded cue, off = clear it) for ANY entity
 ## kind — this is the one stamina signal monsters also get, because a 5-beat crawl with no cue reads
 ## as a bug (§2.3.4). Edges only, never per-step.
+## v0.26.0: the payload carries `hard_stop` — whether THIS side's 0-stamina mode refuses movement
+## outright (the /winded dial) rather than crawling. Presentation splits on it: the sweat-drop now
+## means ONLY "winded, cannot move", while a crawling/resting entity is told by the recovery bar +
+## transparency (the stamina_recovery event). Read host-side from the same per-side dial the movement
+## gate reads, so the cue can never disagree with the adjudication.
 func _post_exhausted(entity_id: int, on: bool) -> void:
-	NetEvents.post_event("exhausted", { "entity_id": entity_id, "on": on })
+	NetEvents.post_event("exhausted", {
+		"entity_id": entity_id, "on": on,
+		"hard_stop": _exhausted_blocks_movement_of(entity_id),
+	})
 
 
 ## Stamina experiment (v0.24.0): broadcast a PLAYER's pool state (monsters budget silently — their

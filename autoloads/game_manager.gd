@@ -92,8 +92,12 @@ const DEV_MONSTER_CLAMPS := {
 ## v0.25.0 overhaul: every stamina dial split player_/monster_. Plain-write fields dispatch through
 ## DevCommands._GAME_FIELD_SPECS (one shared authority story); tactical_beat_sec keeps its bespoke
 ## broadcast branch. This list MUST cover specs ∪ bespoke — /help derives from it.
+## v0.26.0: the player idle wait became three ARMOR-WEIGHT dials (light covers UNARMORED too), so the
+## single player_regen_idle_beats field is GONE from this list — a stale `/config player_regen_idle_beats`
+## now rejects, which is correct (the field no longer exists on GameConfig).
 const DEV_GAME_FIELDS := ["tactical_beat_sec",
-		"player_regen_idle_beats", "monster_regen_idle_beats",
+		"player_regen_idle_light_beats", "player_regen_idle_medium_beats",
+		"player_regen_idle_heavy_beats", "monster_regen_idle_beats",
 		"player_regen_interval_beats", "monster_regen_interval_beats",
 		"player_exhausted_step_beats", "monster_exhausted_step_beats",
 		"player_refill_lockout_beats", "monster_refill_lockout_beats",
@@ -144,8 +148,11 @@ const CONFIG_PRESETS := {
 		# v0.24.8 (Jon): the stamina loadout joins the fight-feel preset — ONE pip each side
 		# (every step is precious), regen starts fast (4 idle beats) and refills fast (2/point).
 		# v0.25.0: rows doubled for the player/monster split — the preset keeps both sides equal.
-		["g", "stamina", "player_regen_idle_beats", 4.0],
-		["g", "stamina", "monster_regen_idle_beats", 4.0],
+		# v0.26.0: the REGEN-IDLE rows are GONE from this preset. Those waits are now the shipped
+		# graduated defaults (armor-weight 2.5/3.0/3.5, monsters 3.5 — Jeff's verdict), and a preset
+		# row would clobber them with an older experimental number every time someone pressed /config 2.
+		# The max-1 rows stay: they became the default too, so re-applying is a no-op, and keeping them
+		# means the preset still states its own loadout explicitly.
 		["g", "stamina", "player_regen_interval_beats", 2.0],
 		["g", "stamina", "monster_regen_interval_beats", 2.0],
 		["g", "stamina", "stamina_max", 1],

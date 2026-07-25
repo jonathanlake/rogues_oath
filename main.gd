@@ -536,6 +536,11 @@ func _ready() -> void:
 		# v0.24.3: the exit edge stamps the refill lockout — a pace flicker back into battle keeps
 		# the earned pool (the "free refill" hole from the first stamina playtest).
 		_pace.tactical_exited.connect(_referee.note_tactical_exit)
+		# Recovery-on-contact wake (v0.26.0): the move referee refunds the recovery tail of a WHIFFED
+		# swing, but a monster's brain booked its next think against the FULL quoted window — so the
+		# referee's release edge is relayed to the affected monster here (referees never reach sideways
+		# into a brain; Main wires them, exactly as the two pace edges above are wired). Host-only.
+		_referee.busy_released.connect(_on_busy_released)
 		# Host-only: activate the combat referee AFTER the movement + pace referees are set up and BEFORE
 		# any spawn — its container enter hooks then seed HP for every entity (host player + goblin), and
 		# the referees hold each other's references so bump/AoO/wind-up/death can cross-call and every attack
@@ -900,9 +905,14 @@ func _on_net_event(event: Dictionary) -> void:
 			# A monster rolled a hesitation (v0.24.0; reasons v0.24.3 — engaged/retarget/last_stand/
 			# cornered). Every peer shows the cue for the rolled window — self-clearing, no expire event.
 			_handle_thinking_event(event)
+		"stamina_recovery":
+			# An entity at 0 stamina began (or restarted) its rest-to-recover wait (v0.26.0, host-stamped
+			# duration). Every peer shows the recovering body + side bar for exactly that span.
+			_handle_stamina_recovery_event(event)
 		"exhausted":
 			# A stamina pool crossed the 0 edge (v0.24.3, host-authored, ANY entity kind): on = show the
-			# sweat-drop (the crawl must read as winded), off = clear it.
+			# winded cue when this side HARD-STOPS, off = clear the winded cue AND end the recovery
+			# presentation (the regained point is what ends it).
 			_handle_exhausted_event(event)
 		"banter":
 			# A goblin one-liner (v0.24.4, host-picked so every peer reads the same line). Overhead
@@ -967,19 +977,23 @@ func _handle_attack_event(event: Dictionary) -> void:
 	if target != null:
 		target.face_toward(-dir.x)
 	if whiff:
-		# Whiff cues are Monster surface (only a wind-up whiffs in M3) — deliberate narrow cast.
-		var whiffer := attacker as Monster
-		if whiffer != null and kind == "smite":
+		# Whiff cues are ENTITY surface since v0.26.0 (§2.3.4 gap): a PLAYER whiffs too — a telegraphed
+		# melee windup, or an active ability whose target stepped off — and until now that outcome
+		# rendered NOTHING but a warning. play_whiff lives on Entity, so both kinds get the same grade
+		# of feedback (lunge + audible swing); Monster overrides it to use its own designed miss stream.
+		var whiffer := attacker as Entity
+		var monster_whiffer := attacker as Monster
+		if monster_whiffer != null and kind == "smite":
 			# SMITE whiff (v0.19.10): no melee lunge (a dodged ground-spell has no swing), but a distinct
 			# FIZZLE SOUND (v0.19.12 review #1) so the dodge is audible, not just the grey "miss" popup below.
-			whiffer.play_cast_fizzle()
+			# Still narrowly Monster: only monsters cast smites (the fizzle stream is theirs).
+			monster_whiffer.play_cast_fizzle()
 		elif whiffer != null:
 			whiffer.play_whiff(dir)
-		elif whiffer == null:
-			# Whiffs are structurally monster-only today (only _resolve_windup emits them, only
-			# brains wind up), so a non-Monster whiffer is a future-shape break — §2.3.4 forbids an
-			# outcome being silently swallowed, so name the unhandled attacker instead of dropping it.
-			push_warning("[Main] whiff attack from non-Monster attacker %d — no feedback rendered" % attacker_id)
+		else:
+			# Every whiffing attacker is an Entity by construction, so this is a future-shape break —
+			# §2.3.4 forbids an outcome being silently swallowed, so name it instead of dropping it.
+			push_warning("[Main] whiff attack from non-Entity attacker %d — no feedback rendered" % attacker_id)
 		# Floating combat text for a whiff (v0.10.0, §2.3.4): grey "miss" over the COMMITTED target tile.
 		# A whiff event NEVER carries a resolved target node (target_id is always 0 — the ground was
 		# vacated), so the old `if target != null` guard never fired and the popup never showed. It is
@@ -1363,16 +1377,34 @@ func _handle_banter_event(event: Dictionary) -> void:
 		ent.play_banter(str(data.get("text", "")))
 
 
-## All peers: show/clear the sweat-drop on an exhausted entity (v0.24.3, the stamina 0-edge).
+## All peers: an entity at 0 stamina is resting it off (v0.26.0) — show the spent body + the side
+## recovery bar for the host's stamped wait. Players AND monsters (the pool is binary now, so "ready
+## yet?" is the whole read and it matters for enemies too). A re-post (activity restarted the clock)
+## replaces the bar, which is the intended restart.
+func _handle_stamina_recovery_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var ent := _node_for_peer(int(data.get("entity_id", 0))) as Entity
+	if ent != null:
+		ent.play_recovering(float(data.get("duration_sec", 0.0)))
+
+
+## All peers: the stamina 0-EDGE (v0.24.3; split by mode v0.26.0).
+## ON + hard_stop → the sweat-drop, which now means exactly ONE thing: winded, cannot move (the
+## `/winded` mode). ON without hard_stop → NOTHING here: at 0 the entity crawls and rests, and the
+## stamina_recovery event's bar + transparency carry that read — a sweat-drop as well would blur the two
+## outcomes §2.3.4 wants distinct. OFF (the point came back) → clear the sweat-drop AND end the recovery
+## presentation, whose ready-blink is the "you can act again" tell.
 func _handle_exhausted_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
 	var ent := _node_for_peer(int(data.get("entity_id", 0))) as Entity
 	if ent == null:
 		return
 	if bool(data.get("on", false)):
-		ent.play_exhausted()
+		if bool(data.get("hard_stop", false)):
+			ent.play_exhausted()
 	else:
 		ent.hide_exhausted()
+		ent.finish_recovering()
 
 
 func _handle_status_applied_event(event: Dictionary) -> void:
@@ -1793,6 +1825,18 @@ func _on_player_spawned_host(node: Node) -> void:
 	# starts right — normally explore, but corrected in one event if it spawned into a fight. Host-only
 	# (this hook is inside the is_server branch); the pace referee dedups against _last_broadcast.
 	_pace.on_player_spawned(node.entity_id)
+
+
+## HOST-ONLY (v0.26.0 recovery-on-contact): the move referee released an in-place window EARLY (a
+## whiffed swing owes no recovery beats). Relay the edge to a MONSTER's brain so its next decision
+## happens when the window truly ended instead of at the full duration it originally quoted. Players
+## need nothing — their input sampler revalidates against the referee on its own cadence.
+## Wired only inside the is_server() branch; the relay goes through Monster (the parent wires its own
+## child brain), so this never reaches into a component. A player id / despawned node is a no-op.
+func _on_busy_released(entity_id: int) -> void:
+	var monster := _node_for_peer(entity_id) as Monster
+	if monster != null:
+		monster.notify_busy_released()
 
 
 ## Sign of each axis of a delta, clamped to an 8-way step {-1,0,1}² — used to point an attacker's

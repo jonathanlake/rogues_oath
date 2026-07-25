@@ -54,12 +54,17 @@ enum ArmorWeight { UNARMORED, LIGHT, MEDIUM, HEAVY }
 ## GameConfig.stamina_max baseline, so the ONE live knob (`/config stamina_max N`) scales every
 ## class together and the rogue stays ahead. Resolved HOST-side and LAZILY (at each pool
 ## seed/reset, never cached at spawn) so a mid-session /class change or knob turn takes effect at
-## the next battle entry. 0 = baseline; rogue ships +1 (Jeff: the rogue is the mobile class).
+## the next battle entry. 0 = baseline.
+## v0.26.0: EVERY shipped class is 0 — the rogue's +1 was dropped when Jeff's verdict made the pool a
+## single point (a "+1" doubles a binary budget, which is a different mechanic, not a tuning nudge).
+## The field STAYS as the per-class hook: the rogue's mobility edge now lives in its lighter armor
+## weight (a faster idle wait) below, and a future class may legitimately carry a deeper pool.
 @export var bonus_stamina: int = 0
 
 ## The class's ARMOR WEIGHT band (v0.26.0 armor phase 1). UNARMORED (default) = the safe empty state
-## for a fresh PlayerClass. Today it drives the stamina REST-TO-RECOVER idle wait (DESIGN §2.2.10 —
-## heavier armor rests slower; the per-weight dials land in a later chunk of this version), and it is
+## for a fresh PlayerClass. It drives the stamina REST-TO-RECOVER idle wait (DESIGN §2.2.10 — heavier
+## armor rests slower: light/unarmored 2.5, medium 3.0, heavy 3.5 beats, resolved in
+## MoveReferee._regen_idle_beats_of), which since v0.26.0 IS the class movement differentiator, and it is
 ## deliberately the hook for the ENVISIONED spell / mobility penalties that a weight band should carry
 ## (a heavy-armored caster fumbling, a light class keeping its speed). Resolved HOST-side and LAZILY
 ## at each read, never cached at spawn, so a mid-session /class change lands at the next read — the

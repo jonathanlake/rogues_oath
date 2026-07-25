@@ -105,23 +105,33 @@ extends Resource
 ## mechanic, nothing more. Flip in the .tres, no code.
 @export var attacks_of_opportunity_enabled: bool = true
 
-## STAMINA EXPERIMENT (v0.24.0 as "movement points", renamed v0.24.1 — Jeff's proposal 2026-07-25).
+## STAMINA (v0.24.0 as "movement points", renamed v0.24.1; GRADUATED to a core engine rule by
+## Jeff's verdict 2026-07-26 — DESIGN §2.2.10 is no longer an experiment).
 ## Battle-only movement budget: while an entity's pace resolves tactical, each accepted glide spends
 ## 1 stamina; at 0 the step still COMMITS but as an exhausted CRAWL (exhausted_step_beats below) —
 ## never a hard stop (Jon, v0.24.1). Pool resets to max on each tactical ENTRY. Bumps, wind-ups and
 ## attacks never spend (attacking is not moving). Read HOST-side only (MoveReferee). The /stamina
-## dev command flips this live (off = exactly pre-experiment movement); revert = one commit.
+## dev command survives as the DEV ESCAPE HATCH (off = exactly pre-stamina movement), not as the
+## experiment's revert switch.
+##
+## THE GRADUATED SHAPE (v0.26.0): ONE point per side — a tactical step is a single decision that
+## costs your whole budget, and what varies is how fast you get it back (the armor-weight idle dials
+## below). That is why the pips are hidden at max 1 (hud.gd) and the recovery bar / transparency
+## carries the read instead: the question stopped being "how many steps left" and became "am I
+## ready yet".
 @export var stamina_enabled: bool = true
 
 ## PLAYER stamina baseline (v0.24.7 split — monsters have their own dial below): players get this
-## plus their class's bonus_stamina (rogue +1). `/config stamina_max 5` live; pools re-resolve at
-## the next battle entry (or a /stamina off/on for an immediate reseed).
-@export var stamina_max: int = 3
+## plus their class's bonus_stamina (0 for every shipped class since v0.26.0 — the rogue's +1 was
+## dropped when the pool became binary). `/config stamina_max 5` live; pools re-resolve at the next
+## battle entry (or a /stamina off/on for an immediate reseed). Raise above 1 and the HUD pips
+## return automatically.
+@export var stamina_max: int = 1
 
 ## MONSTER stamina pool (v0.24.7, Jon: "tune players and enemies differently") — every monster's
 ## max, independent of the player dial above. `/config monster_stamina_max N` live. Lower = enemies
 ## gas out first (kiters get caught sooner); higher = tireless pursuers.
-@export var monster_stamina_max: int = 3
+@export var monster_stamina_max: int = 1
 
 ## The exhausted CRAWL (v0.24.1, Jon: "still able to move, just very slow"; split v0.25.0): a
 ## tactical step taken at 0 stamina commits at THIS many beats per tile instead of the mover's
@@ -150,11 +160,28 @@ extends Resource
 ## below comes as a player_/monster_ pair so the two sides tune independently, Jon's overhaul ask):
 ## regen BEGINS only after this many consecutive beats with no movement and no committed action;
 ## any activity restarts the clock. Beats at the entity's resolved pace.
-@export var player_regen_idle_beats: float = 10.0
-@export var monster_regen_idle_beats: float = 10.0
+##
+## ARMOR-WEIGHT GRADUATION (v0.26.0): the PLAYER idle wait is no longer one number — it is picked
+## from the mover's class ARMOR WEIGHT band (PlayerClass.armor_weight), so heavier armor rests
+## slower. The lightest dial covers BOTH UNARMORED and LIGHT (an unarmored class is not faster than
+## a leather one — the floor is the same); a player whose class is missing/absent also reads it.
+## Resolved HOST-side per arm in MoveReferee._regen_idle_beats_of — never cached, so a /class swap
+## lands at the next arm.
+## (Jeff 2026-07-26; units pending Jeff confirmation — he tuned beat-denominated panel dials)
+@export var player_regen_idle_light_beats: float = 2.5
+## (Jeff 2026-07-26; units pending Jeff confirmation — he tuned beat-denominated panel dials)
+@export var player_regen_idle_medium_beats: float = 3.0
+## (Jeff 2026-07-26; units pending Jeff confirmation — he tuned beat-denominated panel dials)
+@export var player_regen_idle_heavy_beats: float = 3.5
+## Monsters wear no class, so they keep ONE idle dial — deliberately equal to the heavy band, the
+## slowest a player can rest (Jeff 2026-07-26; units pending Jeff confirmation — he tuned
+## beat-denominated panel dials).
+@export var monster_regen_idle_beats: float = 3.5
 
 ## Once regenerating, one stamina point returns every this-many beats (pips refill visibly)
-## until max or until the next activity cancels the regenerative state.
+## until max or until the next activity cancels the regenerative state. MOOT at max 1 (v0.26.0):
+## the first tick already fills the pool, so this only bites if a dial is raised above 1 — kept
+## live-tunable for exactly that case, not deleted.
 @export var player_regen_interval_beats: float = 4.0
 @export var monster_regen_interval_beats: float = 4.0
 

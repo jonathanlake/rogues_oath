@@ -257,6 +257,16 @@ func note_attack(target_id: int, hp_after: int, target_max: int) -> void:
 func note_stamina(entity_id: int, points: int, max_points: int) -> void:
 	if entity_id != _own_id or _own_stamina_row == null or max_points <= 0:
 		return
+	# PIPS EXIST ONLY WHEN THERE IS A BUDGET TO COUNT (v0.26.0, DESIGN §2.2.10 graduation): at max 1 the
+	# pool is binary — ready or spent — and a single pip says nothing the entity's own recovery
+	# presentation (transparency + side bar + ready blink) doesn't say better. Hide the row and stop.
+	# Nothing is torn down: raise the dial above 1 and the next stamina event rebuilds the pip set and
+	# re-reveals the row through the existing path, no special case.
+	if max_points <= 1:
+		if _own_stamina_row.visible:
+			_own_stamina_row.visible = false
+			_relayout()
+		return
 	if _own_stamina_pips.size() != max_points:
 		for pip in _own_stamina_pips:
 			pip.queue_free()

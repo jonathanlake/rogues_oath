@@ -133,31 +133,44 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
    (pipelined next-step): both amendments reduce the player's cancel-authority over travel
    and should be reviewed together as one axis, not as two independent asks.
 
-**§2.2.10 — STAMINA (v0.24.0 as "movement points", renamed + softened v0.24.1; EXPERIMENT —
-Jeff's proposal 2026-07-25, playtest pending).** Battle movement is a budget: tactical-pace steps
-spend 1 stamina from a pool (3; rogue 4 via the first per-class stat field). At 0 stamina you can
-STILL move — the step commits as an exhausted **crawl** (`exhausted_step_beats`, default 5/tile;
-Jon v0.24.1: "very slow, never stopped") and the Commitment Rule does the punishing. Pool refills
-on battle entry; otherwise ONLY by resting — 10 quiet beats starts regen, +1 point per 4 beats,
-any move/action cancels (Jon's rest-to-recover spec). Attacks never spend; explore movement
-untouched; monsters ride the identical check and additionally roll 1–6 beats of visible hesitation
-(whole brain held; range live-tunable) at story-beat moments — battle entry (a "!" alert pop, then
-"…" dots), target-died retarget, last-stand (allies all dead — the finale pause), and a cornered
-stall (each once per life; v0.24.3). Any entity at 0 stamina shows a sweat-drop while it crawls,
-monsters included. Refills on battle entry are LOCKOUT-gated (`stamina_refill_lockout_beats`):
-a pace flicker back into the same fight keeps the earned pool. STICKY SWINGS (v0.24.8): a melee
-wind-up still catches its intended victim if it sidestepped but stayed adjacent to the swinger —
-a deliberate, toggleable bend of §2.3's commit-to-ground rule inside this experiment
-(`swing_catches_adjacent`; escaping beyond adjacency still dodges). v0.25.0: every stamina dial
-split player_/monster_; the backtick DEBUG TUNING PANEL (docs/dev-commands.md) is the tuning
-surface — a GUI over the same server-authoritative dev_command pipe, with per-INSTANCE monster
-forks via /mi. The same story beats drive GOBLIN
-BANTER (v0.24.4): host-picked overhead one-liners (chance-rolled, globally cooldown-throttled;
-an ally's death always draws a revenge bark from a packmate) — lines are GameConfig content. Intent: movement improves positioning but can no
-longer invalidate attacks (the kiting thread) — a fleeing healer burns dry and crawls. `/stamina`
-(alias `/mp`) toggles the whole experiment live (off = pre-experiment behavior exactly); all dials
-live-tunable. Like the v0.6.x rhythm experiment, this section is provisional until the Jon+Jeff
-playtest verdict — it then graduates to a real §2.2 rule or is reverted in one commit.
+**§2.2.10 — STAMINA (v0.24.0 as "movement points", renamed + softened v0.24.1; GRADUATED to a core
+rule by Jeff's verdict 2026-07-26 — no longer an experiment).** Battle movement is a budget:
+tactical-pace steps spend 1 stamina from a pool. **The pool is ONE point, both sides** (Jeff's
+verdict; the rogue's per-class +1 was dropped with it) — a tactical step is a single decision that
+spends everything, so the design question moved from "how many steps left" to "am I ready yet."
+What varies is RECOVERY: the rest-to-recover idle wait is picked from the mover's **armor weight**
+(§2.3 armor phase 1) — light/unarmored 2.5, medium 3.0, heavy 3.5, monsters 3.5 **beats**
+(*units pending Jeff confirmation — he tuned beat-denominated panel dials*). Heavier armor rests
+slower; that is the whole cost curve. The per-point interval and instant-refill dials survive
+live-tunable but are **moot at max 1** (the first tick fills the pool). At 0 stamina you can STILL
+move — the step commits as an exhausted **crawl** (`exhausted_step_beats`, default 5/tile; Jon
+v0.24.1: "very slow, never stopped") and the Commitment Rule does the punishing; `/winded` flips
+that side to a hard stop instead. Pool refills on battle entry (LOCKOUT-gated by
+`refill_lockout_beats` — a pace flicker back into the same fight keeps the earned pool); otherwise
+ONLY by resting, and any move or committed action restarts the clock. Attacks never spend; explore
+movement untouched; monsters ride the identical check and additionally roll 1–6 beats of visible
+hesitation (whole brain held) at story-beat moments — battle entry (a "!" alert pop, then "…"
+dots), target-died retarget, last-stand (allies all dead — the finale pause), and a cornered stall
+(each once per life; v0.24.3).
+
+**Presentation (v0.26.0, §2.3.4).** A spent entity — player or monster — goes semi-transparent and
+grows a thin vertical **recovery bar** beside its body that fills over the host-stamped wait, ending
+in a two-pulse **ready blink**; the bar restarts whenever activity restarts the clock. The
+**sweat-drop now means one thing only: hard-stop winded** (`/winded` mode), so "resting" and "cannot
+move" never read alike. HUD **pips appear only when max > 1** — at 1 the body's own cue is the read;
+raise the dial and the pips return.
+
+STICKY SWINGS (v0.24.8): a melee wind-up still catches its intended victim if it sidestepped but
+stayed adjacent to the swinger — a deliberate, toggleable bend of §2.3's commit-to-ground rule
+(`swing_catches_adjacent`; escaping beyond adjacency still dodges). The same story beats drive
+GOBLIN BANTER (v0.24.4): host-picked overhead one-liners (chance-rolled, globally
+cooldown-throttled; an ally's death always draws a revenge bark from a packmate) — lines are
+GameConfig content. Every dial is split player_/monster_ (v0.25.0) and lives on the backtick DEBUG
+TUNING PANEL (docs/dev-commands.md) — a GUI over the same server-authoritative dev_command pipe,
+with per-INSTANCE monster forks via `/mi`. Intent, unchanged: movement improves positioning but can
+no longer invalidate attacks (the kiting thread) — a fleeing healer burns dry and crawls. `/stamina`
+(alias `/mp`) survives as a **dev escape hatch** (off = pre-stamina behavior exactly), not as the
+revert switch it was while this was provisional.
 
 ### 2.3 Combat Resolution
 

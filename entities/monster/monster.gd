@@ -131,6 +131,17 @@ func notify_rallied() -> void:
 		_brain.notify_rallied()
 
 
+## Host-only forwarder for an EARLY-RELEASED action window (v0.26.0 recovery-on-contact): the move
+## referee just dropped the tail of this monster's committed window because its swing whiffed, so the
+## brain's self-booked wake (which assumed the FULL quoted windup+recovery) is now too late. Same relay
+## shape as the two above — Main wires the referee's busy_released signal to this, and the brain's own
+## _active / busy gates make a client / brainless-dummy call inert. NOT an interrupt: the action already
+## resolved (it missed), so there is nothing left to cancel — the Commitment Rule is untouched.
+func notify_busy_released() -> void:
+	if _brain != null:
+		_brain.notify_busy_released()
+
+
 ## Hostility test (DESIGN §2.2.6, plan decision 6), read HOST-side. A monster is hostile to any
 ## player and never to another monster; the debug-only GameManager.all_hostile flag ORs on top so
 ## the AoO/combat wiring can be demoed with the harness. Symmetric with Player.is_hostile_to.
@@ -187,6 +198,9 @@ func play_windup(dir_away: Vector2i, hold_sec: float) -> void:
 ## lunge the landed strike uses, plus a distinct swing-into-nothing sound (no target flash, no hit).
 ## On a whiff the swing STAYS audible: the v0.6.0 audio-trim rule suppresses the attacker's sound only
 ## on a LANDED hit, so "the attack missed" reads audibly separate from "it landed" under deterministic damage.
+## OVERRIDE since v0.26.0 (the base cue moved to Entity so a PLAYER whiff isn't silent): identical body
+## language, but this uses the monster's OWN designed $Whiff stream instead of the shared swing whoosh —
+## the one thing the base can't do, exactly like the _bowstring override below.
 func play_whiff(dir: Vector2i) -> void:
 	_bowstring(dir)
 	_whiff_audio.play()

@@ -186,6 +186,32 @@ func notify_rallied() -> void:
 	_reschedule()
 
 
+## EARLY-RELEASE wake (v0.26.0 recovery-on-contact), relayed by the parent monster from the move
+## referee's busy_released signal. THE PROBLEM IT SOLVES: this brain self-paces on the duration it
+## QUOTED when it committed the attack (_reschedule_after(windup + recovery + epsilon)) because an
+## in-place window ends without a glide_finished. When the swing whiffs, the referee now refunds the
+## recovery tail — but the booked wake still sits at the old deadline, so the monster would stand
+## frozen through beats it no longer owes and the refund would be invisible.
+##
+## Shape deliberately identical to notify_attacked/notify_rallied — an external wake, not a new timer
+## loop: think NOW at its own (just-arrived) boundary. The BUSY guard is the same one those two use and
+## does double duty here: if the release PROMOTED a pipelined step, the referee is already moving this
+## monster and the coming glide_finished is the right boundary, so we leave it alone.
+##
+## Commitment Rule: nothing is cancelled or redirected. The attack already played to completion and
+## missed; this only lets the next DECISION happen when the window truly ended.
+func notify_busy_released() -> void:
+	if not _active:
+		return
+	if _referee.is_entity_moving(_entity_id):
+		return
+	# Straight to _think (the on_boundary shape), NOT _reschedule: the window is over now, so a
+	# back-off delay would just re-invent the stall this fixes. The stale long booking still fires
+	# later and lands in _think's normal gates — the same benign double-wake on_boundary already
+	# produces, absorbed by the _rethink_pending latch from there on.
+	_think()
+
+
 # ── Private methods ───────────────────────────────────────────────────────────
 
 ## Decide and submit at most ONE step (or log the adjacent-attack seam). Gated on not-busy and on
