@@ -254,9 +254,14 @@ func snap_to_tile(to_tile: Vector2i) -> void:
 	tile = to_tile
 	position = WorldGrid.tile_to_world(to_tile)
 	if _sprite != null:
-		var base_alpha := _sprite.modulate.a
+		# Restore target derived from RECOVERY STATE, not the momentary alpha (GLM milestone review):
+		# a ready-blink or earlier fade mid-flight would otherwise be captured (e.g. 0.45) and parked
+		# as the permanent post-fade alpha. Kill both alpha tweens before starting ours.
+		var base_alpha := _RECOVERING_ALPHA if _recovery_fx != null else 1.0
 		if _blink_tween != null and _blink_tween.is_valid():
 			_blink_tween.kill()
+		if _ready_blink_tween != null and _ready_blink_tween.is_valid():
+			_ready_blink_tween.kill()
 		_blink_tween = create_tween()
 		_blink_tween.tween_property(_sprite, "modulate:a", 0.0, 0.05)
 		_blink_tween.tween_property(_sprite, "modulate:a", base_alpha, 0.05)
@@ -693,8 +698,13 @@ func play_recovering(duration_sec: float) -> void:
 	holder.add_child(fill)
 	# SPENT alpha on the SPRITE (not the root modulate): the root slot is owned by the flash/tint cues
 	# (hurt, recovery tint, drink), so writing the sprite's own alpha lets a hit still flash red over a
-	# recovering body without either cue clobbering the other.
+	# recovering body without either cue clobbering the other. Kill any in-flight alpha tween first
+	# (blink fade / ready blink) so a finishing tween can't overwrite the spent look a beat later.
 	if _sprite != null:
+		if _blink_tween != null and _blink_tween.is_valid():
+			_blink_tween.kill()
+		if _ready_blink_tween != null and _ready_blink_tween.is_valid():
+			_ready_blink_tween.kill()
 		_sprite.modulate.a = _RECOVERING_ALPHA
 	if duration_sec <= 0.0:
 		fill.scale = Vector2(1.0, 1.0)
@@ -713,13 +723,16 @@ func play_recovering(duration_sec: float) -> void:
 func finish_recovering() -> void:
 	var was_recovering := _recovery_fx != null
 	_clear_recovery_fx()
-	if _sprite == null:
+	# Early-out BEFORE touching the alpha (GLM milestone review): this is called on every exhausted
+	# OFF edge, including ones where no bar ever existed (hard-stop mode, admin edges) — an entity
+	# that wasn't recovering keeps whatever its sprite alpha was doing.
+	if _sprite == null or not was_recovering:
 		return
-	_sprite.modulate.a = 1.0
-	if not was_recovering:
-		return
+	if _blink_tween != null and _blink_tween.is_valid():
+		_blink_tween.kill()
 	if _ready_blink_tween != null and _ready_blink_tween.is_valid():
 		_ready_blink_tween.kill()
+	_sprite.modulate.a = 1.0
 	_ready_blink_tween = create_tween()
 	for _i in 2:
 		_ready_blink_tween.tween_property(_sprite, "modulate:a", 0.45, 0.05)

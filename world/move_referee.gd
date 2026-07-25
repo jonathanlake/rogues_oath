@@ -147,9 +147,11 @@ var _passive_regen_running: Dictionary = {}
 # INERT WHEN THE EXPERIMENT IS OFF, by construction: teleport_entity has exactly one caller
 # (CombatReferee._use_shadow_step) and that caller is gated on GameConfig.instant_abilities_enabled, so
 # with the toggle off this dict never changes and every downstream guard compares 0 == 0 forever.
-# NOT erased on death/exit (unlike every other per-entity record): a monotonic counter that only ever
-# rises is precisely what a stale timer must fail against, and erasing it would reset a respawned peer's
-# id back to 0 — which an in-flight capture of 1 would then MATCH. Bounded by the peer/monster id space.
+# Erased on death/exit like every other per-entity record (GLM milestone review, v0.26.0): a respawn
+# reuses a PEER id, and a resolve captured in the PREVIOUS life (gen >= 1 after any blink) must fizzle
+# against the new life — the erase resets the new life to 0, which an old nonzero capture can never
+# match. (A never-blinked life captures 0 and would match a reset 0 — but that pairing is exactly the
+# pre-existing exposure of the unguarded resolves, unchanged by this counter in either direction.)
 var _interrupt_gen: Dictionary = {}
 
 # Monotonic per-glide id, stamped into each _gliding record so a completion timer can tell "my"
@@ -554,6 +556,9 @@ func clear_entity(entity_id: int) -> void:
 	_stamina_generation[entity_id] = int(_stamina_generation.get(entity_id, 0)) + 1
 	_last_tactical_exit_msec.erase(entity_id)
 	_passive_regen_running.erase(entity_id)
+	# Instants experiment (v0.26.0): a respawned peer id starts a fresh interrupt life — any resolve
+	# captured against the previous life's gen (>= 1 after a blink) fizzles at its fire.
+	_interrupt_gen.erase(entity_id)
 
 
 # ── Private methods ───────────────────────────────────────────────────────────
@@ -1276,6 +1281,7 @@ func _on_entity_exiting(node: Node) -> void:
 	_stamina_generation[entity_id] = int(_stamina_generation.get(entity_id, 0)) + 1
 	_last_tactical_exit_msec.erase(entity_id)
 	_passive_regen_running.erase(entity_id)
+	_interrupt_gen.erase(entity_id)
 
 
 ## Remove every tile->peer entry whose value is this peer (a peer holds at most one of each, but
