@@ -152,6 +152,20 @@ func engaged_count_excluding(entity_id: int) -> int:
 	return _engagements.size() - (1 if _engagements.has(entity_id) else 0)
 
 
+## The IDS of every OTHER currently-engaged monster (v0.27.1), the count above's twin. Host-only; brains
+## call it through their injected _pace ref. It exists because a COUNT can only answer "is a fight
+## happening somewhere on the map", and the banter earshot rule (GameConfig.banter_earshot_tiles) needs
+## "is one of them near ME" — which means the caller has to be able to read each ally's tile. Returning
+## ids (rather than exposing _engagements, or having the brain duck-type its internals) keeps this
+## referee's state private and the brain's read explicit.
+func engaged_ids_excluding(entity_id: int) -> Array[int]:
+	var ids: Array[int] = []
+	for monster_id in _engagements:
+		if int(monster_id) != entity_id:
+			ids.append(int(monster_id))
+	return ids
+
+
 ## THE single "no resolver → explore" policy site (§2.8.7), shared by the three stamp-site referees
 ## (MoveReferee, CombatReferee, MonsterBrain) so none keeps a private copy of the fallback rule. Given a
 ## (possibly null) PaceReferee and an entity id, returns that entity's resolved beat (seconds) — tactical

@@ -257,11 +257,22 @@ func _on_event_received(event: Dictionary) -> void:
 			if bool(data.get("weapon_skipped", false)):
 				class_line += " (weapon not equipped — busy; Tab to equip.)"
 			# gear_skipped (v0.27.0): the same clause for the class's STARTING BODY ARMOR, which the /class
-			# validator equips beside the weapon and skips for the same reason (mid-commit). Its own flag and
-			# its own clause, because the two can skip independently and a merged "gear not equipped" would
-			# not tell you WHICH — and unlike the weapon there is no Tab shortcut to recover it.
+			# validator reconciles beside the weapon and skips for its own reasons. Its own flag and its own
+			# clause, because the two can skip independently and a merged "gear not equipped" would not tell
+			# you WHICH — and unlike the weapon there is no Tab shortcut to recover it.
+			# v0.27.1: FOUR distinct skips, four distinct sentences (§2.3.4). "bag full" is the important new
+			# one — the swap was REFUSED to protect the piece you are wearing, which is a different fact from
+			# "you were busy" and must never read as a generic failure.
 			if bool(data.get("gear_skipped", false)):
-				class_line += " (armor not equipped — busy; re-run /class when free.)"
+				match str(data.get("gear_skip_reason", "busy")):
+					"bag full":
+						class_line += " (armor unchanged — your bag is full, so what you're wearing had nowhere to go.)"
+					"stunned":
+						class_line += " (armor not equipped — stunned; re-run /class once it wears off.)"
+					"dead":
+						class_line += " (armor not equipped — you're dead.)"
+					_:
+						class_line += " (armor not equipped — busy; re-run /class when free.)"
 			add_line(class_line)
 		"banter":
 			# Goblin banter (v0.24.4): the spoken line also lands in the log, quoted, so a bark you
@@ -325,10 +336,23 @@ func _on_event_received(event: Dictionary) -> void:
 			# Name + item flow through add_line's sink escape like every line.
 			add_line("%s drinks the %s..." % [str(data.get("name", "Someone")), str(data.get("item", "item"))])
 		"equip_item":
-			# A committed weapon equip from the bag (v0.19.x loot, §2.3.4 — a distinct line). Party-wide: everyone
-			# sees who armed themselves with what. Names flow through add_line's sink escape. The swapped-out
-			# weapon is not named (it went back into the bag, not lost — keep the line terse).
-			add_line("%s equips the %s." % [str(data.get("name", "Someone")), str(data.get("equipped", "weapon"))])
+			# A committed weapon / body-armor equip (v0.19.x loot, §2.3.4 — a distinct line). Party-wide:
+			# everyone sees who armed themselves with what. Names flow through add_line's sink escape. On the
+			# BAG path the swapped-out thing is not named (it went back into the freed slot, not lost — keep
+			# the line terse).
+			# v0.27.1 — TWO more shapes, both from /class's loadout reconcile, each read distinctly:
+			#  STRIP: an EMPTY `equipped` means the new class wears nothing, so the slot was cleared. "equips
+			#         the ." was the alternative, which is not a sentence.
+			#  STOW:  a present `stowed_slot` means the piece being replaced went into a NEW bag slot rather
+			#         than back into the slot the equip came from — worth naming precisely BECAUSE v0.27.0
+			#         destroyed it here, so "where did my chainmail go" has to have an answer in the log.
+			var who := str(data.get("name", "Someone"))
+			var equipped_thing := str(data.get("equipped", ""))
+			var gear_line := ("%s takes off their armor." % who) if equipped_thing.is_empty() \
+					else ("%s equips the %s." % [who, equipped_thing])
+			if int(data.get("stowed_slot", -1)) >= 0 and not str(data.get("returned", "")).is_empty():
+				gear_line += " (The %s goes into their bag.)" % str(data.get("returned", ""))
+			add_line(gear_line)
 		"heal":
 			# A resolved heal (v0.18.0 chunk C, §2.3.4 — a distinct recovery line with the running HP readout,
 			# the twin of an `attack` line's "for N (hp/max)"). Party-wide so recovery is legible in the log.
@@ -389,6 +413,27 @@ func _log_attack(data: Dictionary) -> void:
 		add_line("%s hits %s — no effect (god)." % [attacker_name, target_name])
 		return
 	var damage := int(data.get("damage", 0))
+	var kind := str(data.get("kind", ""))
+	# ZERO-DAMAGE LANDED HIT (v0.27.1): the verb line WITHOUT the "for N (hp/max)" clause. A hit that deals
+	# nothing is a shipped outcome since v0.27.0 — kick authors damage 0 as a pure stun setup — and
+	# "Rogue kicks Goblin for 0 (10/10)." reads as a broken hit, which is exactly the confusable feedback
+	# §2.3.4 forbids. It stays a LINE (contact happened, and the stun that IS the outcome gets its own
+	# "X is stunned!" line off status_applied) — it just stops reporting a number that isn't the point.
+	# Placed AFTER the blocked/godded branches, which own their own distinct zeroes, and BEFORE the sneak
+	# branch, because a DOUBLED zero is not a sneak attack (main.gd suppresses the popup's "!" identically).
+	if damage == 0:
+		_log_zero_damage_attack(data, attacker_name, target_name, kind)
+		return
+	# ARMOR ABSORPTION (v0.27.1, §2.3.8 + §2.3.4): the host tags a hit whose number its mitigation seam
+	# actually changed and stamps the points ABSORBED. Folded into the running-HP parenthetical rather than
+	# given a branch of its own, so it composes with EVERY verb below (a shaved sneak attack, a shaved
+	# arrow) instead of hiding one — one line per outcome, and mitigation is finally visible in the log at
+	# all. Absent on an unmitigated hit, so those lines are byte-identical to before.
+	var readout := "%d/%d" % [int(data.get("hp_after", 0)), int(data.get("target_max", 0))]
+	var armor_clause := ""
+	if (data.get("tags", []) as Array).has("armor"):
+		armor_clause = " (armor absorbs %d)" % int(data.get("absorbed", 0))
+		readout += ", armor absorbs %d" % int(data.get("absorbed", 0))
 	# SNEAK ATTACK (v0.11.0 as "backstab", redesigned + retagged v0.27.0): a DISTINCT line before the
 	# free/normal branches (§2.3.4 — never confusable with a plain hit), driven by the "sneak" tag the
 	# referee stamped when the rogue's dagger caught a FLANKED or STUNNED target. Same running-HP readout as
@@ -397,44 +442,56 @@ func _log_attack(data: Dictionary) -> void:
 	if (data.get("tags", []) as Array).has("sneak"):
 		# A free (AoO) sneak attack keeps its free-ness visible — both outcomes are distinct cues (§2.3.4),
 		# so neither may swallow the other.
-		var free_prefix := "free-attack " if str(data.get("kind", "")) == "free" else ""
-		add_line("%s %ssneak-attacks %s for %d! (%d/%d)." % [
-			attacker_name, free_prefix, target_name, damage,
-			int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
+		var free_prefix := "free-attack " if kind == "free" else ""
+		add_line("%s %ssneak-attacks %s for %d! (%s)." % [
+			attacker_name, free_prefix, target_name, damage, readout])
 		return
-	if str(data.get("kind", "")) == "free":
-		add_line("%s gets a free attack on %s — %d damage." % [attacker_name, target_name, damage])
+	if kind == "free":
+		# The AoO line is the one shape with no running-HP parenthetical, so the armor clause rides on its own.
+		add_line("%s gets a free attack on %s — %d damage%s." % [
+			attacker_name, target_name, damage, armor_clause])
 		return
-	if str(data.get("kind", "")) == "arrow":
+	if kind == "arrow":
 		# A landed arrow shot (v0.17.0): a DISTINCT verb ("shoots") from a melee hit (§2.3.4), same running-HP readout.
-		add_line("%s shoots %s for %d (%d/%d)." % [
-			attacker_name, target_name, damage,
-			int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
+		add_line("%s shoots %s for %d (%s)." % [attacker_name, target_name, damage, readout])
 		return
-	if str(data.get("kind", "")) == "kick":
+	if kind == "kick":
 		# A point-blank KICK (v0.17.1): a ranged weapon's wielder bumped an adjacent hostile — no melee
 		# swing, so a DISTINCT verb ("kicks") from a shot or a slash (§2.3.4), same running-HP readout.
-		add_line("%s kicks %s for %d (%d/%d)." % [
-			attacker_name, target_name, damage,
-			int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
+		add_line("%s kicks %s for %d (%s)." % [attacker_name, target_name, damage, readout])
 		return
-	if str(data.get("kind", "")) == "smite":
+	if kind == "smite":
 		# A landed SMITE (v0.19.10): a ranged spell hit — a DISTINCT verb ("smites"), same running-HP readout.
-		add_line("%s smites %s for %d (%d/%d)." % [
-			attacker_name, target_name, damage,
-			int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
+		add_line("%s smites %s for %d (%s)." % [attacker_name, target_name, damage, readout])
 		return
-	if str(data.get("kind", "")) == "ability":
+	if kind == "ability":
 		# A landed ACTIVE ABILITY (v0.20.0): the class-authored verb ("bashes"/"kicks"), same running-HP readout.
 		# The stun (if any) is its own "X is stunned!" line off the status_applied event.
-		add_line("%s %s %s for %d (%d/%d)." % [
-			attacker_name, str(data.get("verb", "hits")), target_name, damage,
-			int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
+		add_line("%s %s %s for %d (%s)." % [
+			attacker_name, str(data.get("verb", "hits")), target_name, damage, readout])
 		return
 	# A landed bump or wind-up hit, with the target's running HP after the blow.
-	add_line("%s hits %s for %d (%d/%d)." % [
-		attacker_name, target_name, damage,
-		int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
+	add_line("%s hits %s for %d (%s)." % [attacker_name, target_name, damage, readout])
+
+
+## The combat-log line for a landed hit that dealt NOTHING (v0.27.1) — the verb, the target, full stop. One
+## sentence per kind so the zero keeps each kind's distinct voice (§2.3.4), mirroring the branches above;
+## the "free" AoO shape has no "for N" clause to drop, so it names the nothing explicitly instead. Reached
+## only for a real landed hit (blocked / godded / whiff each returned with their own line already).
+func _log_zero_damage_attack(data: Dictionary, attacker_name: String, target_name: String, kind: String) -> void:
+	match kind:
+		"free":
+			add_line("%s gets a free attack on %s — no damage." % [attacker_name, target_name])
+		"arrow":
+			add_line("%s shoots %s." % [attacker_name, target_name])
+		"kick":
+			add_line("%s kicks %s." % [attacker_name, target_name])
+		"smite":
+			add_line("%s smites %s." % [attacker_name, target_name])
+		"ability":
+			add_line("%s %s %s." % [attacker_name, str(data.get("verb", "hits")), target_name])
+		_:
+			add_line("%s hits %s." % [attacker_name, target_name])
 
 
 func _on_intent_rejected(action: String, reason: String) -> void:
@@ -453,6 +510,8 @@ func _on_intent_rejected(action: String, reason: String) -> void:
 		_log_use_reject(reason)
 	elif action == "use_ability":
 		_log_ability_reject(reason)
+	elif action == "equip_item":
+		_log_equip_reject(reason)
 
 
 # A refused move must never be silent when the cause is the world (§2.3.4): a wall/corner/occupied
@@ -508,6 +567,22 @@ func _log_use_reject(reason: String) -> void:
 	match reason:
 		"busy", "dead":
 			pass
+		_:
+			add_line(reason)
+
+
+## A refused EQUIP (v0.27.1). The `equip_item` pipe had no arm at all, so every refusal was silently
+## swallowed — tolerable while the only reasons were slot-shape noise, and NOT tolerable now that a real
+## rule refuses through it: an EQUIPMENT item bound for a socket that does not exist yet ("no slot for that
+## yet", the §2.10 tripwire for the off-hand shield) would otherwise look like a dropped click, which
+## §2.2.8/§2.3.4 forbid. Shape copied from _log_use_reject, with `stunned` suppressed too — the stun icon
+## and the bonk already say it, exactly as on the ability pipe.
+func _log_equip_reject(reason: String) -> void:
+	match reason:
+		"busy", "dead", "stunned":
+			pass
+		"no slot for that yet":
+			add_line("There's nowhere to wear that yet.")
 		_:
 			add_line(reason)
 

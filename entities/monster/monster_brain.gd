@@ -176,8 +176,11 @@ func notify_attacked() -> void:
 	# a moment, hence the once-per-life latch (the _check_last_stand pattern). Forced past the chance roll
 	# like the death bark — this one should land — but still cooldown-gated. Placed ABOVE the busy return
 	# below, deliberately: a shaman hit mid-cast is exactly when it wants to scream.
+	# v0.27.1: "its pack is still fighting" now means an engaged ally WITHIN EARSHOT, not a map-wide
+	# engagement count — screaming for help nobody could hear was the same cross-fight bug the revenge
+	# bark had (GameConfig.banter_earshot_tiles).
 	if not _help_me_done and _monster_type != null and _monster_type.banter_notable \
-			and _pace != null and _pace.engaged_count_excluding(_entity_id) > 0:
+			and _has_engaged_ally_within_earshot():
 		_help_me_done = true
 		Banter.bark(_entity_id, _monster_type.display_name, "help_me", true)
 	# Already committed to an action (glide or attack)? Latch aggro ONLY — do NOT schedule an early think.
@@ -1016,6 +1019,30 @@ func _check_last_stand() -> bool:
 	_last_stand_done = true
 	_begin_think("last_stand")
 	return _is_thinking()
+
+
+## Is at least ONE engaged allied monster within BANTER EARSHOT of this one (v0.27.1)? The "is this MY
+## fight" test the help_me bark needs, replacing a map-wide `engaged_count_excluding > 0` that fired the
+## scream whenever ANY fight was happening anywhere (three authored packs in separate rooms made that a
+## real cross-fight bug). Tiles come from the MOVE referee's AUTHORITATIVE occupancy — never a rendered
+## position — and the ally list from the pace referee's engagement map through its own accessor, so this
+## brain still holds no container reference and duck-types no referee internals. Chebyshev, matching every
+## other radius test in the codebase. An entity with no occupancy (mid-teardown) reads the wall sentinel
+## and is skipped. Missing referees (a client's brain, which never activates) read false.
+func _has_engaged_ally_within_earshot() -> bool:
+	if _pace == null or _referee == null:
+		return false
+	var my_tile: Vector2i = _referee.tile_of_entity(_entity_id)
+	if WorldGrid.is_wall(my_tile):
+		return false
+	var earshot: int = GameManager.config.banter_earshot_tiles
+	for ally_id in _pace.engaged_ids_excluding(_entity_id):
+		var tile: Vector2i = _referee.tile_of_entity(ally_id)
+		if WorldGrid.is_wall(tile):
+			continue
+		if maxi(absi(tile.x - my_tile.x), absi(tile.y - my_tile.y)) <= earshot:
+			return true
+	return false
 
 
 ## THINKING hold read (v0.24.0): true while this brain's hesitation deadline is in the future.

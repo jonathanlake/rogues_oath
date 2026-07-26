@@ -32,6 +32,14 @@ enum Category { POTION, EQUIPMENT, WEAPON }
 ## append only.
 enum ArmorWeight { UNARMORED, LIGHT, MEDIUM, HEAVY }
 
+## WHICH SOCKET a wearable occupies (v0.27.1). Split out of `category` because EQUIPMENT is a
+## category, not a slot: until now every EQUIPMENT item was treated as BODY ARMOR by both the host
+## equip path and the client's routing, so the off-hand kite shield DESIGN §2.11.1 is waiting on would
+## have silently REPLACED worn chainmail. This enum is the discriminator that makes that a clean
+## refusal instead. Only BODY is implemented (DESIGN §2.10's remaining sockets are future work) —
+## anything else rejects with its own reason. Serialized as an ordinal, so NEVER reorder — append only.
+enum EquipSlot { BODY, OFF_HAND, HEAD, HANDS, FEET, RING, AMULET }
+
 
 # ── Identity ──────────────────────────────────────────────────────────────────
 
@@ -88,6 +96,20 @@ enum ArmorWeight { UNARMORED, LIGHT, MEDIUM, HEAVY }
 ## by the use referee, which applies it through the SAME CombatReferee heal path a spell would; the use
 ## event then carries the resulting hp_after so every peer renders the bar + popup, never a client compute.
 @export var heal_amount: int = 10
+
+## Which SOCKET this wearable occupies (v0.27.1) — meaningful for an EQUIPMENT item, ignored for a
+## POTION. Read HOST-side by the equip validator, which routes on it: BODY takes the body-armor path,
+## and every other value is REFUSED ("no slot for that yet") until §2.10's remaining sockets land. The
+## client keeps submitting `equip_item` for any EQUIPMENT item — the host owns the verdict (§2.5), so
+## this never has to be read client-side to decide an intent.
+##
+## THE DEFAULT IS BODY because body is the one implemented socket: a designer who authors a new armor
+## piece and forgets this field gets the working path, not a dead one. That is the opposite polarity
+## from `category` above (which fails CLOSED) and deliberately so — the risk here is an unequippable
+## item, not an item that grabs a permission it shouldn't. Note the .tres authoring model: the saver
+## STRIPS default-equal values, so BODY is authored by omission; the two shipped armors state it
+## explicitly anyway, as the readable record of which socket they claim.
+@export var equip_slot: EquipSlot = EquipSlot.BODY
 
 # ── Worn armor (EQUIPMENT category only; read HOST-side by the referees) ───────
 

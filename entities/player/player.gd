@@ -176,6 +176,24 @@ func set_body_armor(item: ItemType) -> void:
 	equipped_body = item
 
 
+## THE armor WEIGHT BAND this player currently sits in (v0.27.1) — the ONE resolver, living beside
+## set_body_armor because this node owns `equipped_body`. An empty slot reads UNARMORED, which is a real
+## band (0% and flat 0), not an error: the absence of armor must never itself mitigate (§2.3.8).
+##
+## WHY IT LIVES HERE. Two referees need the band and each had duck-read `equipped_body.armor_weight`
+## itself — CombatReferee's flat-reduction term (§2.3.8) and MoveReferee's stamina rest wait (§2.2.10) —
+## so the promotion rule below had two homes while its own doc comment claimed one. Both now call this
+## (duck-typed via `has_method`, keeping the monster / non-player fallbacks in each referee intact).
+##
+## PROMOTION (DESIGN §2.10, future): with ONE armor slot the body item's band IS the wearer's band. When
+## the other sockets land, the heaviest worn piece sets the band — and THIS FUNCTION is the single site
+## that changes; neither referee needs touching.
+func worn_armor_weight() -> ItemType.ArmorWeight:
+	if equipped_body == null:
+		return ItemType.ArmorWeight.UNARMORED
+	return equipped_body.armor_weight
+
+
 ## Inject the local sampler's shoot-target predicate (v0.17.1). Main wires this on the LOCAL player when it
 ## (re)acquires the follow camera; the predicate closes over the entity containers and decides whether a
 ## clicked tile holds a shootable hostile, so a ranged click only looses at a hostile (else it falls through

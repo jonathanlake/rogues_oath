@@ -25,6 +25,12 @@ const MISS_COLOR := Color(0.72, 0.72, 0.72)
 ## Green for a HEAL (v0.18.0 chunk C) — a "+N" over a healed target. Distinct from the damage red / player-hit
 ## white / miss grey, so recovery reads as its own outcome (§2.3.4) and never as a hit taken or dealt.
 const HEAL_COLOR := Color(0.35, 0.9, 0.4)
+## STEEL BLUE for a hit ARMOR shaved (v0.27.1): the number still lands, but part of it was turned aside, and
+## §2.3.8 has always claimed that mitigation is VISIBLE per §2.3.4 — before this the `armor` tag had no
+## consumer at all, so at shipped defaults a chainmail knight's mitigated hit looked identical to an
+## unarmored one. Chosen to sit clearly apart from every colour above (hit red, player-hit white, miss grey,
+## heal green) AND from the recovery/spent tint, so "armor absorbed some of that" reads at a glance.
+const ARMOR_COLOR := Color(0.55, 0.74, 0.95)
 
 ## How far the popup drifts UP over its lifetime (pixels).
 const _RISE_PX := 12.0

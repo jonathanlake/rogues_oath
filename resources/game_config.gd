@@ -231,6 +231,20 @@ extends Resource
 ## Global minimum gap between ANY two barks (wall-clock seconds) — five goblins latching at once
 ## must not produce a wall of text. One room, one voice at a time.
 @export var banter_cooldown_sec: float = 2.5
+
+## EARSHOT in TILES (v0.27.1) — how far a bark's REACTION can travel: only monsters who could
+## plausibly have heard the moment react to it. CHEBYSHEV distance, measured HOST-side from
+## authoritative occupancy (never a rendered position), between the moment's origin and the would-be
+## speaker. Two consumers, both reactions rather than initiations:
+##   ally_died / notable_death — the mourner must be within earshot of the DEAD monster's tile
+##                               (CombatReferee._pick_living_monster_excluding), and
+##   help_me                   — the screamer needs an ENGAGED ally within earshot of ITSELF
+##                               (MonsterBrain.notify_attacked).
+## Before this, both were scoped by ENGAGEMENT alone, which answers "is a fight happening somewhere"
+## rather than "is this MY fight" — with three authored packs in separate rooms and a party that splits
+## up, that produced cross-fight barks. 12 tiles is roughly a room and a bit; 0 or less makes the two
+## reactions silent (a legitimate "off" setting).
+@export var banter_earshot_tiles: int = 12
 @export var banter_engaged: Array[String] = [
 	"fresh meat!", "intruders!", "get 'em!!", "who goes there?!",
 	"oi! trespassers!", "supper walked in!"]

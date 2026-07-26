@@ -159,6 +159,11 @@ var _interrupt_gen: Dictionary = {}
 var _next_token: int = 0
 # One-shot latch so a mover with no GlideSpeed resource warns exactly once, not every step.
 var _warned_null_speed: bool = false
+# ARMOR-BAND WARNING LATCH (v0.27.1): band ordinal -> true, for every band that reached
+# _regen_idle_beats_of's fall-through. The rest wait is re-armed on every activity, so an un-armed band
+# would otherwise warn per step; once per distinct band keeps the signal loud and the volume finite.
+# (CombatReferee keeps its own latch for its own table — two tables, two independent misconfigurations.)
+var _warned_armor_bands: Dictionary = {}
 
 
 ## Host-only entry point, called by Main inside its is_server() branch BEFORE the host spawns
@@ -315,6 +320,35 @@ func entity_at(tile: Vector2i) -> int:
 	if _reserved.has(tile):
 		return _reserved[tile]
 	return 0
+
+
+## The authoritative entity id STANDING STILL on a tile — settled, with no motion anywhere in its record —
+## or 0 (never a real id) when the tile is free or its occupant is in transit (v0.27.1). Host-only, the
+## tighter twin of entity_at above, for the adjudication sites that must agree with what a PLAYER CAN SEE:
+## the sneak-attack flank probe (§2.3.10) is the first, since flanking is a formation the party sets up
+## deliberately and a ×2 off an invisible body is exactly the unreadability that trigger replaced.
+##
+## Consults `_occupied` ONLY — never `_reserved`, whose whole meaning is "gliding onto this tile, not there
+## yet" — and then disqualifies the occupant if ANY of the three motion records is live for it:
+##  - an in-flight glide with from != to (it is travelling; its occupancy already claims the destination),
+##  - a pipelined pending step (the next step is committed and occupancy sits one tile deeper),
+##  - `_arriving` (occupancy landed, the sprite is still sliding in — the documented lead the bump
+##    validator already refuses to strike into).
+## An IN-PLACE busy record (from == to: an attack swing, a cast, a drink) does NOT disqualify: an ally
+## swinging while standing on the far tile is a perfectly visible, perfectly legitimate flank.
+func settled_entity_at(tile: Vector2i) -> int:
+	if not _occupied.has(tile):
+		return 0
+	var id: int = _occupied[tile]
+	if _gliding.has(id):
+		var record: Dictionary = _gliding[id]
+		if record["from"] != record["to"]:
+			return 0
+	if _pending.has(id):
+		return 0
+	if _arriving.has(id):
+		return 0
+	return id
 
 
 ## Host-only: record a from==to BUSY commit for an entity for `duration_sec`, with NO occupancy
@@ -505,6 +539,21 @@ func clear_exhaustion_cues() -> void:
 	for entity_id in _stamina.keys():
 		if _is_exhausted(entity_id):
 			_post_exhausted(entity_id, false)
+
+
+## Host-only (v0.27.1): RE-POST the exhausted edge for every entity currently sitting at 0 stamina, so
+## every peer's cue re-derives from the CURRENT mode. The `exhausted` event is EDGE-triggered (it fires on
+## the 0-crossing and on recovery, never per step) and its payload carries `hard_stop` — which side of the
+## /winded dial the entity is on — and since v0.27.0 the sweat-drop marks the CRAWL, i.e. hard_stop FALSE.
+## So flipping the dial while somebody is already at 0 crossed no edge and left that peer rendering the
+## previous mode's cue: a crawler flipped to hard stop kept its drip (showing both signatures at once), and
+## a hard-stopped body flipped to crawl never grew one. Re-posting `on: true` is idempotent by construction
+## (the payload is rebuilt from the live dial, and clients render from the payload — no client change was
+## needed for this fix). Called by /winded and by the two `*_exhausted_blocks_movement` config writes.
+func resync_exhaustion_cues() -> void:
+	for entity_id in _stamina.keys():
+		if _is_exhausted(entity_id):
+			_post_exhausted(entity_id, true)
 
 
 ## Host-only (v0.24.0): register activity — an accepted glide or any committed busy window. Bumps
@@ -715,9 +764,12 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 		else:
 			stamina_pool["points"] = int(stamina_pool["points"]) - 1
 			_post_stamina(sender_peer_id)
-			# Crossing INTO exhaustion (v0.24.3): the sweat-drop cue rides its own event, for every
-			# entity kind — a crawling MONSTER must read as winded, not glitchy-slow (players get the
-			# pips + log line on top). 0-crossings only, so the wire cost is a handful per fight.
+			# Crossing INTO exhaustion (v0.24.3): the exhaustion cue rides its own event, for every
+			# entity kind — a crawling MONSTER must read as winded, not glitchy-slow (a PLAYER also gets
+			# the HUD pips, when max > 1; the game_log "Exhausted" line this used to mention was DELETED
+			# in v0.27.0 — at a one-point pool it fired on every tactical step). 0-crossings only, so the
+			# wire cost is a handful per fight — and a later /winded FLIP is repaired by
+			# resync_exhaustion_cues, since no edge is crossed then (v0.27.1).
 			if int(stamina_pool["points"]) == 0:
 				_post_exhausted(sender_peer_id, true)
 	# EVERY accepted glide — budgeted, exhausted, or explore-pace — is ACTIVITY: it cancels any
@@ -1109,25 +1161,34 @@ func motion_tiles_of(entity_id: int) -> Array[Vector2i]:
 ## ARMOR-WEIGHT idle wait (v0.26.0, Jeff's verdict 2026-07-26 — DESIGN §2.2.10): a MONSTER reads its
 ## one dial; a PLAYER's rest-to-recover wait is picked from its armor WEIGHT BAND, so heavier armor
 ## rests slower — which since v0.26.0 IS the cost of wearing it.
-## v0.27.0: the band now comes from the WORN BODY ITEM (`equipped_body.armor_weight`, ItemType.ArmorWeight)
-## instead of the class, because armor became a real object you can put on and take off — a knight who
-## hands his chainmail away starts resting like a rogue, at the very next arm. Duck-typed `equipped_body`
-## read (exactly _stamina_max_of's `player_class` pattern) resolved LIVE at every arm, never cached.
+## v0.27.0: the band now comes from the WORN BODY ITEM instead of the class, because armor became a real
+## object you can put on and take off — a knight who hands his chainmail away starts resting like a rogue,
+## at the very next arm. Resolved LIVE at every arm, never cached.
 ## UNARMORED shares the LIGHT dial (the lightest band is a floor, not a bonus), and so does any node with
 ## an empty slot or an unreadable item: the fastest recovery is the safe default, since the alternative
 ## would silently punish a mis-authored resource.
+## v0.27.1: the band itself comes from Player.worn_armor_weight() — the ONE resolver (see its doc comment).
+## This site used to duck-read `equipped_body.armor_weight` independently of CombatReferee's identical
+## read, which meant DESIGN §2.10's future weight-PROMOTION rule had two homes; `has_method` keeps the hop
+## structural, so a monster (no such method) still falls through to its own single dial. Every band is now
+## an EXPLICIT arm and the fall-through WARNS ONCE per band — a future 4th band that misses this table gets
+## the FASTEST rest wait, which is exactly the kind of silent gift a warning has to catch.
 func _regen_idle_beats_of(entity_id: int) -> float:
 	if entity_id <= 0:
 		return GameManager.config.monster_regen_idle_beats
 	var node = _node_of_id(entity_id)
-	if node != null:
-		var body = node.get("equipped_body")
-		if body != null:
-			match int(body.armor_weight):
-				ItemType.ArmorWeight.MEDIUM:
-					return GameManager.config.player_regen_idle_medium_beats
-				ItemType.ArmorWeight.HEAVY:
-					return GameManager.config.player_regen_idle_heavy_beats
+	if node != null and node.has_method("worn_armor_weight"):
+		var band := int(node.worn_armor_weight())
+		match band:
+			ItemType.ArmorWeight.UNARMORED, ItemType.ArmorWeight.LIGHT:
+				return GameManager.config.player_regen_idle_light_beats
+			ItemType.ArmorWeight.MEDIUM:
+				return GameManager.config.player_regen_idle_medium_beats
+			ItemType.ArmorWeight.HEAVY:
+				return GameManager.config.player_regen_idle_heavy_beats
+		if not _warned_armor_bands.has(band):
+			_warned_armor_bands[band] = true
+			push_warning("[MoveReferee] armor weight band %d has no regen-idle arm — resting at the LIGHT dial. Add it to _regen_idle_beats_of." % band)
 	return GameManager.config.player_regen_idle_light_beats
 
 
@@ -1171,10 +1232,14 @@ func _is_exhausted(entity_id: int) -> bool:
 ## kind — this is the one stamina signal monsters also get, because a 5-beat crawl with no cue reads
 ## as a bug (§2.3.4). Edges only, never per-step.
 ## v0.26.0: the payload carries `hard_stop` — whether THIS side's 0-stamina mode refuses movement
-## outright (the /winded dial) rather than crawling. Presentation splits on it: the sweat-drop now
-## means ONLY "winded, cannot move", while a crawling/resting entity is told by the recovery bar +
-## transparency (the stamina_recovery event). Read host-side from the same per-side dial the movement
-## gate reads, so the cue can never disagree with the adjudication.
+## outright (the /winded dial) rather than crawling. Read host-side from the same per-side dial the
+## movement gate reads, so the cue can never disagree with the adjudication.
+## v0.27.0 INVERTED the presentation split (hard stop became the default): the sweat-drop now marks the
+## CRAWL — i.e. it shows when hard_stop is FALSE — because a hard-stopped entity is already told twice
+## (the distinct "winded" reject bonk plus the recovery bar), while a crawler had no other tell. See
+## main.gd's _handle_exhausted_event, which is where the split is applied.
+## Because this event is an EDGE, a live mode FLIP with someone already at 0 crosses nothing — that is
+## what resync_exhaustion_cues exists to repair (v0.27.1).
 func _post_exhausted(entity_id: int, on: bool) -> void:
 	NetEvents.post_event("exhausted", {
 		"entity_id": entity_id, "on": on,

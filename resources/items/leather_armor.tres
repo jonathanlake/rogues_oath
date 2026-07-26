@@ -8,6 +8,7 @@ display_name = "leather armor"
 category = 1
 atlas_coords = Vector2i(1, 12)
 usable = false
+equip_slot = 0
 heal_amount = 0
 armor_weight = 1
 phys_damage_reduction = 0.1

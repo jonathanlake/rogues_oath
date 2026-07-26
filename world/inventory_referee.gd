@@ -169,6 +169,33 @@ func try_pickup(mover_id: int, tile: Vector2i) -> void:
 	})
 
 
+## Host-only: put `item_name` into `entity_id`'s bag at the FIRST FREE SLOT and return that slot index, or
+## -1 when the bag is FULL (v0.27.1). The shared "a name goes into a bag" primitive, extracted so a caller
+## outside this referee can neither hand-roll the capacity rule nor reach into `_inventories` — today's one
+## caller is the `/class` loadout swap, which has to put the armor you were WEARING somewhere rather than
+## destroying it (DESIGN §2.10's "swap in place so nothing is lost", one slot over).
+##
+## The bag is a COMPACT pickup-order array, so "first free slot" IS the append index — deliberately the
+## same `var slot := bag.size(); bag.append(...)` shape try_pickup and the G-key path commit with, reading
+## capacity from the same authored `inventory_slots`.
+##
+## POSTS NOTHING, on purpose: this is a bag mutation, not an outcome. The caller owns the §2.3.4 feedback
+## for whatever it was doing (a /class stow rides its `equip_item` event), and a -1 return is the caller's
+## cue to refuse VISIBLY rather than lose the item. Monsters (negative ids) and an empty name are refused.
+func try_add_to_bag(entity_id: int, item_name: String) -> int:
+	if entity_id <= 0 or item_name.is_empty():
+		return -1
+	if not _inventories.has(entity_id):
+		var fresh: Array[String] = []
+		_inventories[entity_id] = fresh
+	var bag: Array[String] = _inventories[entity_id]
+	if bag.size() >= GameManager.config.inventory_slots:
+		return -1
+	var slot := bag.size()
+	bag.append(item_name)
+	return slot
+
+
 ## Host-only F5 round-reset hook (v0.18.0), called by Main._reset_round beside CombatReferee.reset_round():
 ## a fresh round starts every bag empty (fresh round, fresh bags). Belt-and-suspenders with the child-exit
 ## erase (the mass free() of players in _reset_round fires that per player), but clearing wholesale here is
@@ -325,6 +352,14 @@ func _validate_equip_item(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# for one). Everything above this point — dead / stunned / busy / slot shape — already gated both paths.
 	var item: ItemType = GameManager.config.item_by_name(item_name)
 	if item != null and item.category == ItemType.Category.EQUIPMENT:
+		# SLOT ROUTING (v0.27.1): "EQUIPMENT" is a category, not a socket. Until now this branch WAS the
+		# body slot by assumption, so the first non-body wearable — the off-hand kite shield DESIGN
+		# §2.11.1 is waiting on — would have silently replaced worn chainmail. `ItemType.equip_slot` is
+		# the discriminator, and this is the tripwire: BODY takes the implemented path, everything else
+		# refuses distinctly (§2.2.8) rather than overwriting armor. When a socket lands it becomes
+		# another arm here, beside _equip_body.
+		if item.equip_slot != ItemType.EquipSlot.BODY:
+			return { "ok": false, "reason": "no slot for that yet" }
 		return _equip_body(sender_peer_id, slot, bag, item)
 	# Resolve the bag entry as a WEAPON via the shared catalog (server-authoritative). A consumable / unknown name
 	# is not equippable — reject distinctly.

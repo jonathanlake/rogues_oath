@@ -39,8 +39,11 @@ const _GAME_FIELD_SPECS := {
 	"monster_regen_refills_full": { "bool": true },
 	"player_passive_regen_beats": { "min": 0.0, "max": 100.0, "post": "passive" },
 	"monster_passive_regen_beats": { "min": 0.0, "max": 100.0, "post": "passive" },
-	"player_exhausted_blocks_movement": { "bool": true },
-	"monster_exhausted_blocks_movement": { "bool": true },
+	# v0.27.1: both carry the "exhaust_cues" post hook — the `exhausted` event is EDGE-triggered and its
+	# payload carries hard_stop, so flipping this dial while somebody sits at 0 stamina crosses no edge and
+	# would leave that peer rendering the OTHER mode's cue (see MoveReferee.resync_exhaustion_cues).
+	"player_exhausted_blocks_movement": { "bool": true, "post": "exhaust_cues" },
+	"monster_exhausted_blocks_movement": { "bool": true, "post": "exhaust_cues" },
 	"stamina_max": { "min": 1, "max": 12, "int": true },
 	"monster_stamina_max": { "min": 1, "max": 12, "int": true },
 	"monster_think_min_beats": { "min": 0, "max": 30, "int": true },
@@ -71,13 +74,19 @@ var _monsters: Node2D = null
 # bool, so every /item spawn still routes through the ONE guarded, id-assigning path. Empty (unbound) on
 # clients — /item is host-adjudicated, so it is only ever called inside the host's validate.
 var _spawn_item: Callable = Callable()
+# The InventoryReferee, handed in by Main via activate() on the HOST only (v0.27.1). /class needs it: a
+# loadout swap now RETURNS the armor you were wearing to your bag instead of destroying it, and the bag is
+# that referee's authority — so the command asks it (try_add_to_bag) rather than touching bag internals.
+# Untyped (its script has no class_name, like the other referee refs). Null on clients / until injected;
+# every use site is null-guarded, so an unwired referee degrades to "the old piece has nowhere to go".
+var _inventory = null
 
 
 ## Host-only entry point, called by Main inside its is_server() branch after the referees are wired.
 ## Never called on clients (their node stays inert). `spawn_item` is the /item ground-item spawn Callable
 ## (v0.18.0) — Main binds it to _spawn_item_at so this component gains item-spawn access without a Main ref.
 func activate(players: Node2D, combat: Node, move_referee: Node, spawn_item: Callable = Callable(),
-		monsters: Node2D = null) -> void:
+		monsters: Node2D = null, inventory: Node = null) -> void:
 	_players = players
 	_combat = combat
 	_move_referee = move_referee
@@ -85,6 +94,8 @@ func activate(players: Node2D, combat: Node, move_referee: Node, spawn_item: Cal
 	# v0.25.0: the Monsters container joins the injection set — /mi resolves live instances and
 	# /snapshot enumerates them. Null-safe like every other ref (inert on clients).
 	_monsters = monsters
+	# v0.27.1: the inventory referee joins it too, for /class's armor-back-to-the-bag swap.
+	_inventory = inventory
 
 
 # ── Public methods ──────────────────────────────────────────────────────────────
@@ -317,6 +328,12 @@ func _dev_cmd_winded(by: String) -> Dictionary:
 	var hard_stop := not GameManager.config.player_exhausted_blocks_movement
 	GameManager.config.player_exhausted_blocks_movement = hard_stop
 	GameManager.config.monster_exhausted_blocks_movement = hard_stop
+	# RE-SYNC THE CUE (v0.27.1): the `exhausted` event is an EDGE and its payload carries hard_stop, and
+	# since v0.27.0 the sweat-drop marks the CRAWL — so an entity already sitting at 0 when the mode flips
+	# crossed no edge and kept the previous mode's cue (a crawler flipped to hard stop wore both
+	# signatures at once; a hard-stopped body flipped to crawl never grew a drip). Re-posting the edge
+	# rebuilds every payload from the live dial. Clients need no change — they already render the payload.
+	_move_referee.resync_exhaustion_cues()
 	if hard_stop:
 		return { "ok": true, "data": { "line": "%s set exhaustion to HARD STOP (0 stamina = no moving, both sides)." % by } }
 	return { "ok": true, "data": { "line": "%s set exhaustion back to the slow crawl (both sides)." % by } }
@@ -491,6 +508,10 @@ func _dev_cmd_snapshot() -> Dictionary:
 ## swap_weapon) every peer adopts + logs, and return a DEFERRED verdict so NetEvents does NOT also
 ## broadcast a generic dev_command event (the class_changed event is the whole outcome — no double log).
 ## Late-join is handled separately (sync_player_field "class" in peer_ready).
+##
+## v0.27.1 — /class RECONCILES THE BODY SLOT to the class loadout, and the piece you were wearing goes
+## BACK INTO YOUR BAG (a full bag refuses the swap out loud). See the gear block below for the three rules
+## and the four distinct skip reasons.
 func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dictionary:
 	if args.is_empty():
 		return { "ok": false, "reason": "usage: /class <name>" }
@@ -521,11 +542,46 @@ func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dic
 	# player-visibly via a weapon_skipped flag on class_changed — the "success" line must not silently mislead.
 	var busy: bool = _move_referee.is_entity_moving(sender_peer_id)
 	var weapon_skipped: bool = has_roster and starting != null and busy
-	# BODY ARMOR (v0.27.0 equipment phase 2): the class also DRESSES you, and it skips for the SAME reason
-	# (re-arming gear inside a committed window is the overlap the busy gate exists to prevent). Its own flag,
-	# because the two can skip independently and the log clause has to say WHICH one did not land.
+	# BODY ARMOR — /class IS A FULL LOADOUT SWAP, AND IT LOSES NOTHING (v0.27.1 rewrite of the v0.27.0
+	# equipment-phase-2 equip). Three rules, all of them fixes to the first pass:
+	#
+	# 1. RECONCILE, don't only equip. The body slot is set to the class's `starting_body_armor`
+	#    UNCONDITIONALLY — INCLUDING null, which STRIPS you. v0.27.0 equipped only when the new class
+	#    authored armor, so becoming an armour-less class silently left you in the PREVIOUS class's
+	#    chainmail: /class stopped being a live read of the class you are, which is its whole contract.
+	# 2. THE OLD PIECE GOES BACK IN THE BAG, at the first free slot, through the inventory referee's own
+	#    primitive (try_add_to_bag). v0.27.0 destroyed it — while the log line's comment claimed it had
+	#    gone back to the bag. Same "swap in place so nothing is lost" invariant the bag equip holds.
+	# 3. A FULL BAG REFUSES, VISIBLY: keep the armor you are wearing, skip the class armor, and say so
+	#    (`gear_skip_reason "bag full"`). Never a silent loss (§2.3.4).
+	#
+	# GATES now match the bag equip exactly — dead → stunned → busy — rather than busy alone (all three are
+	# "you cannot re-arm right now", and the bag path already rejected on all three). The class change
+	# itself still lands in every case: it is cosmetic + passives, and skipping it would make the command
+	# useless mid-fight. Each skip reason travels as its OWN string so the log line can say WHICH.
 	var starting_body: ItemType = player_class.starting_body_armor
-	var gear_skipped: bool = starting_body != null and busy
+	var worn: ItemType = player_node.equipped_body
+	# Nothing to do when the slot already holds exactly what the class wants (including both null) — no
+	# event, no bag traffic, no skip clause. Re-running /class on your own class is then a clean no-op.
+	var gear_reconcile: bool = worn != starting_body
+	var gear_skip_reason := ""
+	if gear_reconcile:
+		if not _combat.is_alive(sender_peer_id):
+			gear_skip_reason = "dead"
+		elif _combat.is_stunned(sender_peer_id):
+			gear_skip_reason = "stunned"
+		elif busy:
+			gear_skip_reason = "busy"
+	# STOW THE OLD PIECE BEFORE ANY BROADCAST. The bag can refuse (full), and that refusal has to ride the
+	# class_changed event — you cannot amend an event peers already received (the v0.17.1 reason the whole
+	# eligibility resolve happens up here). On success this ALREADY mutated the authoritative bag; the
+	# equip_item event below carries the slot so every peer mirrors it.
+	var stow_slot := -1
+	if gear_reconcile and gear_skip_reason.is_empty() and worn != null:
+		stow_slot = int(_inventory.try_add_to_bag(sender_peer_id, worn.display_name)) if _inventory != null else -1
+		if stow_slot < 0:
+			gear_skip_reason = "bag full"
+	var gear_skipped: bool = not gear_skip_reason.is_empty()
 	var class_data := {
 		"entity_id": sender_peer_id,
 		"class": player_class.display_name,
@@ -535,6 +591,7 @@ func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dic
 		class_data["weapon_skipped"] = true  # present-only, like other optional event fields
 	if gear_skipped:
 		class_data["gear_skipped"] = true  # present-only, the weapon_skipped pattern exactly
+		class_data["gear_skip_reason"] = gear_skip_reason  # v0.27.1: four distinct skips, four distinct lines
 	NetEvents.post_event("class_changed", class_data)
 	if has_roster and starting != null and not busy:
 		player_node.set_weapon(starting)
@@ -543,21 +600,25 @@ func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dic
 			"weapon": starting.display_name,
 			"by": by,
 		}, sender_peer_id)
-	if starting_body != null and not busy:
+	if gear_reconcile and not gear_skipped:
 		# Host-authoritative apply FIRST, then broadcast — the set_weapon precedent directly above, and the
 		# SAME `equip_item {gear: true}` event the bag equip posts, so every peer adopts gear through ONE
-		# handler. slot -1 says "this did not come out of a bag": main.gd's mirror guard skips it, so no bag
-		# entry is touched. The previously-worn item is REPLACED, not returned to the bag — /class hands you a
-		# whole loadout, which is a dev convenience, not a trade; the bag equip is the real acquisition path.
+		# handler. slot -1 still says "this did not come out of a bag" (main.gd's bag-slot mirror guard skips
+		# it); an EMPTY `equipped` is the STRIP, and the present-only `stowed_slot` is the NEW bag slot the
+		# previously-worn piece was appended into — a different mirror operation from the bag equip's
+		# in-place return, hence its own field rather than an overload of `slot`.
 		player_node.set_body_armor(starting_body)
-		NetEvents.post_event("equip_item", {
+		var gear_data := {
 			"entity_id": sender_peer_id,
 			"name": player_node.display_name,
 			"slot": -1,
-			"equipped": starting_body.display_name,
-			"returned": "",
+			"equipped": starting_body.display_name if starting_body != null else "",
+			"returned": worn.display_name if worn != null else "",
 			"gear": true,
-		}, sender_peer_id)
+		}
+		if stow_slot >= 0:
+			gear_data["stowed_slot"] = stow_slot
+		NetEvents.post_event("equip_item", gear_data, sender_peer_id)
 	# Deferred: the class_changed broadcast IS the outcome — suppress the generic dev_command broadcast
 	# (ok:true so it isn't a reject; deferred:true so NetEvents skips the broadcast + seq).
 	return { "ok": true, "deferred": true }
@@ -757,10 +818,16 @@ func _dev_config_game_row(alias: String, field: String, value_token: String, by:
 			var float_value := clampf(value_token.to_float(), float(spec["min"]), float(spec["max"]))
 			GameManager.config.set(field, float_value)
 			note = "%s → %.2f" % [field, float_value]
-		# Post-write hooks, by name: "passive" re-arms the always-on regen chains so a knob turned
-		# on mid-session reaches every already-spawned entity (both split fields share it).
-		if str(spec.get("post", "")) == "passive":
-			_move_referee.start_passive_regen_all()
+		# Post-write hooks, by name (v0.27.1: a match, so a third hook is one arm):
+		#  "passive"      — re-arm the always-on regen chains so a knob turned on mid-session reaches
+		#                   every already-spawned entity (both split fields share it).
+		#  "exhaust_cues" — re-post the exhaustion edge for anyone already at 0, because this write
+		#                   CHANGES WHAT THE CUE MEANS and no edge is crossed by the write itself.
+		match str(spec.get("post", "")):
+			"passive":
+				_move_referee.start_passive_regen_all()
+			"exhaust_cues":
+				_move_referee.resync_exhaustion_cues()
 		return { "ok": true, "note": note }
 	match field:
 		"tactical_beat_sec":

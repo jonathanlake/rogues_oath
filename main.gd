@@ -605,7 +605,7 @@ func _ready() -> void:
 		# The item-spawn Callable (v0.18.0) hands DevCommands the /item spawn access WITHOUT reaching up
 		# into Main: it wraps _spawn_item_at (host-only author API), so the component stays decoupled (it
 		# calls a value, not a parent) and every item still spawns through the ONE guarded, id-assigning path.
-		_dev_commands.activate(_players, _combat, _referee, _spawn_item_at, _monsters)
+		_dev_commands.activate(_players, _combat, _referee, _spawn_item_at, _monsters, _inventory)
 		NetEvents.register_handler("dev_command", _dev_commands.validate)
 		print("[HOST] server started (peer %d) — spawning host player" % multiplayer.get_unique_id())
 		# Spawn the host's own player immediately — no RPC needed. (_spawn_config records the reset
@@ -967,7 +967,14 @@ func _handle_attack_event(event: Dictionary) -> void:
 	# distinct cue). The referee tags a rogue's dagger hit on a FLANKED or STUNNED target; every peer reads
 	# the same event `tags` and plays a "!"-suffixed popup, a pitched-up impact, and (in game_log) the sneak
 	# line. Absent on every other hit. The tag string is the wire contract — it changed with the mechanic.
-	var sneak := (data.get("tags", []) as Array).has("sneak")
+	# ZERO-DAMAGE GUARD (v0.27.1): the decoration is suppressed at damage 0. A doubled zero is still zero —
+	# ×2 on a pure-setup ability (kick authors damage 0 since v0.27.0) is not a sneak attack, and crowing
+	# about one would be exactly the confusable feedback §2.3.4 forbids.
+	var damage := int(data.get("damage", 0))
+	var sneak := (data.get("tags", []) as Array).has("sneak") and damage > 0
+	# ARMOR (v0.27.1): the host tags a hit whose number its mitigation seam actually changed and stamps the
+	# points ABSORBED beside it. Read on every peer off the one event, like `sneak` — the popup colour below.
+	var armored := (data.get("tags", []) as Array).has("armor")
 	var attacker := _node_for_peer(attacker_id)
 	var target := _node_for_peer(target_id)
 	# Direction of the strike, for the attacker's directional lunge. Prefer the two nodes' tiles; on
@@ -1059,14 +1066,24 @@ func _handle_attack_event(event: Dictionary) -> void:
 				# Its OWN word, not a "0": the number would read as "the hit was worthless", when what
 				# happened is that the defender SPENT something to stop it (v0.26.0).
 				_fx.damage_popup("block", DamagePopup.MISS_COLOR, target.tile)
-			else:
+			elif damage > 0:
 				# id-sign invariant (players POSITIVE ids, monsters NEGATIVE): target_id < 0 ⇒ a monster
 				# was struck (a player→enemy hit) → white; target_id > 0 ⇒ a player took the hit → red.
+				# ARMOR overrides the colour (v0.27.1): a mitigated hit floats STEEL BLUE, so "some of that
+				# was turned aside" is visible at the moment it happens rather than only in the log. It wins
+				# over the side-colour because the fact worth reading is the mitigation; a sneak attack keeps
+				# its "!" suffix on top, so the two decorations compose instead of hiding each other.
 				var hit_color := DamagePopup.PLAYER_HIT_COLOR if target_id < 0 else DamagePopup.DAMAGE_COLOR
-				# A sneak attack reads "-N!" (the "!" is the distinct-outcome tell, §2.3.4) in the same white.
-				var hit_damage := int(data.get("damage", 0))
-				var hit_text := ("-%d!" % hit_damage) if sneak else ("-%d" % hit_damage)
+				if armored:
+					hit_color = DamagePopup.ARMOR_COLOR
+				# A sneak attack reads "-N!" (the "!" is the distinct-outcome tell, §2.3.4).
+				var hit_text := ("-%d!" % damage) if sneak else ("-%d" % damage)
 				_fx.damage_popup(hit_text, hit_color, target.tile)
+			# ZERO-DAMAGE LANDED HIT (v0.27.1): NO POPUP AT ALL. A "-0" reads as a broken hit, and since
+			# v0.27.0 it is a shipped outcome — kick authors damage 0 (a pure stun setup). The contact still
+			# has its cues: play_hurt + the impact SFX fired above, and the stun that IS the outcome arrives
+			# on its own `status_applied` event with its icon, reel and log line. Nothing is swallowed
+			# (§2.3.4) — the outcome is simply "you got stunned", not "you took damage".
 		# LOCAL-only red hit vignette (v0.6.3 juice): fires ONLY when it's OUR OWN avatar being struck
 		# (landed — we're already past the whiff branch). Suppressed on a godded no-op (no damage taken).
 		# Pure local presentation off the same attack event every peer receives.
@@ -1271,6 +1288,10 @@ func _on_inventory_slot_activated(slot: int) -> void:
 		ItemType.Category.POTION:
 			NetEvents.submit_intent("use_item", { "slot": slot })
 		ItemType.Category.EQUIPMENT, ItemType.Category.WEAPON:
+			# v0.27.1 note: EQUIPMENT still submits ONE intent regardless of which socket the item claims
+			# (ItemType.equip_slot). Deciding here which slot it goes to — or whether that slot exists yet —
+			# would be a client adjudicating a rule (§2.5); the host routes on equip_slot and refuses an
+			# unimplemented socket with its own reason, which this client renders like any other reject.
 			NetEvents.submit_intent("equip_item", { "slot": slot })
 
 
@@ -1284,6 +1305,11 @@ func _on_inventory_slot_activated(slot: int) -> void:
 ## The `gear` flag (present-only, host-stamped) is what picks the slot: with it, `equipped` names an ItemType
 ## bound for the BODY socket; without it, a WeaponType bound for the hand. Read with .get() + a false default
 ## like every other present-only field, so the weapon path is byte-identical to v0.19.x.
+##
+## v0.27.1 adds two gear-only shapes, both from `/class`'s loadout reconcile: an EMPTY `equipped` STRIPS the
+## body slot (a class that wears nothing), and a present `stowed_slot` says the piece being replaced was
+## APPENDED into a new bag slot rather than returned in place. Both are present-only, so the bag equip path
+## is unchanged.
 func _handle_equip_item_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
 	var entity_id := int(data.get("entity_id", 0))
@@ -1295,9 +1321,16 @@ func _handle_equip_item_event(event: Dictionary) -> void:
 	if player == null:
 		return
 	if is_gear:
-		var item := GameManager.config.item_by_name(equipped_name)
-		if item != null:
-			player.set_body_armor(item)
+		if equipped_name.is_empty():
+			# STRIP (v0.27.1): /class reconciled the body slot to a class that wears nothing, so the slot
+			# CLEARS. An empty `equipped` is the wire form of "unarmored" — null is a legal body-slot state
+			# (set_body_armor's own contract), not an error, and without this arm the name resolve below
+			# would find nothing and silently leave the previous class's armor painted on every peer.
+			player.set_body_armor(null)
+		else:
+			var item := GameManager.config.item_by_name(equipped_name)
+			if item != null:
+				player.set_body_armor(item)
 	else:
 		var weapon := GameManager.config.weapon_by_name(equipped_name)
 		if weapon != null:
@@ -1310,6 +1343,15 @@ func _handle_equip_item_event(event: Dictionary) -> void:
 			player.inventory.remove_at(slot)
 		else:
 			player.inventory[slot] = returned_name
+	# STOW mirror (v0.27.1): /class's loadout reconcile puts the piece you were WEARING into a NEW bag slot
+	# (the first free one — an append, since the bag is a compact pickup-order list), which is a different
+	# operation from the bag path's in-place return above and so rides its own present-only `stowed_slot`.
+	# The equality check is the same lockstep assumption the `slot < size()` guard above makes: in normal
+	# play the host's first free slot IS this mirror's end, and a mismatch means the mirror already drifted,
+	# in which case appending blind would make it worse.
+	var stowed_slot := int(data.get("stowed_slot", -1))
+	if stowed_slot >= 0 and not returned_name.is_empty() and stowed_slot == player.inventory.size():
+		player.inventory.append(returned_name)
 	_pickup_sfx.play()  # equip cue (Feel= placeholder — reuses the pickup tick; a distinct "gear changed" sound later)
 	if entity_id == multiplayer.get_unique_id():
 		_hud.on_inventory_changed(entity_id)
