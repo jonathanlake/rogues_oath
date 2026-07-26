@@ -224,13 +224,18 @@ Not scheduled — pulled in when their moment comes:
   seam in MoveReferee — the passive framework is combat-only); monster stamina counts in the F3
   `/ai` overlay (two-line add to ai_decision); the deferred two-instance verification matrix
   (recorded in the v0.24.0 plan file), only insofar as it still describes shipped behavior.
-- **INSTANT ABILITIES — in-flight PROVISIONAL EXPERIMENT (v0.26.0, `instant_abilities_enabled`,
-  default ON)**: Shield Block (knight) + Shadow Step (rogue). Design + the exact suspensions live
-  in **DESIGN §2.11.1** — read that, not this bullet. Open: the **graduate-or-revert verdict** from
-  Jon+Jeff (yes ⇒ §2.1.3 and Part 4 Q9 get REWRITTEN, not excepted, and the cooldown model needs a
-  general home; no ⇒ the toggle goes off and the code comes out — nothing is built on top until
-  then); whether a shield should stop a magical smite (flagged for Jeff); whether Shadow Step
-  belongs on the rogue at all (Jon's assignment, Jeff left it unassigned).
+- **INSTANT ABILITIES + ABILITY COOLDOWNS — in-flight PROVISIONAL EXPERIMENT (v0.26.0
+  `instant_abilities_enabled`, default ON; WIDENED v0.27.0)**: Shield Block (knight) + Shadow Step (rogue),
+  and since v0.27.0 **cooldowns on STRIKE abilities too** (Kick 40 / Shield Bash 40, authored on the
+  `.tres` as `ActiveAbility.cooldown_beats`). Design + the exact suspensions live in **DESIGN §2.11.1** —
+  read that, not this bullet. Note the widening goes FURTHER than the original suspension: an instant has
+  no occupied window to pay with, a strike DOES and now pays twice, which is squarely what Part 4 Q9
+  forbids. Open: the **graduate-or-revert verdict** from Jon+Jeff, now covering both halves (yes ⇒ §2.1.3
+  and Q9 get REWRITTEN, not excepted, and the cooldown model — half-built already, since every
+  ActiveAbility carries the field — needs a general home; no ⇒ the toggle goes off, strike cooldowns go
+  back to 0, and the code comes out — nothing is built on top until then); whether a shield should stop a
+  magical smite (flagged for Jeff); whether Shadow Step belongs on the rogue at all (Jon's assignment,
+  Jeff left it unassigned).
 - ~~**Weapon "attack range"** (Jeff's v0.25.0 verdict: longsword 3-5, dagger 2-6, club 1-4)~~ —
   **RESOLVED v0.26.1**: Q11 ANSWERED (Jeff via Jon, 2026-07-26) as reading (a), DAMAGE ranges.
   Shipped as `WeaponType.damage_min`/`damage_max` rolled per landed hit — longsword 3-5, dagger 2-6,
@@ -242,8 +247,11 @@ Not scheduled — pulled in when their moment comes:
   deliberately reserved yellow for crits — Jon, 2026-07-21)
 - Class starting weapons (`PlayerClass.starting_weapon`; Jon deferred 2026-07-21 — Tab swap
   covers it for now; revisit when classes grow stats)
-- Backstab vs never-moved targets (v0.11.0 design call: spawn facing = ZERO = un-backstabbable;
-  Jeff to rule on sneak-attack flavor — should an idle/unaggroed monster have a default facing?)
+- ~~Backstab vs never-moved targets (v0.11.0 design call: spawn facing = ZERO = un-backstabbable)~~ —
+  **MOOT since v0.27.0**: the passive stopped reading facing at all (SNEAK ATTACK = flanked-by-ally OR
+  stunned target, DESIGN §2.3.10), which is what Jeff's ruling amounted to. A default spawn FACING is still
+  a live question for anything else that reads one (`is_attack_from_behind` survives as a helper), but no
+  shipped mechanic depends on it now.
 - Late-join party sync (v0.12.0 review): a joiner sees full HP for damaged teammates (own-bar
   is accurate; OTHERS' state has no snapshot) and no record of already-dead ones — wants an
   hp/death roster on the `peer_ready` targeted sync; also unlocks party-frame re-enable
@@ -341,13 +349,16 @@ Not scheduled — pulled in when their moment comes:
   resources do and nothing equips into a socket — the sockets are cosmetic. Its own milestone when
   it comes: what a worn item does, how it stacks with the held weapon, and the `[Off]`-hand shield
   the abilities track (§2.11) is waiting on. Coordinate with the build-system pass.
-  **PHASE 1 SHIPPED v0.26.0 at CLASS level** (DESIGN §2.3.8): `PlayerClass.armor_weight` +
-  `phys_damage_reduction` (rogue LIGHT/0.10, knight MEDIUM/0.25) give armor real mechanical weight
-  — percentage physical mitigation and a slower stamina recovery — without any item existing.
-  STILL PARKED here: armor/shield ITEMS and resources, the equip slots themselves, and the
-  weight-PROMOTION rule (a worn set's heaviest piece setting the wearer's band, so a knight in
-  leather rests light) — plus the envisioned spellcasting / mobility penalties the heavy band should
-  carry. Shield Block (§2.11.1) is likewise "the kite shield at class level" until this lands.
+  **PHASE 1 SHIPPED v0.26.0 at CLASS level; PHASE 2 SHIPPED v0.27.0 as a REAL BODY SLOT** (DESIGN
+  §2.3.8 / §2.10): armor is a worn `ItemType` now — `leather_armor.tres` + `chainmail.tres` carrying the
+  weight band and the physical reduction, equipped into the HUD's **Body** socket by left-clicking the bag
+  (the instant, busy-gated weapon-equip precedent), with `PlayerClass.starting_body_armor` seeding a class's
+  kit and late joiners syncing worn gear. The class-level fields are gone; the numbers moved onto the items.
+  STILL PARKED here: the OTHER EIGHT sockets (head / gloves / boots / rings / amulet, and the `[Off]`-hand
+  shield §2.11 waits on), armor/shield items for them, the weight-PROMOTION rule (a worn set's heaviest
+  piece setting the band — a no-op while body is the only armor slot), and the envisioned spellcasting /
+  mobility penalties the heavy band should carry. Shield Block (§2.11.1) is still "the kite shield at class
+  level" until a real off-hand item lands.
 - Ability-bar occlusion (v0.21.0, accepted at ship): the bottom-center bar covers ~10×2 tiles at the
   world frame's bottom edge — clicks pass through (`MOUSE_FILTER_IGNORE`), so it is occlusion only —
   and at very small window sizes it can overlap the bottom-left game-log CanvasLayer (identity-scaled

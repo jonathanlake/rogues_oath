@@ -9,6 +9,68 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.27.0 (2026-07-26) — JEFF'S SECOND VERDICT: the test loadout becomes the game, armor you can take
+  off, and backstab becomes SNEAK ATTACK.** Driven end-to-end by **Jeff's second playtest batch** (~35
+  items). Big picture: the `/config 2` loadout everyone had been testing with is now simply *the game*, real
+  armor exists as objects, the rogue's signature move works, abilities got teeth and cooldowns, and the
+  goblins talk more.
+  **THE TEST LOADOUT IS NOW THE DEFAULT.** Fight tempo is **0.25s/beat** (was 0.50), and every weapon carries
+  the heavier telegraph Jeff had been tuning: longsword and club **wind up 3 beats, recover 4**; dagger
+  **2 / 4** (still the fast pick). Nothing to type at session start any more — `/config 2` is now a no-op
+  that just restates the defaults.
+  **STICKY SWINGS ARE OFF by default.** Jeff reported "attacks landing from two tiles away": a swing could
+  still catch someone who sidestepped but stayed next to you. It was legal by the rule and unreadable on
+  screen, so it's gone. Step off the tile and the swing misses, full stop. (`/config swing_catches_adjacent 1`
+  brings it back if we miss it.)
+  **0 STAMINA NOW MEANS STOPPED.** With a one-point pool, the "very slow crawl" was a soft answer to a hard
+  budget — hard stop is the default on both sides now (the crawl still lives behind `/winded`). And the
+  **sweat drop swapped meaning**: it marks the CRAWL now, because the hard stop already tells you twice (the
+  refused-move bonk plus the recovery bar).
+  **BACKSTAB → SNEAK ATTACK.** The old rule needed you to hit a monster in the back, which you could never
+  actually see and which monsters defeated just by turning to face you — so the rogue's signature move fired
+  by accident or not at all. Now the dagger doubles up when the target is **flanked by an ally** (someone
+  standing on its far side — a thing the party sets up together) **or STUNNED** — which makes the rogue's own
+  Kick a setup: kick, then stab. Log lines and popups read "sneak-attacks". *(The FILES are still named
+  backstab.\* on purpose — renaming a resource risks breaking its links, and this build shipped without the
+  automated test pass. Cosmetic only.)*
+  **REAL ARMOR YOU CAN TAKE OFF.** v0.26.0 gave classes armor as a number; now armor is an ITEM. **Leather
+  armor** (light, 10%) and **chainmail** (medium, 25%) exist, live in the **Body** equipment socket, and are
+  equipped by left-clicking them in your bag — the same instant swap weapons use, with whatever you were
+  wearing going back into the freed slot. The rogue starts in leather, the knight in chainmail. Hand your
+  chainmail to someone else and you genuinely become lighter: you take more damage AND recover stamina faster,
+  because the weight band is on the item. Armor also got a **flat** term beside the percentage — a hit is
+  reduced by the percentage or by a flat 1/2/3 by weight, whichever helps more — because 25% of a 2-damage
+  club swing rounds back to 2, which was exactly where Jeff expected plate to matter. And a **floor**:
+  a monster's hit on you never lands for 0 (Jeff's example: 2 vs chainmail now lands 1). Enemies always
+  threaten.
+  **ABILITIES GOT TEETH AND COOLDOWNS.** Kick is **0 damage / 6-beat stun / 40-beat cooldown** — a pure
+  setup tool, and 6 beats is deliberately just enough to land one sneak attack. Shield Bash is **4 damage /
+  6-beat stun / 40**. Shadow Step is **40**, Shield Block stays 30. A press on cooldown bonks and says "on
+  cooldown (12.3s)"; the ability socket darkens while it drains. Cooldowns are spent when you PRESS, not when
+  you connect — a miss still costs you the ability. *(This deliberately stretches the "no separate cooldowns"
+  rule further than the v0.26.0 experiment did, and it's flagged as part of that same still-open verdict:
+  Shield Block, Shadow Step and now these two are the whole question, and all of them switch off together.)*
+  **THE GOBLINS TALK MORE — and only when they should.** Four new moments: a **shaman's death** gets its own
+  panicked reaction ("the shaman's DOWN!!"), a caster **forced into melee** complains ("I don't DO clubs!"),
+  a hurt shaman **screams for help** while its pack is still up, and out of combat they **mutter to
+  themselves** occasionally. Plus ~8 new lines across the old moments. And the revenge bark is now **scoped
+  to goblins actually in the fight** — killing one no longer makes something three rooms away shout.
+  **WEAPON ANIMATION FIXES.** Left-facing swings and wind-ups were mirrored in their arc but not in their
+  art, so the blade read as vertical or inverted — fixed properly (the sprite is now mirrored too). Players
+  and monsters wind up DIFFERENTLY: a player hauls the weapon back in one long draw and holds it loaded, a
+  goblin plants and jitters. And a Shadow Step now clears your weapon pose — blinking out of a wind-up used
+  to leave the weapon raised forever.
+  **DAMAGE TYPES (labels only).** Every weapon says what it deals — slashing (longsword), blunt (club),
+  piercing (dagger, bow). Nothing reads it yet and no number changed; it's the groundwork for
+  resistances/vulnerabilities later.
+  **Log + tuning.** The log stopped saying "X draws the club..." on every telegraph (it now says "winds up",
+  because "draws" already means a weapon swap) and stopped repeating "Exhausted — you can barely move" on
+  every step. New `/ab` command tunes any ability live (`/ab kick cooldown_beats 25`), and the backtick panel
+  gained a **CLASSES** section for exactly that plus three armor-flat dials.
+  **UNVERIFIED, for Jon's eyeball pass:** this build shipped with a boot check only (no automated two-instance
+  run, by Jon's call), so the two armor sprite cells and every animation change above want looking at before
+  a release.
+
 - **v0.26.1 (2026-07-26) — WEAPON DAMAGE BANDS: "attack range" answered.** The one line held back
   from v0.26.0 lands. Jeff's playtest verdict had listed an **"attack range"** per weapon —
   longsword 3-5, dagger 2-6, club 1-4 — and because the phrase had three possible readings (one of

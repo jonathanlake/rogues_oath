@@ -80,7 +80,11 @@ decision.
   commitment, not an enemy's). See DESIGN §2.11. One further carve-out is **provisional and
   toggled**: the v0.26.0 instants experiment (`instant_abilities_enabled`) suspends §2.1.3 for
   Shield Block + Shadow Step only — DESIGN §2.11.1 is the spec and the verdict is pending; off =
-  the invariant holds everywhere. Do not extend it or build on it.
+  the invariant holds everywhere. **v0.27.0 widened it once, deliberately and on Jon's approval**
+  (Jeff's second verdict): Part 4 Q9's "no separate cooldowns" is now suspended for STRIKE abilities too
+  (`ActiveAbility.cooldown_beats` — kick/shield bash 40 beats), which goes further than the original
+  carve-out because a strike already pays in occupied beats. It is part of the SAME pending verdict and
+  reverts the same way (`cooldown_beats 0`). Do not widen it again or build on it.
 
 - **Networking: server-authoritative intent → verdict, event-sync only** (DESIGN §2.5).
   Clients send commit requests; the server adjudicates and stamps duration/outcome. Gameplay

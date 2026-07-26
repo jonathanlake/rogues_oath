@@ -147,10 +147,12 @@ What varies is RECOVERY: the rest-to-recover idle wait is picked from the mover'
 (§2.3.8 armor phase 1) — light/unarmored 2.5, medium 3.0, heavy 3.5, monsters 3.5 **beats**
 (*units pending Jeff confirmation — he tuned beat-denominated panel dials*). Heavier armor rests
 slower; that is the whole cost curve. The per-point interval and instant-refill dials survive
-live-tunable but are **moot at max 1** (the first tick fills the pool). At 0 stamina you can STILL
-move — the step commits as an exhausted **crawl** (`player_`/`monster_exhausted_step_beats`, default
-5/tile; Jon v0.24.1: "very slow, never stopped") and the Commitment Rule does the punishing;
-`/winded` flips that side to a hard stop instead. Pool refills on battle entry (LOCKOUT-gated by
+live-tunable but are **moot at max 1** (the first tick fills the pool). At 0 stamina you **cannot move at
+all** — the distinct "winded" reject — since **v0.27.0 made hard stop the DEFAULT on both sides** (Jeff's
+second playtest verdict: at a one-point pool the crawl was a soft answer to a binary budget, and the spend
+should actually gate the step). The v0.24.1 **crawl** (`player_`/`monster_exhausted_step_beats`, 5/tile —
+"very slow, never stopped") survives behind `/winded` and the two `*_exhausted_blocks_movement` fields, so
+the softer shape is one keystroke away. Pool refills on battle entry (LOCKOUT-gated by
 `*_refill_lockout_beats` — a pace flicker back into the same fight keeps the earned pool); otherwise
 ONLY by resting, and any move or committed action restarts the clock. Attacks never spend; explore
 movement untouched; monsters ride the identical check and additionally roll 1–6 beats of visible
@@ -158,19 +160,29 @@ hesitation (whole brain held) at story-beat moments — battle entry (a "!" aler
 dots), target-died retarget, last-stand (allies all dead — the finale pause), and a cornered stall
 (each once per life; v0.24.3).
 
-**Presentation (v0.26.0, §2.3.4).** A spent entity — player or monster — goes semi-transparent and
-grows a thin vertical **recovery bar** beside its body that fills over the host-stamped wait, ending
-in a two-pulse **ready blink**; the bar restarts whenever activity restarts the clock. The
-**sweat-drop now means one thing only: hard-stop winded** (`/winded` mode), so "resting" and "cannot
-move" never read alike. HUD **pips appear only when max > 1** — at 1 the body's own cue is the read;
-raise the dial and the pips return.
+**Presentation (v0.26.0, §2.3.4; sweat INVERTED v0.27.0).** A spent entity — player or monster — goes
+semi-transparent and grows a thin vertical **recovery bar** beside its body that fills over the
+host-stamped wait, ending in a two-pulse **ready blink**; the bar restarts whenever activity restarts the
+clock. The **sweat-drop marks the CRAWL** — the non-hard-stop mode, and only that. v0.26.0 had it the
+other way round, which read backwards once hard stop became the default: the hard-stop mode already
+announces itself twice (a distinct reject bonk on every refused step, plus the bar), while the crawl's
+whole tell is "I am still moving, but wrong". Each mode now has exactly one visual signature. HUD **pips
+appear only when max > 1** — at 1 the body's own cue is the read; raise the dial and the pips return.
 
-STICKY SWINGS (v0.24.8): a melee wind-up still catches its intended victim if it sidestepped but
-stayed adjacent to the swinger — a deliberate, toggleable bend of §2.3's commit-to-ground rule
-(`swing_catches_adjacent`; escaping beyond adjacency still dodges). The same story beats drive
-GOBLIN BANTER (v0.24.4): host-picked overhead one-liners (chance-rolled, globally
-cooldown-throttled; an ally's death always draws a revenge bark from a packmate) — lines are
-GameConfig content. Every dial is split player_/monster_ (v0.25.0) and lives on the backtick DEBUG
+STICKY SWINGS (v0.24.8, **DEFAULT OFF since v0.27.0**): a melee wind-up could still catch its intended
+victim if it sidestepped but stayed adjacent to the swinger — a deliberate, toggleable bend of §2.3's
+commit-to-ground rule (`swing_catches_adjacent`). Jeff's second playtest verdict retired it by default: it
+read on screen as "attacks landing from two tiles away" (legal by the rule, illegible to the player, which
+§2.3.4 does not allow), and it degenerates for a BLINKED victim — the motion record is wiped by the
+teleport, leaving only the destination to test. Pure commit-to-ground is back: step off the tile and the
+swing whiffs. The toggle survives for A/B. The story beats drive
+GOBLIN BANTER (v0.24.4, expanded v0.27.0): host-picked overhead one-liners (chance-rolled, globally
+cooldown-throttled) — lines are GameConfig content, and the **nine moments** are engaged / retarget /
+last-stand / cornered (story-beat thinks), ally-died and its louder twin notable-death (a `banter_notable`
+monster — the shamans — dying; mutually exclusive, both forced past the chance roll and now scoped to a
+packmate actually IN the fight), forced-melee (a kiter made to swing), idle (rare out-of-combat muttering
+on each monster's own 15-30s timer) and help-me (a notable monster hurt while its pack still fights, once
+per life). Every dial is split player_/monster_ (v0.25.0) and lives on the backtick DEBUG
 TUNING PANEL (docs/dev-commands.md) — a GUI over the same server-authoritative dev_command pipe,
 with per-INSTANCE monster forks via `/mi`. Intent, unchanged: movement improves positioning but can
 no longer invalidate attacks (the kiting thread) — a fleeing healer burns dry and crawls. `/stamina`
@@ -316,31 +328,46 @@ revert switch it was while this was provisional.
    real game costs beats to swap once inventory exists — **M5 owns acquisition and replaces the
    hardwired roster.** Monsters keep their MonsterType attack fields this pass (unify later).
 
-8. **§2.3.8 — Armor as class weight (PHASE 1, v0.26.0; Jeff's verdict 2026-07-26).** Armor is
-   **percentage mitigation**, not a to-hit modifier — §2.3.1 stands: every attack that resolves still
-   lands, it just lands for less. Two fields on `PlayerClass`: an **`armor_weight` band**
-   (unarmored / light / medium / heavy) and **`phys_damage_reduction`** (a 0–1 fraction absorbed).
-   Shipped: rogue LIGHT / 0.10 (leather), knight MEDIUM / 0.25 (chainmail — the kite shield is medium
-   too). MonsterType mirrors the reduction field (0 today) as the forward seam.
+8. **§2.3.8 — Armor: worn weight + two-term mitigation (PHASE 2, v0.27.0; phase 1 v0.26.0 — Jeff's
+   verdicts 2026-07-26).** Armor is **mitigation**, not a to-hit modifier — §2.3.1 stands: every attack
+   that resolves still lands, it just lands for less. **Armor is now a WORN OBJECT.** `ItemType` (the
+   canonical home of the `ArmorWeight` enum since v0.27.0) carries the **weight band**
+   (unarmored / light / medium / heavy) and **`phys_damage_reduction`** (a 0–1 fraction absorbed);
+   `PlayerClass` carries only `starting_body_armor`, the item a class begins wearing. Shipped items:
+   **leather armor** LIGHT / 0.10 (rogue) and **chainmail** MEDIUM / 0.25 (knight) — the exact numbers
+   phase 1 hard-coded onto the classes, now on things you can take off, hand over or upgrade. MonsterType
+   keeps its own reduction field (0 today) as the armored-monster seam.
+   - **TWO TERMS, min-combined (v0.27.0).** A physical hit on a player is reduced by the PERCENTAGE or by
+     a **FLAT amount** keyed to the weight band (`GameConfig.armor_flat_reduction_light/_medium/_heavy` =
+     1/2/3), *whichever leaves the defender taking less*. Why both: a percentage does nothing to SMALL
+     hits (25% of a 2-damage club swing rounds back to 2), which is exactly where Jeff expected plate to
+     matter, while a pure flat rule would trivialize big ones. **UNARMORED is 0% AND flat 0** — the
+     absence of armor must never itself mitigate. Monster defenders keep the plain percentage path (no
+     band, no flat table exists for them).
+   - **The monster-damage FLOOR (v0.27.0).** A monster's physical hit on a player never lands for 0: if
+     mitigation would zero it, it lands for 1. Jeff's worked example is 2 damage vs chainmail (pct 2,
+     flat 0 → min 0), and an enemy that cannot hurt you is a broken fight. Player-dealt hits are NOT
+     floored — the rule is about enemies staying threatening, not about rounding.
    - **The kind split.** Reduction is **PHYSICAL only**. `smite` is magic and bypasses it (armor is
      not a ward — a future magic-resistance stat is its own field), and **`admin` damage is exempt**
      so `/mi hp` / `/mi kill` stay exact — a tuning tool that lies is worse than no tool.
    - **Where it applies.** One host-side seam inside `apply_damage`, AFTER the attacker's passive
      `modify_damage` chain and BEFORE the HP subtraction: a hit is priced (weapon base → wielder
-     bonus → passives, e.g. backstab) and only then armored. **Rounds half-up**, keeps the existing
-     0 floor, and read LIVE from the DEFENDER's class so a `/class` swap retunes the very next hit.
+     bonus → passives, e.g. a sneak attack) and only then armored. **Rounds half-up**, keeps the existing
+     0 floor, and read LIVE from the DEFENDER's worn item so an equip retunes the very next hit.
      A reduced hit carries an **`armor` tag** on its event — §2.3.4 requires the mitigation be
      visible, never a silent number change.
    - **The tradeoff philosophy (Jeff).** Heavy armor is not free defense: the *cost* is TEMPO. The
      armor weight band drives the stamina rest-to-recover wait (§2.2.10 — light 2.5, medium 3.0,
-     heavy 3.5), so a heavier class acts less often, which since v0.26.0 is the primary way classes
-     differ in movement. **Envisioned, not built:** the same band carrying spellcasting penalties (a
-     heavy-armored caster fumbling) and further mobility penalties — the field exists as that hook.
-   - **Phase 1 means CLASS level only.** Real armor ITEMS, the equipment slots they go in, and the
-     **weight-promotion rule** (the heaviest worn piece sets the wearer's band, so a knight who strips
-     to leather rests light) are all **future items-milestone material** — see §2.10 and the ROADMAP
-     equipment-slot bullet. Nothing here presumes an item exists; when items land, they promote the
-     band and supply the reduction, and these class fields become the unarmored baseline.
+     heavy 3.5), so a heavier wearer acts less often, which since v0.26.0 is the primary way builds
+     differ in movement — and since v0.27.0 it is a **choice you can change mid-run**: hand your
+     chainmail to someone and you start resting like a rogue. **Envisioned, not built:** the same band
+     carrying spellcasting penalties (a heavy-armored caster fumbling) and further mobility penalties.
+   - **Phase 2 = ONE real slot.** Body armor equips, unequips and swaps through the bag (§2.10) with the
+     weapon-equip precedent (instant, busy-gated). Still future: armor in the other eight sockets, and the
+     **weight-promotion rule** (the heaviest worn piece across several slots setting the band). With one
+     armor slot, the body item's band IS the wearer's band — promotion is a no-op today, which is why it
+     could wait. See §2.10 and the ROADMAP equipment-slot bullet.
 
 9. **§2.3.9 — Recovery beats only on CONTACT (v0.26.0; Jeff's verdict 2026-07-26).** A committed
    attack still owns its whole window when it LANDS — windup plus the planted recovery tail, exactly
@@ -364,6 +391,30 @@ revert switch it was while this was provisional.
    - **Presentation.** A whiff event carries a zero gameplay duration but still hands the client a
      present-only swing time, so the weapon rig plays a complete arc — §2.3.4 requires the miss to
      look like a miss, not like a dropped input.
+10. **§2.3.10 — SNEAK ATTACK: compromised, not turned around (v0.27.0; Jeff's second verdict
+   2026-07-26).** The rogue's dagger multiplier (×2, `resources/passives/backstab.tres`) now fires when the
+   target is **FLANKED BY AN ALLY** — a living, non-hostile body on the tile directly opposite the attacker,
+   so the target is sandwiched — **OR STUNNED**. It no longer reads the defender's facing at all.
+   - **Why the behind-arc went.** It was invisible in play: you cannot read an 8-way facing off a 32px
+     sprite, a monster turns to face whoever it attacks, and a never-moved monster faces NOWHERE and so
+     could never be backstabbed. The class's signature move fired by accident or not at all.
+   - **Why these two triggers.** Both are things a player can SEE and CREATE. Flanking is **co-op shaped**
+     (someone has to be on the other side — Jeff's ask), and the stun trigger makes the rogue's own Kick a
+     setup: kick, then sneak. Future: any *compromised* state qualifies (rooted, blinded, asleep) — the
+     rule is deliberately worded as a state test, not a geometry test, so adding one is adding a boolean.
+   - **Names.** The event tag and every player-facing string are **"sneak"** / "sneak attack". The script
+     and `.tres` deliberately keep their `backstab.*` FILENAMES (a `.tres` rename breaks loads through
+     Godot's uid cache, and this release shipped without harness testing). `is_attack_from_behind` stays in
+     the referee as a pure-math helper — the parked "should an idle monster have a default facing?"
+     question still references it.
+
+11. **§2.3.11 — Damage TYPES are labels (v0.27.0; Jeff's second verdict).** Every weapon declares a
+   `damage_type` — SLASHING (longsword), BLUNT (club), PIERCING (dagger, bow) — stamped onto its attack
+   events as a lowercase string. **Zero balance change:** nothing reads it, and armor's physical test stays
+   kind-based (`smite`/`admin` excluded) so all three are mitigated identically. It ships as IDENTITY plus
+   the data seam for the envisioned per-type resist/vulnerability work (a skeleton shrugging off piercing,
+   plate ignoring slashing) — which is a build-system-pass design, not a v1 mechanic.
+
 
 ### 2.4 Periodic Effects (DoTs / HoTs / regen / buffs)
 
@@ -622,17 +673,30 @@ stats through the equipper's own modifiers (§2.3.7 base+modifier), so the gobli
 becomes a fast weapon in the player's hands. A startup guard warns if any `display_name` is in
 both catalogs (a bag name resolves against both — ambiguity would equip/drink the wrong thing).
 
+**THE BODY SLOT IS REAL (v0.27.0 — equipment phase 2, Jeff's second verdict).** The EQUIPMENT bucket is no
+longer empty and one of the nine sockets is no longer cosmetic. Two armor items exist (`leather_armor.tres`,
+`chainmail.tres`), each carrying its own weight band + physical reduction (§2.3.8), and the **Body** socket
+equips them: left-click an EQUIPMENT item in the bag and it swaps into the slot, the previously-worn piece
+dropping back into the freed bag slot — the *identical* instant, busy-gated swap the weapon equip uses (so
+it cancels nothing; it is a zero-length action that can only happen between actions). The HUD paints the
+worn item's icon in that socket. A class declares what it starts in (`PlayerClass.starting_body_armor`;
+rogue leather, knight chainmail), seeded at spawn on every peer from shared config and re-equipped by
+`/class`; late joiners get a `sync_player_field "body_armor"` snap when a player's worn item differs from
+their slot default. Routing is now by CATEGORY through `category_of`, so POTION drinks while EQUIPMENT and
+WEAPON equip — the old "any ItemType drinks" shortcut would have tried to drink the leather.
+
 **Shipped so far:** item resources + catalog, ground items + walk-over pickup, a 5-slot bag,
 use-as-commit + heal pipe, dev spawn (v0.18.0); weapon drop-on-death + loot-to-bag + left-click
 use/equip-with-swap (v0.19.x); item CATEGORIES, potion-only autopickup + the "press G" invitation,
-manual G pickup as a host-adjudicated instant intent, and the config-driven 20-slot bag (v0.21.0).
+manual G pickup as a host-adjudicated instant intent, and the config-driven 20-slot bag (v0.21.0);
+**the BODY equipment slot with two real armor items, category-routed clicks, class starting armor and
+late-join gear sync (v0.27.0)**.
 
 **Still envisioned:** drop tables + the designer `.tres`-only authoring gate (= milestone **M5**,
-which owns that bar — this track points at it, doesn't restate its Done=); the EQUIPMENT slot model
-(wearables that actually equip — its own milestone, coordinate with the build-system pass; **armor's
-phase 1 shipped WITHOUT items in v0.26.0 as class-level weight + mitigation, §2.3.8** — this track
-still owns the items, the slots, and the weight-promotion rule that would make a worn set set the
-wearer's band); more
+which owns that bar — this track points at it, doesn't restate its Done=); the REST of the equipment slot
+model (the other eight sockets — head/gloves/boots/rings/amulet and the `[Off]`-hand shield §2.11 waits on
+— plus the **weight-promotion rule**, which is a no-op while body is the only armor slot; armor items
+themselves and the body slot shipped in v0.27.0, §2.3.8, after v0.26.0's class-level phase 1); more
 item categories (buffs, keys, scrolls, throwables); the open v1 questions — item stacking,
 drop/discard, numbers/cues (Feel=). Two known rough edges live with it: an item that lands
 *underneath* a standing player produces no arrival event and so no "press G" hint (G still works —
@@ -718,8 +782,25 @@ and nothing else anywhere behaves differently.
   suspension: §2.11's stun exception was defensible *because* the interrupt came from an opponent. This one has
   no such cover, which is exactly why it is a toggle and not a rewrite of §2.1.
 - **Part 4 Q9** ("unified occupancy — NO separate cooldowns, ever"). An instant has no occupied window to pay
-  with, so it pays with a cooldown timer beside the timeline. Two dials: `shield_block_cooldown_beats` (30),
-  `shadow_step_cooldown_beats` (20).
+  with, so it pays with a cooldown timer beside the timeline.
+
+**EXTENDED TO STRIKES (v0.27.0, Jeff's second verdict — same experiment, same pending verdict).** Cooldowns
+are now a field on the ability resource (`ActiveAbility.cooldown_beats`), and the two STRIKE abilities carry
+them: **Kick 40 beats** (damage 1 → **0**, stun 3 → **6** — enough to land one sneak attack: kick recovery
+2β + dagger windup 2β + margin) and **Shield Bash 40** (damage 2 → **4**, stun 3 → **6**). Shadow Step is
+**40** (Jeff believed it already was; made so) and Shield Block stays 30, both now authored in their `.tres`
+instead of in two GameConfig dials that only they could ever use. Tunable live with `/ab` and the panel's
+CLASSES section.
+- **This goes FURTHER than the original suspension, deliberately and on the record.** An instant has no
+  window to pay with; a strike DOES, and it now pays twice — occupied beats *and* a timer. That is squarely
+  what Q9 forbids, so it is flagged here as part of the SAME pending Jon+Jeff verdict rather than treated as
+  settled. An ability authored `cooldown_beats 0` behaves exactly as pre-v0.27.0, which is the revert.
+- **Spent at COMMIT, not at contact.** A strike whose resolve whiffs, or is fizzled by a stun or a blink,
+  still burns the cooldown — you spent the ability the moment you committed. (Distinct from §2.3.9's
+  recovery-on-contact refund, which shortens a window the referee owns rather than returning a resource.)
+  Shield Block remains the one charged on CONSUMPTION: holding a guard is free.
+- **Reject shape.** "on cooldown (N.Ns)" through the normal §2.2.8 pipe — bonk + sender-only line — checked
+  BEFORE the busy gate (the more informative refusal of the two, and a pure no-op).
 
 **Shield Block (knight, slot 2).** Raises a one-shot guard: the next incoming blow is negated whole. Instant,
 no window, usable mid-action. The cooldown is charged **on consumption, not on the raise** — holding a guard is
@@ -757,8 +838,9 @@ and stun generations. The teleport also clears the pipelined pending slot — th
 made real — and frees both occupancy and reservations, so no tile stays claimed.
 
 **Verdict question for Jon+Jeff:** does the game read better with these? If yes, §2.1.3 and Q9 need rewriting
-(not merely excepting) and the cooldown model needs a general home. If no, the toggle goes off and the code
-comes out. Nothing else should be built on top until that is answered.
+(not merely excepting) and the cooldown model needs a general home — which v0.27.0 has already half-built by
+putting `cooldown_beats` on every `ActiveAbility`. If no, the toggle goes off, the strike cooldowns go back
+to 0, and the code comes out. Nothing else should be built on top until that is answered.
 
 ### 2.12 Monster AI — Weighted Utility (v1 in progress — v0.22.0)
 
