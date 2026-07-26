@@ -547,6 +547,10 @@ func wind_up(attacker_id: int, target_tile: Vector2i) -> float:
 	# spans the true "cannot act" window. Shared commit_in_place (bump uses it too): from==to busy in one place.
 	if not _move_referee.commit_in_place(attacker_id, windup_sec + recovery_sec):
 		return -1.0
+	# NOTE (v0.28.0): the `windup` EVENT below is UNCHANGED and still required. Jeff's third batch deleted
+	# only the combat-LOG line for it (ui/game_log/game_log.gd's "windup" arm) — the event still drives the
+	# coil, the white flash, the telegraph sound and the weapon rig's raised pose on every peer, and the bow
+	# path (_validate_shoot) posts it too. Do not delete it thinking the telegraph went away; it went QUIET.
 	# Stamp the weapon on the telegraph event (present-only), mirroring _build_attack_data and the bow
 	# shoot path: a MELEE windup weapon (the goblin's club) rides its display_name so every peer's rig
 	# can pose the raised telegraph over the coil. A weaponless windup attacker stamps no field.
@@ -842,8 +846,10 @@ func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int, recovery
 			return
 	# Dodged / empty ground — a distinct WHIFF (the target moved off in time). target_tile rides so the miss
 	# cue lands on the committed tile; kind "smite" so the log reads "fizzles — dodged!" not a melee miss.
-	# RECOVERY ONLY ON CONTACT (v0.26.0): a dodged smite stamps duration_sec 0.0 (no spent tell) and the
-	# caster's recovery tail is released below — the dodge robs the cast of its follow-through, not just its damage.
+	# WHIFF RECOVERY IS A TOGGLE (v0.28.0, whiff_pays_recovery, default TRUE): the dodged cast still pays its
+	# follow-through and duration_sec carries it (pre-v0.26.0); with the flag off it stamps 0.0 and the
+	# caster's tail is released below — the dodge then robs the cast of its follow-through too.
+	var pays_recovery: bool = GameManager.config.whiff_pays_recovery
 	NetEvents.post_event("attack", {
 		"attacker_id": caster_id,
 		"attacker_name": _name_of(caster),
@@ -855,10 +861,13 @@ func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int, recovery
 		"target_max": 0,
 		"kind": "smite",
 		"whiff": true,
-		"duration_sec": 0.0,
+		"duration_sec": recovery_sec if pays_recovery else 0.0,
 	}, caster_id)
 	# LAST, after the fizzle event is on the wire (same ordering rule as the other two release sites).
 	# `recovery_sec` is unused on this branch by design — it was baked into the one cast+recovery record.
+	# v0.28.0: skipped entirely while whiff_pays_recovery is true — the window plays out untouched.
+	if pays_recovery:
+		return
 	if not _move_referee.finish_busy_early(caster_id):
 		push_warning("[CombatReferee] smite whiff for %d posted duration_sec 0 but no in-place record was released — client/server recovery tell may disagree" % caster_id)
 
@@ -883,6 +892,16 @@ func _validate_use_ability(sender_peer_id: int, data: Dictionary) -> Dictionary:
 		return { "ok": false, "reason": "dead" }
 	if is_stunned(sender_peer_id):
 		return { "ok": false, "reason": "stunned" }
+	# RECOVERING gate (v0.28.0, GameConfig.recovery_locks_actions — DESIGN §2.2.10): at 0 stamina in
+	# tactical pace the ACTION channel is locked, so an ability press is refused with its own distinct
+	# "recovering" reason (§2.2.8 bonk + a game_log line). Mirrors the STUN gate directly above in
+	# position and shape — a gate on STARTING an action, never touching the busy record, so anything
+	# already committed still plays out (§2.1). MOVEMENT is NOT gated here: 0-stamina movement stays the
+	# winded/crawl dials' business, so the two channels toggle independently. Sits WITH the stun gate
+	# ABOVE the instant dispatch, so it blocks Shield Block / Shadow Step too — consistent with the
+	# deliberate ruling that a stun blocks instants (see this function's header).
+	if GameManager.config.recovery_locks_actions and _move_referee.is_recovering(sender_peer_id):
+		return { "ok": false, "reason": "recovering" }
 	var caster := _node_of_id(sender_peer_id)
 	var ability := _ability_of(caster, int(data.get("index", -1)))
 	if ability == null or not ability.is_valid_ability():
@@ -1027,8 +1046,10 @@ func _resolve_ability(attacker_id: int, target_tile: Vector2i, damage: int, stun
 			apply_stun(occ_id, stun_beats)
 			return
 	# Whiff — the target moved off / died. A distinct outcome (§2.3.4); kind "ability" + verb so the log reads
-	# "<verb> hits nothing". RECOVERY ONLY ON CONTACT (v0.26.0): duration_sec 0.0 (no spent tell) and the
-	# committed window is released below, so a missed ability leaves its user free at once.
+	# "<verb> hits nothing". WHIFF RECOVERY IS A TOGGLE (v0.28.0, whiff_pays_recovery, default TRUE): the
+	# miss pays its recovery tail and duration_sec carries it (pre-v0.26.0); with the flag off, duration_sec
+	# 0.0 and the committed window is released below, leaving a missed ability's user free at once.
+	var pays_recovery: bool = GameManager.config.whiff_pays_recovery
 	NetEvents.post_event("attack", {
 		"attacker_id": attacker_id,
 		"attacker_name": _name_of(attacker),
@@ -1040,11 +1061,14 @@ func _resolve_ability(attacker_id: int, target_tile: Vector2i, damage: int, stun
 		"target_max": 0,
 		"kind": "ability",
 		"whiff": true,
-		"duration_sec": 0.0,
+		"duration_sec": recovery_sec if pays_recovery else 0.0,
 		"verb": verb,
 	}, attacker_id)
 	# LAST, for the same ordering reason as _resolve_windup's release: the miss event precedes any `glide_to`
 	# a promoted pipelined step posts. `recovery_sec` goes unused on this branch by design.
+	# v0.28.0: skipped entirely while whiff_pays_recovery is true — the window plays out untouched.
+	if pays_recovery:
+		return
 	if not _move_referee.finish_busy_early(attacker_id):
 		push_warning("[CombatReferee] ability whiff for %d posted duration_sec 0 but no in-place record was released — client/server recovery tell may disagree" % attacker_id)
 
@@ -1313,6 +1337,14 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# the busy record, so an in-flight action still completes; §2.1). Distinct reason → the §2.2.8 bonk.
 	if is_stunned(sender_peer_id):
 		return { "ok": false, "reason": "stunned" }
+	# RECOVERING gate (v0.28.0, GameConfig.recovery_locks_actions — DESIGN §2.2.10): at 0 stamina in
+	# tactical pace the ACTION channel is locked, so a shot is refused with its own distinct
+	# "recovering" reason (§2.2.8 bonk + a game_log line). Mirrors the STUN gate directly above in
+	# position and shape — a gate on STARTING an action, never touching the busy record, so anything
+	# already committed still plays out (§2.1). MOVEMENT is NOT gated here: 0-stamina movement stays the
+	# winded/crawl dials' business, so the two channels toggle independently.
+	if GameManager.config.recovery_locks_actions and _move_referee.is_recovering(sender_peer_id):
+		return { "ok": false, "reason": "recovering" }
 	# BUSY — the SAME commit-window predicate melee/swap read (is_entity_moving covers a glide AND a
 	# commit_in_place record), so a shot can never interrupt or overlap a committed action (Commitment Rule).
 	if _move_referee.is_entity_moving(sender_peer_id):
@@ -1702,9 +1734,16 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 			return
 
 	# Whiff: swing into empty/vacated ground. Distinct outcome — no damage, hp_after -1 (absent),
-	# target_tile carried so the client renders the swing toward the committed tile. RECOVERY ONLY ON
-	# CONTACT (v0.26.0, Jeff's verdict): a swing that touched nothing owes no recovery beats, so the
-	# event stamps duration_sec 0.0 (no spent tell to play) and the busy window is released below.
+	# target_tile carried so the client renders the swing toward the committed tile.
+	#
+	# WHIFF RECOVERY IS A TOGGLE (v0.28.0, GameConfig.whiff_pays_recovery, DEFAULT TRUE = pre-v0.26.0):
+	# TRUE  — the miss still pays its recovery tail. duration_sec carries the real recovery_sec, so every
+	#         peer plays the spent-recovery tint (main.gd's play_recovery) and the local attacker's
+	#         commit_in_place mirror roots it for exactly that window; the busy record is LEFT ALONE.
+	# FALSE — v0.26.0 "recovery only on contact": duration_sec 0.0 (no spent tell) and the busy window is
+	#         released at the bottom of this function.
+	# Read live host-side, so a `/config whiff_pays_recovery` flip lands on the very next miss.
+	var pays_recovery: bool = GameManager.config.whiff_pays_recovery
 	var whiff_data := {
 		"attacker_id": attacker_id,
 		"attacker_name": _name_of(attacker),
@@ -1716,7 +1755,7 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 		"target_max": 0,
 		"kind": kind,
 		"whiff": true,
-		"duration_sec": 0.0,
+		"duration_sec": recovery_sec if pays_recovery else 0.0,
 	}
 	# Weapon stamp on the WHIFF too (v0.9.3): a whiffed weapon swing still animates the rig arc, so a
 	# missed strike plays the weapon (it composes with the monster's whiff bowstring, exactly as a
@@ -1741,6 +1780,10 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 	# exactly what "recovery only on contact" means. The CONTACT branches above return before this and keep
 	# the full record byte-identically. A stunned / dead attacker returned at the top and keeps its window
 	# too (the stun IS the punishment; a dead attacker's record was torn down by clear_entity).
+	# v0.28.0: SKIPPED ENTIRELY when whiff_pays_recovery is true (the default) — the committed window then
+	# plays out untouched, which is what "the whiff pays" means, and `busy_released` never fires.
+	if pays_recovery:
+		return
 	if not _move_referee.finish_busy_early(attacker_id):
 		push_warning("[CombatReferee] windup whiff for %d posted duration_sec 0 but no in-place record was released — client/server recovery tell may disagree" % attacker_id)
 
@@ -1785,8 +1828,12 @@ func _kill_entity(entity_id: int, ent_name: String) -> void:
 			var mourner := _node_of_id(mourner_id)
 			var dead_type = node.get("monster_type") if node != null else null
 			var moment := "notable_death" if dead_type != null and dead_type.banter_notable else "ally_died"
+			# v0.28.0: the MOURNER's authoritative tile rides the bark so every peer's log can gate the printed
+			# line on earshot. Read from occupancy (never the node), like every other tile in this file — and it
+			# is the SPEAKER's tile, not death_tile: the mourner is who is talking.
 			Banter.bark(mourner_id,
-					str(mourner.display_name) if mourner != null else "Goblin", moment, true)
+					str(mourner.display_name) if mourner != null else "Goblin", moment,
+					_move_referee.tile_of_entity(mourner_id), true)
 	if node != null:
 		_drop_weapon_of(node, death_tile)
 		node.queue_free()

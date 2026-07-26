@@ -18,6 +18,16 @@ extends CanvasLayer
 @onready var _log: RichTextLabel = $Panel/VBox/Log
 @onready var _input: LineEdit = $Panel/VBox/Input
 
+# The Players container, HANDED IN by main.gd via set_players() (v0.28.0, the HUD's blessed injection
+# pattern — see ui/hud/hud.gd: a UI component is GIVEN its containers, it NEVER climbs with get_parent()).
+# Read for exactly one thing: OUR OWN player's tile, so the banter arm can gate a bark on earshot. Null
+# until injected (and if anything ever instantiates this log without wiring it), which the gate treats as
+# "no tile to measure from — print".
+var _players: Node2D = null
+# Our own peer id, cached at injection like the HUD caches it. Peer ids survive respawn, so this never
+# goes stale within a session.
+var _own_id: int = 0
+
 
 func _ready() -> void:
 	_input.text_submitted.connect(_on_input_submitted)
@@ -69,6 +79,15 @@ func dock_into(slot: Control) -> void:
 	_panel.reparent(slot, false)
 	_panel.custom_minimum_size = Vector2.ZERO
 	_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+
+## Hand the log the $Players container (v0.28.0, called once by main.gd right after it instantiates this
+## node). Mirrors HUD.set_players exactly: the component is GIVEN the node and caches our own peer id — it
+## never climbs the tree to find either. Used only to resolve OUR OWN player's tile for the banter earshot
+## gate; no membership signals are needed, because the gate reads the node fresh at each bark.
+func set_players(players: Node2D) -> void:
+	_players = players
+	_own_id = multiplayer.get_unique_id()
 
 
 ## Append one PLAIN-TEXT line — the input is escaped here at the sink, so callers never worry
@@ -196,16 +215,22 @@ func _on_event_received(event: Dictionary) -> void:
 			# are server-resolved but STILL go through add_line's sink escape — the file's rule is
 			# escape-at-render regardless of source, no "trusted" bypass.
 			_log_attack(data)
-		"windup":
-			# The telegraph tell (§2.3.4): ONE "winding up" line, whoever is winding up and with what.
-			# v0.27.0 (Jeff's second playtest verdict) DELETED the weapon-stamped "X draws the club..."
-			# variant added in v0.17.1: now that every weapon carries a real windup (longsword/club 3 beats,
-			# dagger 2) that branch fired on every melee telegraph and read as a weapon SWAP — the log already
-			# says "draws the …" for a Tab/equip swap, and two unrelated events sharing a verb is exactly the
-			# confusion §2.3.4 forbids. The swap line keeps "draws"; a telegraph says "winds up". The bow's
-			# draw folds into the same wording, which is honest — it IS a wind-up — and its distinct cue is the
-			# rig's skyward raise + the pitched-down draw sound, not this line.
-			add_line("%s winds up..." % str(data.get("name", "")))
+		# (v0.28.0: the "windup" arm is GONE — Jeff's third batch: "nothing needs to be written in
+		# the combat log when someone winds up or is about to attack." Its one line ("X winds up...")
+		# fired on every melee telegraph, every ability-strike telegraph AND every bow draw — the shoot
+		# path posts the same `windup` event (combat_referee._validate_shoot) — so at fight volume it was
+		# most of the log.
+		#
+		# ONLY THE LOG ARM WENT. The `windup` EVENT IS ALIVE and load-bearing: main.gd's windup handler
+		# drives the coil + white flash + telegraph sound, the weapon rig's raised pose rides it (and is
+		# handed over BY the later play_swing), and the whole ranged path telegraphs its DRAW through it.
+		# Do NOT "clean up" the event believing it dead — its surviving tells are visual and audible,
+		# which is exactly why the text could go.
+		#
+		# Four cases lose their line: the monster melee telegraph, the player's own melee windup, the
+		# ability-strike telegraph, and the bow draw. The bow draw is the likeliest to come back (its only
+		# remaining tells are the rig's skyward raise and the pitched-down draw sound); the cheap restore
+		# is a player-initiated-ONLY variant of the line, not this whole arm.
 		"died":
 			# Death line (§2.3.4). The dying entity's OWN client gets a second-person line so a
 			# player knows it was them (their node is already gone — this is the spectate placeholder,
@@ -277,6 +302,11 @@ func _on_event_received(event: Dictionary) -> void:
 		"banter":
 			# Goblin banter (v0.24.4): the spoken line also lands in the log, quoted, so a bark you
 			# missed on screen survives in the record. Host-authored text, escaped anyway (belt).
+			# EARSHOT GATE (v0.28.0, Jon: "gate ALL barks by distance, not just idle"): skip the line when the
+			# speaker is further than GameConfig.banter_earshot_tiles from our own player. The OVERHEAD label
+			# is deliberately NOT gated (main.gd) — it floats over the speaker, so distance already hides it.
+			if not _bark_within_earshot(data):
+				return
 			add_line("%s: \"%s\"" % [_escape_bbcode(str(data.get("name", "Goblin"))),
 					_escape_bbcode(str(data.get("text", "")))])
 		# (v0.27.0: the "stamina" arm is GONE. Its one line — "Exhausted — you can barely move." — fired on
@@ -512,6 +542,8 @@ func _on_intent_rejected(action: String, reason: String) -> void:
 		_log_ability_reject(reason)
 	elif action == "equip_item":
 		_log_equip_reject(reason)
+	elif action == "pickup_item":
+		_log_pickup_reject(reason)
 
 
 # A refused move must never be silent when the cause is the world (§2.3.4): a wall/corner/occupied
@@ -535,6 +567,12 @@ func _log_glide_reject(reason: String) -> void:
 			pass
 		"already moving":
 			pass
+		"recovering":
+			# v0.28.0 recovery lockout (GameConfig.recovery_locks_actions): a BUMP ATTACK refused because the
+			# attacker is at 0 stamina in tactical pace. Its OWN token, never folded into "winded" — winded is
+			# "you cannot MOVE", this is "you cannot ACT", and the two dials are independent (§2.3.4: one
+			# sentence per outcome). Names the recovery BAR, which is the thing on screen you are waiting on.
+			add_line("Still recovering — wait for the bar.")
 		"winded":
 			# Hard-stop mode only (v0.24.6, /winded toggle): out of stamina AND movement is blocked.
 			# Distinct from the crawl (which accepts the step slowly and never rejects) — §2.3.4.
@@ -555,6 +593,11 @@ func _log_shoot_reject(reason: String) -> void:
 	match reason:
 		"busy", "dead":
 			pass
+		"recovering":
+			# v0.28.0 recovery lockout — a raw token, not a sentence, so it gets its own arm rather than
+			# falling through the verbatim catch-all below. Same wording on every pipe (§2.3.4: one cause,
+			# one sentence — the reason you cannot shoot is the reason you cannot drink).
+			add_line("Still recovering — wait for the bar.")
 		_:
 			add_line(reason)
 
@@ -567,6 +610,9 @@ func _log_use_reject(reason: String) -> void:
 	match reason:
 		"busy", "dead":
 			pass
+		"recovering":
+			# v0.28.0 recovery lockout — same arm, same sentence as the shoot pipe above.
+			add_line("Still recovering — wait for the bar.")
 		_:
 			add_line(reason)
 
@@ -581,8 +627,27 @@ func _log_equip_reject(reason: String) -> void:
 	match reason:
 		"busy", "dead", "stunned":
 			pass
+		"recovering":
+			# v0.28.0 recovery lockout — same arm, same sentence as the shoot/use pipes above.
+			add_line("Still recovering — wait for the bar.")
 		"no slot for that yet":
 			add_line("There's nowhere to wear that yet.")
+		_:
+			add_line(reason)
+
+
+## A refused PICKUP (v0.28.0). The `pickup_item` pipe had NO arm at all and was absent from main.gd's bonk
+## allowlist too — i.e. a refused G press was silent on BOTH §2.3.4 channels, which is the one case that
+## genuinely needed closing (a reason that already has a line but deliberately no bonk stays that way; the
+## two channels are independent by design). Shape copied from _log_use_reject: the host's remaining reasons
+## ("nothing to pick up") are already player-legible sentences, so they surface verbatim, while
+## busy / dead / stunned stay suppressed exactly as on every other pipe.
+func _log_pickup_reject(reason: String) -> void:
+	match reason:
+		"busy", "dead", "stunned":
+			pass
+		"recovering":
+			add_line("Still recovering — wait for the bar.")
 		_:
 			add_line(reason)
 
@@ -602,6 +667,11 @@ func _log_ability_reject(reason: String) -> void:
 	match reason:
 		"busy", "dead", "stunned":
 			pass
+		"recovering":
+			# v0.28.0 recovery lockout — same sentence as every other pipe. Reached by STRIKE abilities AND by
+			# the instants (Shield Block / Shadow Step): the gate sits with the stun gate, above the instant
+			# dispatch, so "recovering" blocks them exactly as a stun does.
+			add_line("Still recovering — wait for the bar.")
 		"no target":
 			add_line("Nothing in reach.")
 		"no such ability":
@@ -621,6 +691,42 @@ func _log_ability_reject(reason: String) -> void:
 			add_line("Take a step first — you have no direction to step back from.")
 		_:
 			add_line("Ability refused (%s)." % reason)
+
+
+## Should a bark's LINE be printed in THIS peer's log (v0.28.0)? True when our own player is within
+## GameConfig.banter_earshot_tiles (Chebyshev — the same metric and the same dial the host-side mourner and
+## help-me picks use, so "12 tiles" is one shape everywhere) of the speaker's tile.
+##
+## THREE CASES PRINT PAST THE GATE, each deliberate:
+##  1. NO OWN PLAYER (dead, or not spawned yet) — an earshot-less SPECTATOR prints EVERYTHING. A dead
+##     player has no tile, so there is no honest radius to clamp to, and losing the log while watching the
+##     fight you just died in is worse than overhearing a distant goblin. (A TRADEOFF Jeff can veto: a
+##     spectator in a busy session hears every bark, which is the opposite of "quieter log". If he dislikes
+##     it, the fix is gating from the tile you died on.)
+##  2. NO / MALFORMED SPEAKER TILE — a bark from before this event carried one, or a wire value that isn't
+##     a Vector2i.
+##  3. WALL-SENTINEL tile on either side — tile_of_entity answers (0,0) for an untracked entity, and a
+##     sentinel must NEVER silently swallow a line. (Every bark trigger today hangs off engagement / death /
+##     a think beat, i.e. long after spawn, so this should be unreachable; the branch stays regardless.)
+##
+## The radius is read LIVE off GameManager.config, never cached at init, so `/config banter_earshot_tiles`
+## is felt immediately. NOTE it is a PRESENTATION read of a client's own config copy — no adjudication
+## depends on it (§2.5 is about verdicts), so a client whose host retuned the dial live may gate at the
+## shipped value until it restarts. Deliberately not worth a new wire field.
+func _bark_within_earshot(data: Dictionary) -> bool:
+	if _players == null:
+		return true
+	var me := _players.get_node_or_null(str(_own_id)) as Entity
+	if me == null:
+		return true
+	var tile_raw = data.get("tile")
+	if typeof(tile_raw) != TYPE_VECTOR2I:
+		return true
+	var speaker_tile: Vector2i = tile_raw
+	if WorldGrid.is_wall(speaker_tile) or WorldGrid.is_wall(me.tile):
+		return true
+	var earshot: int = GameManager.config.banter_earshot_tiles
+	return maxi(absi(speaker_tile.x - me.tile.x), absi(speaker_tile.y - me.tile.y)) <= earshot
 
 
 # Neutralize user text before it reaches a bbcode_enabled label: only "[" can open a tag, so

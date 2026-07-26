@@ -225,6 +225,14 @@ func _validate_use_item(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# busy record (an in-flight action still finishes; §2.1). Distinct reason → the §2.2.8 bonk.
 	if _combat.is_stunned(sender_peer_id):
 		return { "ok": false, "reason": "stunned" }
+	# RECOVERING gate (v0.28.0, GameConfig.recovery_locks_actions — DESIGN §2.2.10): at 0 stamina in
+	# tactical pace the ACTION channel is locked, so a drink is refused with its own distinct
+	# "recovering" reason (§2.2.8 bonk + a game_log line). Mirrors the STUN gate directly above in
+	# position and shape — a gate on STARTING an action, never touching the busy record, so anything
+	# already committed still plays out (§2.1). MOVEMENT is NOT gated here: 0-stamina movement stays the
+	# winded/crawl dials' business, so the two channels toggle independently.
+	if GameManager.config.recovery_locks_actions and _move_referee.is_recovering(sender_peer_id):
+		return { "ok": false, "reason": "recovering" }
 	# BUSY — the Commitment Rule gate. is_entity_moving covers a glide AND a commit_in_place record (the SAME
 	# predicate melee/swap/shoot read), so a drink can never interrupt or overlap a committed action.
 	if _move_referee.is_entity_moving(sender_peer_id):
@@ -329,6 +337,14 @@ func _validate_equip_item(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# busy record (§2.1). Distinct reason → the §2.2.8 bonk.
 	if _combat.is_stunned(sender_peer_id):
 		return { "ok": false, "reason": "stunned" }
+	# RECOVERING gate (v0.28.0, GameConfig.recovery_locks_actions — DESIGN §2.2.10): at 0 stamina in
+	# tactical pace the ACTION channel is locked, so an equip is refused with its own distinct
+	# "recovering" reason (§2.2.8 bonk + a game_log line). Mirrors the STUN gate directly above in
+	# position and shape — a gate on STARTING an action, never touching the busy record, so anything
+	# already committed still plays out (§2.1). MOVEMENT is NOT gated here: 0-stamina movement stays the
+	# winded/crawl dials' business, so the two channels toggle independently.
+	if GameManager.config.recovery_locks_actions and _move_referee.is_recovering(sender_peer_id):
+		return { "ok": false, "reason": "recovering" }
 	# BUSY — the Commitment Rule gate. is_entity_moving covers a glide AND a commit_in_place record (the SAME
 	# predicate melee/swap/shoot/use read), so an equip can never interrupt a committed action. This gate is
 	# ALSO what makes the INSTANT swap below safe: you can never equip mid-attack, so no in-flight _resolve_windup
@@ -461,6 +477,14 @@ func _validate_pickup_item(sender_peer_id: int, _data: Dictionary) -> Dictionary
 	# busy record (an in-flight action still finishes; §2.1). Distinct reason → the §2.2.8 bonk.
 	if _combat.is_stunned(sender_peer_id):
 		return { "ok": false, "reason": "stunned" }
+	# RECOVERING gate (v0.28.0, GameConfig.recovery_locks_actions — DESIGN §2.2.10): at 0 stamina in
+	# tactical pace the ACTION channel is locked, so a pickup is refused with its own distinct
+	# "recovering" reason (§2.2.8 bonk + a game_log line). Mirrors the STUN gate directly above in
+	# position and shape — a gate on STARTING an action, never touching the busy record, so anything
+	# already committed still plays out (§2.1). MOVEMENT is NOT gated here: 0-stamina movement stays the
+	# winded/crawl dials' business, so the two channels toggle independently.
+	if GameManager.config.recovery_locks_actions and _move_referee.is_recovering(sender_peer_id):
+		return { "ok": false, "reason": "recovering" }
 	# BUSY — the Commitment Rule gate. is_entity_moving covers a glide AND a commit_in_place record (the SAME
 	# predicate melee/swap/shoot/use/equip read), so a pickup can never interrupt or overlap a committed action.
 	# This gate is ALSO what makes the INSTANT grab below safe (see the header note).

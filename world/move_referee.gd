@@ -27,6 +27,12 @@ extends Node
 # (full border), so it can never be a real resting tile — an unambiguous "not found".
 const _NO_TILE := Vector2i(0, 0)
 
+# Round-UP margin on recovery_remaining_sec (v0.28.0). Its consumer (MonsterBrain) reschedules a
+# recovery-locked think to that span, so the estimate must land just PAST the moment the wait fires:
+# overshooting costs one slightly-late think, undershooting spins skip → re-think → skip. Wall-clock,
+# not beat-scaled, exactly like MonsterBrain.windup_rethink_epsilon_sec which serves the same purpose.
+const _RECOVERY_ESTIMATE_EPSILON_SEC := 0.05
+
 ## Emitted host-side the instant an in-place BUSY record is released EARLY (finish_busy_early — a
 ## whiffed swing owes no recovery beats, v0.26.0). Past-tense, fire-and-forget: this referee never
 ## reaches sideways to a brain, so Main wires it (the same rule PaceReferee.tactical_entered follows)
@@ -133,6 +139,13 @@ var _stamina_generation: Dictionary = {}
 # pool — only a genuinely fresh fight refills. Written by note_tactical_exit (wired to
 # PaceReferee.tactical_exited); erased with the other per-entity records.
 var _last_tactical_exit_msec: Dictionary = {}
+# REST-WAIT DEADLINE (v0.28.0): entity_id -> Time.get_ticks_msec() at which the armed rest-to-recover
+# idle wait will fire. Written by note_activity at the same moment it arms the timer (the SAME stamped
+# seconds the `stamina_recovery` event carries, so the bar and this number can never disagree) and read
+# ONLY by recovery_remaining_sec, which MonsterBrain uses to reschedule a recovery-locked think to the
+# end of the wait instead of spinning on the back-off cadence. Not a guard and not adjudication truth —
+# an ESTIMATE, and the accessor rounds it UP. Erased with the other per-entity records.
+var _regen_eta_msec: Dictionary = {}
 # Passive-regen chain latch (v0.24.9): entity_id -> true while a passive chain is armed. NOT
 # generation-guarded (activity must never cancel passive regen — that's its point); membership +
 # the enable knobs are its guards. Erased at each fire and re-set by the re-arm.
@@ -515,6 +528,39 @@ func stamina_of(entity_id: int) -> Dictionary:
 	return { "points": int(pool.get("points", 0)), "max": int(pool.get("max", 0)) }
 
 
+## Host-only (v0.28.0, DESIGN §2.2.10): is this entity RECOVERING — i.e. sitting at ZERO stamina in
+## TACTICAL pace, with the green recovery bar showing? THE predicate the `recovery_locks_actions`
+## gates read (bump, ability, shot, drink, equip, pickup, and the monster brain's attack/cast
+## candidates), so every one of them asks the same question of the same authority.
+##
+## NOT the same "recovery" as an attack's recovery BEATS (§2.3.9 / whiff_pays_recovery), which is a
+## committed-action window. This one is the stamina POOL at 0. Attacks never spend stamina, so the two
+## cannot fall out of sync; Jeff's envisioned future (the bar replacing recovery frames for all actions)
+## is where they merge, and that is not this version.
+##
+## Deliberately built on _is_exhausted, NOT on stamina_of: stamina_of ZERO-FILLS an untracked id, which
+## would report every entity the experiment never met as "recovering" and lock it out of the game.
+## The stamina_enabled term first, so the whole lockout is a no-op with the system off.
+func is_recovering(entity_id: int) -> bool:
+	return GameManager.config.stamina_enabled and _pace != null \
+			and _pace.is_tactical(entity_id) and _is_exhausted(entity_id)
+
+
+## Host-only (v0.28.0): roughly how many seconds until `entity_id` stops recovering — the remaining span
+## of the rest-to-recover idle wait note_activity armed. The REFEREE owns the regen math, so the estimate
+## lives here rather than being rebuilt in MonsterBrain from stamina_of + the regen dials (a brain-side
+## copy would drift the instant Jeff retuned an idle dial).
+##
+## ROUNDS UP, always (a small epsilon over, never under): its one consumer reschedules a think to this
+## span, and overshooting costs one slightly-late think while undershooting reintroduces the
+## skip → re-think → skip spin the accessor exists to prevent. An entity with no armed wait on record
+## (never active, or the deadline already passed) gets the epsilon floor — "check again very soon".
+func recovery_remaining_sec(entity_id: int) -> float:
+	var eta_msec := int(_regen_eta_msec.get(entity_id, 0))
+	var remaining_sec := float(eta_msec - Time.get_ticks_msec()) / 1000.0
+	return maxf(remaining_sec, 0.0) + _RECOVERY_ESTIMATE_EPSILON_SEC
+
+
 ## Host-only (v0.25.0, /mi stamina): set an entity's stamina outright (clamped 0..max), posting the
 ## usual pool + exhaustion-edge events. Counts as ACTIVITY afterward (note_activity) so a pool set
 ## below max arms the normal rest-regen chain — an admin-drained entity must not be regen-orphaned.
@@ -570,6 +616,10 @@ func note_activity(entity_id: int) -> void:
 		return
 	var idle_sec: float = _regen_idle_beats_of(entity_id) * PaceReferee.beat_or_explore(_pace, entity_id)
 	get_tree().create_timer(idle_sec).timeout.connect(_stamina_regen_tick.bind(entity_id, generation))
+	# v0.28.0: remember WHEN that wait lands, so recovery_remaining_sec can answer "how long until this
+	# entity can act again" without the caller re-deriving the regen math (which would drift the moment a
+	# regen dial is retuned). Same stamped seconds as the event below — one number, two consumers.
+	_regen_eta_msec[entity_id] = Time.get_ticks_msec() + int(ceil(idle_sec * 1000.0))
 	# RECOVERY EVENT (v0.26.0, §2.3.4): an entity resting at ZERO is the read that matters now the pool
 	# is binary (max 1) — "am I ready yet" replaced "how many steps left", so the wait itself gets a cue.
 	# STAMP-AND-BAKE: the host posts the EXACT seconds it just armed the timer with, so every peer's bar
@@ -605,6 +655,9 @@ func clear_entity(entity_id: int) -> void:
 	_stamina_generation[entity_id] = int(_stamina_generation.get(entity_id, 0)) + 1
 	_last_tactical_exit_msec.erase(entity_id)
 	_passive_regen_running.erase(entity_id)
+	# v0.28.0: the armed rest-wait deadline goes with the pool it belongs to — a respawned peer id must
+	# never inherit the previous life's "recovery ends at" estimate.
+	_regen_eta_msec.erase(entity_id)
 	# Instants experiment (v0.26.0): a respawned peer id starts a fresh interrupt life — any resolve
 	# captured against the previous life's gen (>= 1 after a blink) fizzles at its fire.
 	_interrupt_gen.erase(entity_id)
@@ -719,6 +772,21 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 		# brain's adjacency branch fires before any step toward a player could be chosen — this is
 		# the structural backstop that keeps a monster intent from ever dealing bump damage).
 		if not is_pipelined and sender_peer_id > 0 and blocker_is_hostile:
+			# RECOVERING gate (v0.28.0, GameConfig.recovery_locks_actions — DESIGN §2.2.10). A bump is an ATTACK,
+			# not a move, so it belongs to the ACTION channel of the 0-stamina lockout: at 0 stamina in tactical
+			# pace you may still crawl (or be hard-stopped) by the winded dials, but you may not swing. Distinct
+			# "recovering" reason → the §2.2.8 bonk + its own game_log line. Placed like the STUN gate in every
+			# other validator: a gate on STARTING an action, touching no busy/pending record, so an in-flight
+			# commitment still plays out (§2.1 untouched). ABOVE the arriving check, the windup route and
+			# _begin_bump, so no facing is turned and no window is committed on the refused path.
+			#
+			# HOSTILE-BUMP-ONLY, deliberately, AND THAT IS AN ASSUMPTION WITH A SHELF LIFE: a hostile bump is the
+			# only attack-shaped MOVE in the game today. A step into an ally or a wall is not an attack and keeps
+			# its existing `occupied` / `blocked` reject, and there are no doors, destructibles or bumpable objects
+			# yet. THE MOMENT one lands (a destructible wall, a shoved crate, a bumped lever), revisit this gate —
+			# a "bump attack" against it would sit OUTSIDE this branch and silently escape the lockout.
+			if GameManager.config.recovery_locks_actions and is_recovering(sender_peer_id):
+				return { "ok": false, "reason": "recovering" }
 			# Arriving gate (v0.19.2): the hostile claims `to` at glide START (conga) but may still be sliding
 			# in — don't let the player strike it before it's VISUALLY in the square (Jeff's report). Refuse
 			# "arriving", cue-suppressed in main._on_intent_rejected like occupied_hostile, so held input re-lands
@@ -1349,6 +1417,9 @@ func _on_entity_exiting(node: Node) -> void:
 	_stamina_generation[entity_id] = int(_stamina_generation.get(entity_id, 0)) + 1
 	_last_tactical_exit_msec.erase(entity_id)
 	_passive_regen_running.erase(entity_id)
+	# v0.28.0: the armed rest-wait deadline goes with the pool it belongs to — a respawned peer id must
+	# never inherit the previous life's "recovery ends at" estimate.
+	_regen_eta_msec.erase(entity_id)
 	_interrupt_gen.erase(entity_id)
 
 

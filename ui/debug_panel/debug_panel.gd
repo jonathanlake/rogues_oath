@@ -68,6 +68,11 @@ const _SHARED_DIALS := [
 	{ "label": "armor flat LIGHT", "field": "armor_flat_reduction_light", "min": 0, "max": 99, "step": 1 },
 	{ "label": "armor flat MEDIUM", "field": "armor_flat_reduction_medium", "min": 0, "max": 99, "step": 1 },
 	{ "label": "armor flat HEAVY", "field": "armor_flat_reduction_heavy", "min": 0, "max": 99, "step": 1 },
+	# v0.28.0, Jeff's third batch — the two toggles he flips to answer his own questions. "whiff pays
+	# recovery" ON is pre-v0.26.0 §2.3.9; "recovery locks actions" is the 0-stamina ACTION lockout (a
+	# no-op while the stamina button above reads off).
+	{ "label": "whiff pays recovery", "field": "whiff_pays_recovery", "bool": true },
+	{ "label": "recovery locks actions", "field": "recovery_locks_actions", "bool": true },
 ]
 
 const _WEAPON_FIELDS := ["damage_min", "damage_max", "windup_beats", "recovery_beats"]

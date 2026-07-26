@@ -182,7 +182,7 @@ func notify_attacked() -> void:
 	if not _help_me_done and _monster_type != null and _monster_type.banter_notable \
 			and _has_engaged_ally_within_earshot():
 		_help_me_done = true
-		Banter.bark(_entity_id, _monster_type.display_name, "help_me", true)
+		Banter.bark(_entity_id, _monster_type.display_name, "help_me", _authoritative_tile(), true)
 	# Already committed to an action (glide or attack)? Latch aggro ONLY — do NOT schedule an early think.
 	# The referee holds this monster busy for its whole action window (v0.19.0: a telegraphed attack now
 	# commits windup+recovery), and the end-of-window think already re-decides targeting. Rescheduling here
@@ -329,7 +329,11 @@ func _think() -> void:
 	# letting the hardcoded pre-gate fire first would mean the scorer never got a say on it. The extra
 	# `not utility_ai` term is inert for every existing monster (the flag defaults false), so the legacy
 	# cascade below stays byte-for-byte what it was.
-	if _monster_type != null and _monster_type.has_heal_ability() and not _monster_type.utility_ai:
+	# v0.28.0 recovery lockout: a heal is a CAST, so a recovering healer skips this pre-gate entirely and
+	# falls through to the cascade below (whose own attack branch is gated too, and whose tail backs off to
+	# the end of the recovery wait). Movement is deliberately still reachable from there.
+	if _monster_type != null and _monster_type.has_heal_ability() and not _monster_type.utility_ai \
+			and not _recovery_locks_actions():
 		var heal_target: int = _combat.pick_heal_target(_entity_id, my_tile, _monster_type.heal_range_tiles)
 		if heal_target != 0:
 			var heal_wait: float = _combat.heal_cast(
@@ -395,6 +399,13 @@ func _think() -> void:
 	# when neutral factions exist this filters by is_hostile_to.) Request a wind-up.
 	for t in targets:
 		if maxi(absi(t.x - my_tile.x), absi(t.y - my_tile.y)) == 1:
+			# RECOVERY LOCKOUT (v0.28.0): at 0 stamina in tactical pace this monster may not swing. Skip the
+			# attack and sleep until the recovery wait ends (a silent skip — nothing was submitted). We stand
+			# our ground rather than falling through to the chase below: we are already adjacent, so there is
+			# no step worth taking, and pushing past the player is not what "wait it out" means.
+			if _recovery_locks_actions():
+				_reschedule_recovery_aware()
+				return
 			# Request an attack against that tile (decision 3; DESIGN §2.8). The combat referee runs
 			# either the instant strike (goblin, windup_beats==0: resolve now + recovery busy) or the
 			# telegraphed wind-up (>0 dial), commits the monster's busy record, and returns the total
@@ -524,7 +535,9 @@ func _act_as_kiter(my_tile: Vector2i, targets: Array) -> void:
 		if _flee_step(my_tile, nearest):
 			return
 	# (2) Smite the GROUND at a random in-range player's tile (host picks it; the player can dodge off it).
-	if _monster_type.has_smite_ability():
+	# RECOVERY LOCKOUT (v0.28.0): a smite is a CAST, so a recovering kiter skips it and holds — note that
+	# the FLEE step above is NOT gated, because backing off is movement and movement is the other channel.
+	if _monster_type.has_smite_ability() and not _recovery_locks_actions():
 		var smite_tile: Vector2i = _combat.pick_smite_tile(_entity_id, my_tile, _monster_type.smite_range_tiles)
 		# (0,0) sentinel = no player in range (it's a border wall — no live body rests there).
 		if not WorldGrid.is_wall(smite_tile):
@@ -535,8 +548,9 @@ func _act_as_kiter(my_tile: Vector2i, targets: Array) -> void:
 				# re-think just past it (same as heal / wind-up).
 				_reschedule_after(wait_sec + windup_rethink_epsilon_sec)
 				return
-	# (3) Nothing to do this think (no flee needed or cornered, no smite target) — hold on the cadence.
-	_reschedule()
+	# (3) Nothing to do this think (no flee needed or cornered, no smite target) — hold on the cadence,
+	# or until the recovery wait ends if the lockout is what silenced the smite (v0.28.0).
+	_reschedule_recovery_aware()
 
 
 ## Submit one step DIRECTLY AWAY from `nearest_tile` for a kiter (v0.19.10). Tries the pure-away direction
@@ -639,7 +653,9 @@ func _think_utility(my_tile: Vector2i, targets: Array) -> void:
 			and str(candidates[0]["action"]) == UtilityScorer.ACTION_FLEE:
 		_cornered_done = true
 		_begin_think("cornered")
-	_reschedule()
+	# v0.28.0: if the recovery lockout is what made every attack/cast candidate decline, sleep until the
+	# wait ends instead of re-scoring on the back-off cadence (the skip is silent, but the thinks add up).
+	_reschedule_recovery_aware()
 
 
 ## Build the scorer's context: ONE snapshot of this monster's situation, read from AUTHORITATIVE referee state
@@ -802,6 +818,11 @@ func _execute_candidate(candidate: Dictionary, my_tile: Vector2i, targets: Array
 			# the busy-gate settle backstop needs the diagonal flag or a diagonal step's wake fires early.
 			_last_step_was_diagonal = toward.x != 0 and toward.y != 0
 			return _referee.submit_monster_intent(_entity_id, toward)
+		# RECOVERY LOCKOUT (v0.28.0): the CAST leg is an action, so a recovering healer declines it and lets
+		# the next candidate (which may well be a move) have its turn. The out-of-range STEP leg above is NOT
+		# gated — walking to the patient is movement, and movement is the winded dial's channel.
+		if _recovery_locks_actions():
+			return false
 		var heal_wait: float = _combat.heal_cast(
 				_entity_id, int(data.get("target_id", 0)), _monster_type.heal_amount,
 				_monster_type.heal_cast_beats, _monster_type.heal_recovery_beats)
@@ -810,6 +831,9 @@ func _execute_candidate(candidate: Dictionary, my_tile: Vector2i, targets: Array
 		_reschedule_after(heal_wait + windup_rethink_epsilon_sec)
 		return true
 	if action == UtilityScorer.ACTION_SMITE:
+		# RECOVERY LOCKOUT (v0.28.0): a cast is an action — decline and let a movement candidate take over.
+		if _recovery_locks_actions():
+			return false
 		var smite_wait: float = _combat.smite_cast(
 				_entity_id, data.get("tile", Vector2i.ZERO), _monster_type.smite_damage,
 				_monster_type.smite_cast_beats, _monster_type.smite_recovery_beats)
@@ -818,6 +842,10 @@ func _execute_candidate(candidate: Dictionary, my_tile: Vector2i, targets: Array
 		_reschedule_after(smite_wait + windup_rethink_epsilon_sec)
 		return true
 	if action == UtilityScorer.ACTION_MELEE:
+		# RECOVERY LOCKOUT (v0.28.0): a swing is an action — decline and let a movement candidate take over.
+		# Declined BEFORE the forced-melee bark below, so a monster that never actually swung stays quiet.
+		if _recovery_locks_actions():
+			return false
 		# The referee owns instant-strike vs telegraphed wind-up (the weapon's dial) and returns the whole
 		# committed window either way — the brain only asks for the swing at that tile.
 		var melee_wait: float = _combat.wind_up(_entity_id, data.get("tile", Vector2i.ZERO))
@@ -829,7 +857,7 @@ func _execute_candidate(candidate: Dictionary, my_tile: Vector2i, targets: Array
 		# action, so an ordinary goblin's melee stays silent. Chance-gated, never forced: in a small room this
 		# fires repeatedly, and an always-on bark would eat the cooldown every other second.
 		if _monster_type != null and _monster_type.flees_players:
-			Banter.bark(_entity_id, _monster_type.display_name, "forced_melee")
+			Banter.bark(_entity_id, _monster_type.display_name, "forced_melee", _authoritative_tile())
 		_reschedule_after(melee_wait + windup_rethink_epsilon_sec)
 		return true
 	if action == UtilityScorer.ACTION_FLEE:
@@ -1001,7 +1029,7 @@ func _begin_think(reason: String) -> void:
 	# Goblin banter (v0.24.4): the story beat may also get a one-liner — chance + global cooldown
 	# live in Banter, lines in GameConfig. A thinking monster muttering over its dots is the bit.
 	var speaker_name: String = _monster_type.display_name if _monster_type != null else "Goblin"
-	Banter.bark(_entity_id, speaker_name, reason)
+	Banter.bark(_entity_id, speaker_name, reason, _authoritative_tile())
 
 
 ## LAST-STAND check (v0.24.3, once per life): this monster fought beside engaged allies and now
@@ -1050,6 +1078,46 @@ func _is_thinking() -> bool:
 	return Time.get_ticks_msec() < _thinking_until_msec
 
 
+## THIS monster's AUTHORITATIVE tile (v0.28.0) — the MOVE referee's occupancy truth, never the node's
+## presentation `tile`. Exists for the four Banter.bark call sites: the bark payload carries the speaker's
+## tile so every peer's log can gate on earshot, and that number MUST come from the same authority the
+## overhead label is positioned from or the two could disagree. An untracked / mid-teardown monster reads
+## the wall sentinel, which the log treats as "unknown — print anyway" rather than silently swallowing a
+## line. Null referee (a client's brain, which never activates) reads the sentinel too.
+func _authoritative_tile() -> Vector2i:
+	if _referee == null:
+		return Vector2i.ZERO
+	return _referee.tile_of_entity(_entity_id)
+
+
+## RECOVERY LOCKOUT read (v0.28.0, GameConfig.recovery_locks_actions — DESIGN §2.2.10): is this monster's
+## ACTION channel locked because it is sitting at 0 stamina in tactical pace? The MOVE referee owns the
+## predicate (is_recovering) — this brain only asks. Consulted at every ATTACK/CAST decision site and at
+## NO movement site: a recovering monster may still crawl (or be hard-stopped by the winded dial, which is
+## the other channel's business), it just may not swing, smite or heal. Mirrors the player side exactly.
+##
+## WHY THE BRAIN SKIPS RATHER THAN LETTING THE VALIDATOR REFUSE: a monster's attack does not go through
+## an intent validator at all (it calls CombatReferee.wind_up / smite_cast / heal_cast directly), so this
+## IS the enemy-side gate, not a convenience. The skip is silent — nothing is submitted, so there is no
+## reject line and no bonk for a monster (§2.3.4 governs the PLAYER's refusals).
+## Null referee (a client's brain, which never activates) reads false.
+func _recovery_locks_actions() -> bool:
+	return GameManager.config.recovery_locks_actions and _referee != null \
+			and _referee.is_recovering(_entity_id)
+
+
+## v0.28.0: back off to the END of the recovery wait when the lockout is what stopped us, and to the normal
+## rethink cadence otherwise. Without this a recovery-locked monster would re-poll every rethink_beats and
+## spin skip → re-think → skip for the whole wait; the referee's own estimate (rounded UP, so we never wake
+## early and re-spin) is the right span to sleep. The referee owns that math — deriving it here from the
+## pool + the regen dials would drift the moment one of those dials is retuned.
+func _reschedule_recovery_aware() -> void:
+	if _recovery_locks_actions():
+		_reschedule_after(_referee.recovery_remaining_sec(_entity_id))
+		return
+	_reschedule()
+
+
 ## IDLE CHATTER (v0.27.0 banter): arm THIS brain's next out-of-combat muttering tick, 15-30s out (host
 ## RNG). A get_tree() SceneTreeTimer like every other brain timer, so it survives on the host tree and
 ## Godot drops the connection if this brain is freed. Deliberately its own chain rather than a hook on
@@ -1075,7 +1143,8 @@ func _on_idle_banter_tick(gen: int) -> void:
 	if _combat != null and not _combat.is_alive(_entity_id):
 		return
 	if _pace == null or not _pace.is_tactical(_entity_id):
-		Banter.bark(_entity_id, _monster_type.display_name if _monster_type != null else "Goblin", "idle")
+		Banter.bark(_entity_id, _monster_type.display_name if _monster_type != null else "Goblin", "idle",
+				_authoritative_tile())
 	_arm_idle_banter()
 
 

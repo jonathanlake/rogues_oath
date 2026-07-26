@@ -130,7 +130,11 @@ const DEV_GAME_FIELDS := ["tactical_beat_sec",
 		# v0.27.1: the banter EARSHOT radius — how far a bark's reaction travels. A live dial because the
 		# thing it fixes (cross-fight barks with packs in separate rooms) is a feel question about a
 		# distance, and answering it by restarting for each number is exactly what these dials exist to avoid.
-		"banter_earshot_tiles"]
+		"banter_earshot_tiles",
+		# v0.28.0, Jeff's third batch — both plain host-side config writes read live at their seams, so a
+		# _GAME_FIELD_SPECS row is all either needs. whiff_pays_recovery flips §2.3.9 back to pre-v0.26.0
+		# (default) vs recovery-only-on-contact; recovery_locks_actions is the 0-stamina ACTION lockout.
+		"whiff_pays_recovery", "recovery_locks_actions"]
 ## v0.27.0: `shield_block_cooldown_beats` / `shadow_step_cooldown_beats` are GONE from this list because the
 ## GameConfig fields are gone — a cooldown lives on its ActiveAbility `.tres` now and is tuned with `/ab`
 ## (DEV_ABILITY_FIELDS above) or the panel's CLASSES section. A stale `/config shield_block_cooldown_beats`

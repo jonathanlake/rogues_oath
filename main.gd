@@ -365,6 +365,10 @@ func _ready() -> void:
 	# to go (the host spawns its own player later in this same _ready).
 	_game_log = GAME_LOG_SCENE.instantiate()
 	add_child(_game_log)
+	# Hand it $Players (v0.28.0), the same injection the HUD gets below and for the same reason: the log needs
+	# OUR OWN player's tile to gate a goblin bark on earshot, and a UI component is GIVEN its containers
+	# rather than climbing the tree for them. After add_child, so its _ready (and _own_id cache) has run.
+	_game_log.set_players(_players)
 
 	# Docked HUD (v0.12.0), on EVERY peer, right after the log. Instanced like GameLog. Wire it per the
 	# component convention — Main hands it the containers/refs and connects the events; the HUD never
@@ -1996,8 +2000,13 @@ func _on_intent_rejected(action: String, reason: String) -> void:
 	# slot, ON COOLDOWN, nowhere to blink, instants switched off — was previously SILENT on this node, which
 	# §2.2.8 forbids ("the roll failed" must never be confusable with "my input didn't register"). The bonk is
 	# the instants' whole reject cue; game_log adds the reason line.
+	# pickup_item joins the set in v0.28.0: it was the ONE reject pipe silent on BOTH §2.3.4 channels — no
+	# bonk here AND no arm in game_log — so a refused G press (nothing on the tile, and now the recovery
+	# lockout) looked exactly like a dropped keypress. Both halves land this version: the bonk here, the
+	# line in game_log._log_pickup_reject.
 	if action != "glide_to" and action != "swap_weapon" and action != "shoot" \
-			and action != "use_item" and action != "equip_item" and action != "use_ability":
+			and action != "use_item" and action != "equip_item" and action != "use_ability" \
+			and action != "pickup_item":
 		return
 	var me := _players.get_node_or_null(str(multiplayer.get_unique_id())) as Player
 	if me == null:

@@ -62,6 +62,13 @@ const _GAME_FIELD_SPECS := {
 	# v0.27.1 banter EARSHOT in TILES — how far a bark's reaction travels (0 = both reactions silent).
 	# Capped at 60, comfortably past the map's diagonal, so a large value means "unlimited" in practice.
 	"banter_earshot_tiles": { "min": 0, "max": 60, "int": true },
+	# v0.28.0 (Jeff's third batch), both plain host-side writes read live at their seams:
+	#  whiff_pays_recovery   — true (default) = a whiffed swing still pays its recovery tail (pre-v0.26.0);
+	#                          false = v0.26.0 "recovery only on contact". Read at each whiff resolve.
+	#  recovery_locks_actions — 0-stamina tactical entities cannot ACT (movement stays the winded dials');
+	#                          a no-op while stamina_enabled is off. Read at each action validator.
+	"whiff_pays_recovery": { "bool": true },
+	"recovery_locks_actions": { "bool": true },
 }
 
 # The Players container + combat/move referees, handed in by Main via activate() on the HOST only.
