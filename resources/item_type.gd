@@ -74,7 +74,8 @@ enum Category { POTION, EQUIPMENT, WEAPON }
 @export var usable: bool = true
 
 ## Hit points restored when this item is USED (LATER chunk). 0 = no heal component (a non-healing usable,
-## or an inert item). Deterministic — no roll (mirrors WeaponType.damage's no-to-hit model). Read HOST-side
+## or an inert item). Deterministic — no roll (a heal is a fixed amount; only weapon DAMAGE is banded,
+## WeaponType.damage_min/damage_max v0.26.1, and to-hit stays deterministic either way). Read HOST-side
 ## by the use referee, which applies it through the SAME CombatReferee heal path a spell would; the use
 ## event then carries the resulting hp_after so every peer renders the bar + popup, never a client compute.
 @export var heal_amount: int = 10

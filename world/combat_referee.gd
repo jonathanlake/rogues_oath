@@ -1101,11 +1101,24 @@ func _hostile_at(tile: Vector2i, attacker: Node) -> int:
 ## different amounts in different hands. A weaponless Player still reads melee_damage (vestigial fallback
 ## — a player always has a weapon); a weaponless Monster deals 0 (unarmed is a future natural-weapon, not
 ## a fallback). Duck-typed across the two entity kinds.
+##
+## THE ONE MELEE ROLL SITE (v0.26.1 damage bands, DESIGN §2.3.1 as amended). Every melee weapon-damage
+## read in the codebase routes through here — the player bump, the monster's direct hit, the sticky
+## adjacent catch, and the AoO free strike — so the band is rolled in exactly one place and each of
+## those callers inherits it unchanged. A resolve calls this ONCE (the direct-hit and sticky-catch
+## branches each roll independently, but only one of them executes per resolve), so a single strike
+## never rolls twice. Host-side only: the rolled number rides the existing attack event, so no client
+## rolls anything. TO-HIT is still deterministic — the attack lands; only the number is rolled.
 func damage_of(node: Node) -> int:
-	# Weapon base + wielder bonus (v0.19.0), floored at 0. The passive modify_damage chain still runs
-	# AFTER this in apply_damage (layering: weapon base → flat wielder bonus → conditional passive layer).
+	# Weapon band roll + wielder bonus (v0.26.1 / v0.19.0), floored at 0. Layer order is UNCHANGED:
+	# rolled weapon base → flat wielder bonus → (in apply_damage) the conditional passive modify_damage
+	# chain → armor mitigation. mini/maxi order the pair so a live `/w club damage_min 9` retune that
+	# momentarily inverts the band can never crash randi_range (same guard as MonsterBrain._begin_think).
 	if node is Entity and node.equipped_weapon != null:
-		return maxi(0, node.equipped_weapon.damage + _bonus_damage_of(node))
+		var weapon: WeaponType = node.equipped_weapon
+		var rolled := randi_range(mini(weapon.damage_min, weapon.damage_max),
+				maxi(weapon.damage_min, weapon.damage_max))
+		return maxi(0, rolled + _bonus_damage_of(node))
 	if node is Player:
 		return node.melee_damage
 	return 0
@@ -1260,8 +1273,17 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# fresh round — a same-peer respawn defeats is_alive, but the generation check catches it.
 	# interrupt_gen (v0.26.0) rides the bind beside round_gen — the same "identity a stale fire can never match"
 	# idiom, one axis further: a shooter who BLINKED mid-draw looses nothing (see _loose_arrow's guard).
+	# THE ONE RANGED ROLL SITE (v0.26.1 damage bands): the shot's damage is rolled ONCE here, at DRAW
+	# COMMIT, and baked into the loose bind exactly as the flight speed and tiles already are (stamp-and-
+	# bake, primitives-only — never a resource ref). One roll per shot, so an arrow's number is settled
+	# the moment you commit to the draw and a mid-draw `/w bow` retune cannot change it in flight. Same
+	# mini/maxi inversion guard as the melee site. `+ _bonus_damage_of(shooter)`, floored at 0, CLOSES a
+	# documented §2.3.7 drift (the spec has always said `bonus_damage` applies to all attacks; arrows
+	# alone skipped it) — zero live impact today (no monster archers, Player.bonus_damage defaults 0).
+	var shot_damage := maxi(0, randi_range(mini(weapon.damage_min, weapon.damage_max),
+			maxi(weapon.damage_min, weapon.damage_max)) + _bonus_damage_of(shooter))
 	get_tree().create_timer(windup_sec).timeout.connect(_loose_arrow.bind(
-			_round_gen, sender_peer_id, shooter_tile, target_tile, weapon.damage,
+			_round_gen, sender_peer_id, shooter_tile, target_tile, shot_damage,
 			weapon.display_name, weapon.projectile_tiles_per_beat,
 			_move_referee.interrupt_gen_of(sender_peer_id)))
 	# Commit the FULL window in place (from==to — the shooter is rooted while drawing AND recovering; no

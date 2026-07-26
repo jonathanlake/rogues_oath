@@ -40,10 +40,24 @@ extends Resource
 ## rig auto-align to it. dagger 1.0, longsword 2.0 (the longer commitment carries a damage premium).
 @export var recovery_beats: float = 2.0
 
-## Hit points removed per landed strike (deterministic — no to-hit roll, DESIGN §2.3 amendment).
-## dagger 2 over 1 beat = 2.0 DPS; longsword 5 over 2 beats = 2.5 DPS — the longer lock carries a
-## damage premium so neither trivially dominates the A/B (all Feel=-tunable in the .tres).
-@export var damage: int = 5
+## DAMAGE BAND (v0.26.1, Jeff's Q11 answer): the INCLUSIVE min/max hit points removed per LANDED
+## strike. The referee rolls uniformly in [damage_min, damage_max] once per landed hit, HOST-side
+## (CombatReferee.damage_of for melee; the loose bind in _validate_shoot for a ranged shot) — the
+## rolled number then rides the existing attack/arrow events, so no client ever rolls anything.
+## TO-HIT stays DETERMINISTIC (DESIGN §2.3.1 as amended v0.26.1): every attack that resolves against
+## a body still LANDS — only the number it lands for is rolled. Position decides IF you are hit; the
+## band decides how hard. A COLLAPSED band (min == max) is fixed damage, which is exactly what the
+## `/w <weapon> <n>` shorthand authors live.
+## Inversion is TOLERATED, not required: the roll sites order the pair with mini/maxi so a live
+## retune that momentarily leaves min > max can never crash randi_range. An AUTHORED inversion in a
+## .tres is a designer mistake and earns a startup push_warning (GameConfig.validate_catalogs).
+## The band is §2.3.6's RNG-budget instrument — spreads are authored per weapon and deliberately
+## low-magnitude. Shipped: longsword 3-5, dagger 2-6 (the swingy pick, identity not accident),
+## club 1-4, bow 4-4 (collapsed — Jeff banded no ranged weapon).
+## Defaults below are the LONGSWORD band, matching this file's authoring doctrine (a fresh
+## WeaponType behaves like the longsword); every shipped .tres authors BOTH fields explicitly.
+@export var damage_min: int = 3
+@export var damage_max: int = 5
 
 ## Telegraph BEATS between committing the attack and the damage resolving (DESIGN §2.3.7, §2.1).
 ## 0 = the instant strike at commit — today's default for both weapons. > 0 = the preserved

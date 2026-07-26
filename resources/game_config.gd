@@ -286,7 +286,8 @@ extends Resource
 ## Point-blank KICK damage (v0.17.1, DESIGN ranged, option A). Flat damage a RANGED weapon
 ## (range_tiles > 0) deals when its wielder keyboard-bumps an adjacent hostile — a bow has no melee
 ## swing, so a point-blank bump is a desperation kick, not a slash. A MELEE weapon (range_tiles == 0)
-## keeps its normal swing damage (weapon.damage) instead; this value is read ONLY on the ranged-bump
+## keeps its normal swing damage (a roll in the weapon's damage_min..damage_max band, v0.26.1) instead;
+## the kick is FLAT — no band, and this value is read ONLY on the ranged-bump
 ## path. Deliberately low — the kick is a get-off-me poke, not a wielder's main-hand attack. Read
 ## HOST-side by MoveReferee._begin_bump. Option D (a knockback on the kick) is a future, separate add.
 @export var kick_damage: int = 1
@@ -417,6 +418,7 @@ func validate_catalogs() -> void:
 	_warn_duplicate_names(weapon_catalog, "weapon_catalog")
 	_warn_duplicate_names(item_catalog, "item_catalog")
 	_warn_cross_catalog_collisions()
+	_warn_inverted_damage_bands()
 
 
 ## Cross-catalog uniqueness guard (v0.19.x loot, GLM review). A bag entry is a display_name STRING resolved
@@ -432,6 +434,19 @@ func _warn_cross_catalog_collisions() -> void:
 	for it in item_catalog:
 		if it != null and weapon_names.has(it.display_name):
 			push_warning("[GameConfig] display_name '%s' is in BOTH weapon_catalog and item_catalog — a looted bag entry with this name is AMBIGUOUS (equip vs use). Rename one." % it.display_name)
+
+
+## Authored damage-band guard (v0.26.1), the third sibling beside the duplicate/collision scans and
+## called from the same host-only startup site. The roll sites TOLERATE an inverted band at runtime
+## (they mini/maxi the pair, so a live `/w` retune mid-fight can never crash randi_range) — but an
+## inversion baked into a `.tres` is a DESIGNER MISTAKE, not a transient: someone typed the band
+## backwards and the weapon silently rolls the range they didn't author. So it warns ONCE per weapon
+## at session start, loudly, instead of playing fine and reading wrong. Pure diagnostic — the roll
+## still works, nothing is mutated or clamped (reject-not-clamp is the dev pipe's job, not this).
+func _warn_inverted_damage_bands() -> void:
+	for w in weapon_catalog:
+		if w != null and w.damage_min > w.damage_max:
+			push_warning("[GameConfig] weapon '%s' has damage_min %d > damage_max %d — the band is authored BACKWARDS. The referee rolls the ordered range anyway, but fix the .tres." % [w.display_name, w.damage_min, w.damage_max])
 
 
 ## Shared duplicate-display_name scan for one catalog (v0.18.0). `entries` is an Array of Resources each with

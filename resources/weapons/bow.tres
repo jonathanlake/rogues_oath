@@ -6,7 +6,8 @@
 script = ExtResource("1_weapon")
 display_name = "bow"
 recovery_beats = 1.0
-damage = 4
+damage_min = 4
+damage_max = 4
 windup_beats = 2.0
 range_tiles = 7
 projectile_tiles_per_beat = 4.0

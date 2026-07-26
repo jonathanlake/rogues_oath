@@ -141,9 +141,16 @@ func validate(sender_peer_id: int, data: Dictionary) -> Dictionary:
 # ── Private methods ─────────────────────────────────────────────────────────────
 
 ## /w <weapon> [field] <value|reset> — weapon tuning (v0.10.0). Resolve the weapon (roster first, then a
-## filename load), then hand the rest to the shared tune pipeline. Field defaults to `damage` (so "/w
-## longsword 5" works) — normalized here, the one weapon-specific rule — before _dev_tune_resource does
-## the reset / field-allowlist / range-clamp / mutate work shared with /m.
+## filename load), then hand the rest to the shared tune pipeline for the reset / field-allowlist /
+## range-clamp / mutate work shared with /m.
+##
+## THE SHORTHAND (v0.26.1): a LONE value ("/w club 3", and the "/club 3" alias) now COLLAPSES THE BAND —
+## it sets damage_min AND damage_max to that value, which is exactly fixed damage. Before the bands
+## landed this was "set `damage`", and keeping it meaningful matters twice over: it is the muscle-memory
+## tuning command, and a collapsed band is the harness's determinism pin (no RNG seeding exists, so
+## min == max is how a scripted run gets a predictable number). Implemented as TWO queued writes through
+## the SAME _dev_tune_resource path, so the reject-not-clamp validation, the int/float kinds, and the
+## reset-from-disk semantics are untouched — this function adds no rules of its own beyond the fan-out.
 func _dev_cmd_weapon(args: Array[String], by: String) -> Dictionary:
 	if args.size() < 2:
 		return { "ok": false, "reason": "usage: /w <weapon> [field] <value|reset>" }
@@ -151,10 +158,27 @@ func _dev_cmd_weapon(args: Array[String], by: String) -> Dictionary:
 	if weapon == null:
 		return { "ok": false, "reason": "unknown weapon '%s'" % args[0] }
 	var rest := args.slice(1)
-	# Field defaults to damage when a lone value is given ("/w longsword 5"). A lone "reset" is left
-	# untouched so the shared pipeline still sees it as a reset.
+	# Lone value = the band-collapsing shorthand. A lone "reset" is left untouched so the shared
+	# pipeline still sees it as a reset (which restores EVERY allowlisted field from disk, bands included).
 	if rest.size() == 1 and rest[0] != "reset":
-		rest = ["damage", rest[0]] as Array[String]
+		var value_token: String = rest[0]
+		# damage_min first, and BAIL on its reject before touching damage_max — a rejected shorthand must
+		# leave the band exactly as it found it, not half-written. (Both fields share one clamp range
+		# today, so a divergent verdict is unreachable; the ordering is defense against that changing.)
+		var min_verdict := _dev_tune_resource(weapon, GameManager.DEV_WEAPON_FIELDS,
+				GameManager.DEV_WEAPON_INT_FIELDS, GameManager.DEV_WEAPON_CLAMPS,
+				["damage_min", value_token] as Array[String], by, weapon.display_name)
+		if not bool(min_verdict.get("ok", false)):
+			return min_verdict
+		var max_verdict := _dev_tune_resource(weapon, GameManager.DEV_WEAPON_FIELDS,
+				GameManager.DEV_WEAPON_INT_FIELDS, GameManager.DEV_WEAPON_CLAMPS,
+				["damage_max", value_token] as Array[String], by, weapon.display_name)
+		if not bool(max_verdict.get("ok", false)):
+			return max_verdict
+		# One composed line for the pair (the two per-field lines are discarded), naming the collapse so
+		# nobody reads "set damage" and wonders which field moved.
+		return { "ok": true, "data": { "line": "%s set %s damage to %s (band collapsed: min = max)."
+				% [by, weapon.display_name, value_token] } }
 	return _dev_tune_resource(weapon, GameManager.DEV_WEAPON_FIELDS, GameManager.DEV_WEAPON_INT_FIELDS,
 			GameManager.DEV_WEAPON_CLAMPS, rest, by, weapon.display_name)
 
@@ -367,8 +391,8 @@ func _dev_cmd_snapshot() -> Dictionary:
 	var weapons := {}
 	for weapon in GameManager.config.weapon_catalog:
 		weapons[weapon.display_name] = {
-			"damage": weapon.damage, "windup_beats": weapon.windup_beats,
-			"recovery_beats": weapon.recovery_beats,
+			"damage_min": weapon.damage_min, "damage_max": weapon.damage_max,
+			"windup_beats": weapon.windup_beats, "recovery_beats": weapon.recovery_beats,
 		}
 	var monster_types := {}
 	var dir := DirAccess.open("res://resources/monsters")

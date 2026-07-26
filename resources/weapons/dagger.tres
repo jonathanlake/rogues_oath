@@ -6,7 +6,8 @@
 script = ExtResource("1_weapon")
 display_name = "dagger"
 recovery_beats = 1.0
-damage = 2
+damage_min = 2
+damage_max = 6
 windup_beats = 0.0
 atlas_coords = Vector2i(0, 0)
 attack_style = "stab"

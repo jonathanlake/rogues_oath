@@ -144,7 +144,7 @@ func _handle_slash_command(text: String) -> void:
 func _render_help() -> void:
 	add_line("Dev commands (any peer):")
 	add_line("  /w <weapon> [%s] <value|reset>" % "|".join(PackedStringArray(GameManager.DEV_WEAPON_FIELDS)))
-	add_line("  /<weapon> <value>  — shorthand for /w <weapon> damage <value>")
+	add_line("  /<weapon> <value>  — sets damage_min AND damage_max (collapses the band to fixed damage)")
 	add_line("  /m <monster> <%s> <value|reset>" % "|".join(PackedStringArray(GameManager.DEV_MONSTER_FIELDS)))
 	add_line("  /god  — toggle your own invulnerability")
 	add_line("  /class <%s>" % "|".join(_dev_class_names()))

@@ -69,7 +69,7 @@ const _SHARED_DIALS := [
 		"min": 0, "max": 600, "step": 1 },
 ]
 
-const _WEAPON_FIELDS := ["damage", "windup_beats", "recovery_beats"]
+const _WEAPON_FIELDS := ["damage_min", "damage_max", "windup_beats", "recovery_beats"]
 
 # Pending widget edits: row key -> {cmd, args}. Keyed so scrubbing a SpinBox collapses to one
 # intent per flush; flushed by _flush_timer 0.3s after the last change.
@@ -384,27 +384,46 @@ func _paint_weapons(weapons: Dictionary) -> void:
 		for weapon_name in weapons:
 			var head := _label(str(weapon_name), 150)
 			_weapons_box.add_child(head)
-			var row := HBoxContainer.new()
-			for field in _WEAPON_FIELDS:
-				row.add_child(_label(field.trim_suffix("_beats"), 62))
-				var spin := SpinBox.new()
-				spin.custom_minimum_size = Vector2(58, 0)
-				spin.min_value = 0.0
-				spin.max_value = 100.0
-				spin.step = 1.0 if field == "damage" else 0.5
-				var key := "w:%s:%s" % [weapon_name, field]
-				spin.value_changed.connect(func(value: float):
-					if not _painting:
-						_queue(key, "w", [str(weapon_name), field, str(value)]))
-				_weapon_editors[key] = spin
-				row.add_child(spin)
-			_weapons_box.add_child(row)
+			# TWO fields per row (v0.26.1). Damage became a min/max BAND, so the old single row would carry
+			# four (label, spin) pairs — MEASURED at 470 units minimum, which overflows the dock's fixed 422
+			# and makes the root lose to min-size and bleed left (the bug _sync_width's comment records).
+			# A SpinBox's own minimum is ~68 units whatever custom_minimum_size says, so no label trim gets
+			# four pairs inside the budget; pairing them is what fits (2 × (62 + 68) + separations ≈ 271)
+			# AND keeps the labels spelled out. Vertical cost is one extra row per weapon.
+			for pair_start in range(0, _WEAPON_FIELDS.size(), 2):
+				var row := HBoxContainer.new()
+				for field in _WEAPON_FIELDS.slice(pair_start, pair_start + 2):
+					row.add_child(_label(_weapon_field_label(field), 62))
+					var spin := SpinBox.new()
+					spin.custom_minimum_size = Vector2(58, 0)
+					spin.min_value = 0.0
+					spin.max_value = 100.0
+					spin.step = 1.0 if field.begins_with("damage") else 0.5
+					var key := "w:%s:%s" % [weapon_name, field]
+					spin.value_changed.connect(func(value: float):
+						if not _painting:
+							_queue(key, "w", [str(weapon_name), field, str(value)]))
+					_weapon_editors[key] = spin
+					row.add_child(spin)
+				_weapons_box.add_child(row)
 	var focused := _root.get_viewport().gui_get_focus_owner()
 	for weapon_name in weapons:
 		for field in _WEAPON_FIELDS:
 			var editor: SpinBox = _weapon_editors.get("w:%s:%s" % [weapon_name, field], null)
 			if editor != null and not (focused != null and editor.get_line_edit() == focused):
 				editor.set_value_no_signal(float(weapons[weapon_name].get(field, 0)))
+
+
+## The short row label for a weapon field (v0.26.1). The band's two fields would read "damage_min"/
+## "damage_max" through the generic trim, which no longer fits the narrowed 4-field row — so they get
+## explicit abbreviations and everything else keeps the "_beats" trim it always had.
+func _weapon_field_label(field: String) -> String:
+	match field:
+		"damage_min":
+			return "dmg min"
+		"damage_max":
+			return "dmg max"
+	return field.trim_suffix("_beats")
 
 
 func _paint_types(types: Dictionary) -> void:

@@ -14,10 +14,11 @@ const MENU_SCENE := "res://ui/main_menu/main_menu.tscn"
 ## documents them. Each CLAMPS entry is [min, max]; a value outside it is REJECTED (not silently
 ## clamped), naming the range, at the validator. The field is stored as an int when it appears in the
 ## matching *_INT_FIELDS list, else as a float.
-const DEV_WEAPON_FIELDS := ["damage", "recovery_beats", "windup_beats"]
-const DEV_WEAPON_INT_FIELDS := ["damage"]
+const DEV_WEAPON_FIELDS := ["damage_min", "damage_max", "recovery_beats", "windup_beats"]
+const DEV_WEAPON_INT_FIELDS := ["damage_min", "damage_max"]
 const DEV_WEAPON_CLAMPS := {
-	"damage": [0, 999],
+	"damage_min": [0, 999],
+	"damage_max": [0, 999],
 	"recovery_beats": [0.05, 30.0],
 	"windup_beats": [0.0, 30.0],
 }
