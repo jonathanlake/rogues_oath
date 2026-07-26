@@ -5,6 +5,6 @@
 
 [resource]
 script = ExtResource("1_backstab")
-display_name = "Backstab"
+display_name = "Sneak Attack"
 damage_multiplier = 2.0
 required_weapon = ExtResource("2_dagger")

@@ -32,8 +32,12 @@ extends Resource
 ## and item use in combat while explore pace is untouched.
 ## Its clamp/snap bounds are DELIBERATELY SHARED with the explore dial (tempo_min_sec / tempo_max_sec /
 ## tempo_step_sec above); when tactical earns its own band, split them here.
-## Seeded into GameManager.tactical_beat_sec at session start on every peer. Default 0.50s (120 BPM).
-@export var tactical_beat_sec: float = 0.5
+## Seeded into GameManager.tactical_beat_sec at session start on every peer.
+## v0.27.0: default 0.50 → **0.25s** (240 BPM) — Jeff's second playtest verdict promoted the `/config 2`
+## fight cadence to the shipped game, and this is that loadout's tempo row. The heavier weapon windups
+## (§A of the same verdict — longsword/club 3 beats, dagger 2) are authored against THIS beat, so the two
+## move together: raising the beat without shortening those windups doubles every telegraph.
+@export var tactical_beat_sec: float = 0.25
 
 ## Tactical Zones v1 (DESIGN §2.8.7). FORCING WINDOW in BEATS: after a player lands a hostile action
 ## (its bump — including hitting the training dummy; the rule is uniform), it stays TACTICAL for this
@@ -147,14 +151,29 @@ extends Resource
 ## bends "commits to ground, not to a name" (DESIGN §2.3) INSIDE the §2.2.10 experiment — the
 ## kiting-thread fix in its adjacency form. `/config swing_catches_adjacent 0` restores pure
 ## ground commitment live.
-@export var swing_catches_adjacent: bool = true
+##
+## RETIRED-BY-DEFAULT (v0.27.0, Jeff's second playtest verdict): default true → **false**. Two reasons,
+## both his report. (1) It read as "attacks landing from two tiles away" — the catch is legal by the rule
+## but illegible on screen, which §2.3.4 does not allow. (2) It degenerates for a BLINKED victim:
+## motion_tiles_of returns only the blink DESTINATION once teleport_entity has wiped the motion record,
+## so a Shadow Step out of a swing could still be caught by it. Pure commit-to-ground restores the
+## legible rule — step off the tile and the swing whiffs. The toggle SURVIVES for A/B (`/config
+## swing_catches_adjacent 1`), so this is a default flip, not a removal.
+@export var swing_catches_adjacent: bool = false
 
 ## HARD-STOP mode (v0.24.6, the `/winded` dev command; split v0.25.0): when true, 0 stamina on
 ## that side means NO moving at all (distinct "winded" reject) instead of the crawl. `/winded`
 ## stays the convergent recovery toggle: it reads the PLAYER field and sets BOTH sides to its
 ## negation, so a GUI-diverged pair snaps back together. Rooted movers still rest-regen.
-@export var player_exhausted_blocks_movement: bool = false
-@export var monster_exhausted_blocks_movement: bool = false
+##
+## DEFAULT ON since v0.27.0 (Jeff's second playtest verdict, BOTH sides): at max 1 the crawl was the
+## soft answer to a binary budget — you always still got to move, just slowly — and Jeff wanted the
+## spend to actually gate the step. The crawl machinery stays behind `/winded` (and the per-side
+## `/config` fields) so the softer shape is one keystroke away. NOTE the presentation pairing: the
+## sweat-drop cue now marks the CRAWL, not the hard stop (§2.2.10 / main.gd _handle_exhausted_event) —
+## a hard-stopped entity reads through its recovery bar + the distinct "winded" reject instead.
+@export var player_exhausted_blocks_movement: bool = true
+@export var monster_exhausted_blocks_movement: bool = true
 
 ## Rest-to-recover stamina regen (Jon, 2026-07-25; SPLIT per side v0.25.0 — every stamina dial
 ## below comes as a player_/monster_ pair so the two sides tune independently, Jon's overhaul ask):
@@ -213,15 +232,40 @@ extends Resource
 ## must not produce a wall of text. One room, one voice at a time.
 @export var banter_cooldown_sec: float = 2.5
 @export var banter_engaged: Array[String] = [
-	"fresh meat!", "intruders!", "get 'em!!", "who goes there?!"]
+	"fresh meat!", "intruders!", "get 'em!!", "who goes there?!",
+	"oi! trespassers!", "supper walked in!"]
 @export var banter_retarget: Array[String] = [
-	"you're next!", "one down...", "heh heh heh."]
+	"you're next!", "one down...", "heh heh heh.", "next!", "who's brave now?"]
 @export var banter_last_stand: Array[String] = [
-	"I ain't scared o' you!", "come on then!", "for the warren!!"]
+	"I ain't scared o' you!", "come on then!", "for the warren!!",
+	"come on then, ALL o' you!"]
 @export var banter_cornered: Array[String] = [
-	"back off!", "stay away!!", "no no no no"]
+	"back off!", "stay away!!", "no no no no", "no closer!"]
 @export var banter_ally_died: Array[String] = [
-	"you'll pay for that!", "murderers!!", "avenge!!", "no... NO!"]
+	"you'll pay for that!", "murderers!!", "avenge!!", "no... NO!",
+	"that was my mate!!"]
+
+## NOTABLE DEATH (v0.27.0): fires INSTEAD of banter_ally_died when the dying monster's type carries
+## MonsterType.banter_notable (the three shamans) — the pack loses the thing keeping it alive, so it
+## gets its own, louder reaction. Forced past the chance roll like the ally-died bark.
+@export var banter_notable_death: Array[String] = [
+	"the shaman's DOWN!!", "who heals us now?!", "not the shaman — NOT THE SHAMAN!",
+	"we're meat now.", "run! RUN!"]
+## FORCED MELEE (v0.27.0): a caster that would rather be kiting had to swing a club instead — the
+## utility AI picked melee for a flees_players monster. Chance-gated (it happens a lot in a small room).
+@export var banter_forced_melee: Array[String] = [
+	"get OFF me!", "I don't DO clubs!", "fine! FINE!", "this is not my job!",
+	"hands off, worm!"]
+## IDLE (v0.27.0): rare out-of-combat muttering on a 15-30s randomized per-monster timer, gated on the
+## monster NOT being in a fight. The normal chance + global cooldown make it genuinely occasional.
+@export var banter_idle: Array[String] = [
+	"...I'm hungry.", "boring.", "whose turn to watch?", "smells like feet in here.",
+	"I could eat a rat.", "*scratches*"]
+## HELP ME (v0.27.0): a NOTABLE monster (a shaman) the moment it takes damage while its pack is still
+## fighting — once per life, forced past the chance roll. The squishy caster screaming for cover.
+@export var banter_help_me: Array[String] = [
+	"help me, you fools!", "HELP! HELP!", "don't just STAND there!!",
+	"someone DO something!", "I'm too pretty to die!"]
 
 ## Monster hesitation (Jeff: "enemies think before moving"): on entering battle a monster rolls
 ## think beats uniformly in [min, max] (host RNG) and holds its WHOLE brain — no move, attack or
@@ -310,16 +354,35 @@ extends Resource
 ## Read HOST-side only (CombatReferee's use_ability validator) — never a client value.
 @export var instant_abilities_enabled: bool = true
 
-## Shield Block COOLDOWN in BEATS (v0.26.0 instants experiment). Stamped at the BLOCKER's resolved
-## pace when the block is CONSUMED — not when it is raised — so holding a guard costs nothing until it
-## actually turns a blow aside. Deliberately long (30 beats): the block negates one hit of ANY size,
-## which is only balanced if it is a once-a-fight decision. Read HOST-side.
-@export var shield_block_cooldown_beats: float = 30.0
+## (v0.27.0: the two per-ability cooldown dials that used to live here are GONE. A cooldown is now a
+## field on the ABILITY resource — `ActiveAbility.cooldown_beats` — so every ability (instant AND
+## strike) carries its own, tuned per `.tres` via `/ab` or the panel's CLASSES section instead of
+## through two hand-written GameConfig fields that only two abilities could ever use.)
 
-## Shadow Step COOLDOWN in BEATS (v0.26.0 instants experiment). Stamped at the blinker's resolved pace
-## on a SUCCESSFUL teleport only — a blocked destination burns nothing, so a mis-timed press is a
-## refusal, not a punishment. Read HOST-side.
-@export var shadow_step_cooldown_beats: float = 20.0
+## ARMOR FLAT REDUCTION per weight band (v0.27.0, Jeff's second playtest verdict). The FLAT half of the
+## two-term armor rule: a physical hit against a PLAYER is reduced by the percentage (the worn item's
+## `phys_damage_reduction`) OR by this flat amount, **whichever leaves the target taking LESS** —
+## `final = min(pct_result, flat_result)`. Why both: percentages do nothing against small hits (25% of a
+## 2-damage club swing rounds back to 2), which is exactly where Jeff expected plate to matter, and a
+## pure flat rule would trivialize big hits. Read HOST-side at the one apply_damage seam, by the band the
+## worn BODY item declares (ItemType.armor_weight).
+## UNARMORED is deliberately NOT a field: no armor means flat 0 (and 0%), so the seam leaves the amount
+## untouched — the absence of armor must never be a source of mitigation.
+## Paired with the MONSTER-DAMAGE FLOOR at the same seam: a monster's hit on a player that armor would
+## reduce to 0 lands for 1 instead (Jeff's worked example — 2 damage vs chainmail: pct 2, flat 0, floored
+## to 1). Enemies must always be able to hurt you.
+@export var armor_flat_reduction_light: int = 1
+@export var armor_flat_reduction_medium: int = 2
+@export var armor_flat_reduction_heavy: int = 3
+
+## The MASTER ability catalog (v0.27.0) — every ActiveAbility a dev-command / panel token may resolve to,
+## the mirror of weapon_catalog for abilities. `ability_by_name` resolves from THIS (by display_name slug),
+## which is what makes `/ab kick cooldown_beats 30` and the panel's CLASSES section possible: an ability
+## lives on a class's `active_abilities`, so before this there was no by-name resolution path at all.
+## NOT an authority for gameplay — the referee still reads the sender's class list (never this array) when
+## it validates a use; this is purely the tuning-surface index. Designer-editable: add an ability here to
+## make it name-resolvable.
+@export var ability_catalog: Array[ActiveAbility] = []
 
 
 # ── Weapon roster helpers ─────────────────────────────────────────────────────
@@ -349,6 +412,21 @@ func item_by_name(name: String) -> ItemType:
 	for it in item_catalog:
 		if it != null and it.display_name == name:
 			return it
+	return null
+
+
+## Resolve an ACTIVE ABILITY by a SLUG of its display_name through ability_catalog (v0.27.0), or null.
+## SLUG, not exact match, deliberately: ability display_names are title-case with spaces ("Shield Bash")
+## because they are player-facing HUD text, while a dev-command token arrives lowercased and
+## space-separated tokens would split into separate args (dev_commands lowercases every arg). So both
+## sides are normalized the same way — lowercase, spaces → underscores — making `/ab shield_bash …` the
+## typed form and letting the debug panel submit the same slug programmatically. First-hit resolution
+## like the other two catalogs.
+func ability_by_name(token: String) -> ActiveAbility:
+	var want := token.to_lower().replace(" ", "_")
+	for a in ability_catalog:
+		if a != null and a.display_name.to_lower().replace(" ", "_") == want:
+			return a
 	return null
 
 

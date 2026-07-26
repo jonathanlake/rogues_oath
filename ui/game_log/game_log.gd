@@ -149,6 +149,7 @@ func _render_help() -> void:
 	add_line("  /god  — toggle your own invulnerability")
 	add_line("  /class <%s>" % "|".join(_dev_class_names()))
 	add_line("  /config <%s>  — apply a preset test loadout" % "|".join(PackedStringArray(GameManager.CONFIG_PRESETS.keys())))
+	add_line("  /ab <ability> <field> <value|reset>  — tune an ability .tres (v0.27.0; slug names: shield_bash)")
 	add_line("  /stun [me|<monster>] [beats]  — apply a stun (default 3 beats)")
 	add_line("  /ai  — toggle utility-AI score debug in the F3 overlay")
 	add_line("  /stamina  — toggle the stamina experiment (v0.24.1; /mp still works)")
@@ -196,15 +197,15 @@ func _on_event_received(event: Dictionary) -> void:
 			# escape-at-render regardless of source, no "trusted" bypass.
 			_log_attack(data)
 		"windup":
-			# The telegraph tell (§2.3.4): a distinct "winding up" line so the wind-up is legible in
-			# the log, not only on-screen. A DRAW-style windup (the bow) carries a `weapon` field (a
-			# monster's coil-windup posts none), so branch to a distinct "draws the <weapon>..." line
-			# (v0.17.1 review #7) — a bow draw must never read the same as a monster winding up.
-			var windup_weapon := str(data.get("weapon", ""))
-			if windup_weapon != "":
-				add_line("%s draws the %s..." % [str(data.get("name", "")), windup_weapon])
-			else:
-				add_line("%s winds up..." % str(data.get("name", "")))
+			# The telegraph tell (§2.3.4): ONE "winding up" line, whoever is winding up and with what.
+			# v0.27.0 (Jeff's second playtest verdict) DELETED the weapon-stamped "X draws the club..."
+			# variant added in v0.17.1: now that every weapon carries a real windup (longsword/club 3 beats,
+			# dagger 2) that branch fired on every melee telegraph and read as a weapon SWAP — the log already
+			# says "draws the …" for a Tab/equip swap, and two unrelated events sharing a verb is exactly the
+			# confusion §2.3.4 forbids. The swap line keeps "draws"; a telegraph says "winds up". The bow's
+			# draw folds into the same wording, which is honest — it IS a wind-up — and its distinct cue is the
+			# rig's skyward raise + the pitched-down draw sound, not this line.
+			add_line("%s winds up..." % str(data.get("name", "")))
 		"died":
 			# Death line (§2.3.4). The dying entity's OWN client gets a second-person line so a
 			# player knows it was them (their node is already gone — this is the spectate placeholder,
@@ -255,21 +256,23 @@ func _on_event_received(event: Dictionary) -> void:
 			var class_line := "%s becomes a %s." % [str(data.get("by", "Someone")), str(data.get("class", "class"))]
 			if bool(data.get("weapon_skipped", false)):
 				class_line += " (weapon not equipped — busy; Tab to equip.)"
+			# gear_skipped (v0.27.0): the same clause for the class's STARTING BODY ARMOR, which the /class
+			# validator equips beside the weapon and skips for the same reason (mid-commit). Its own flag and
+			# its own clause, because the two can skip independently and a merged "gear not equipped" would
+			# not tell you WHICH — and unlike the weapon there is no Tab shortcut to recover it.
+			if bool(data.get("gear_skipped", false)):
+				class_line += " (armor not equipped — busy; re-run /class when free.)"
 			add_line(class_line)
 		"banter":
 			# Goblin banter (v0.24.4): the spoken line also lands in the log, quoted, so a bark you
 			# missed on screen survives in the record. Host-authored text, escaped anyway (belt).
 			add_line("%s: \"%s\"" % [_escape_bbcode(str(data.get("name", "Goblin"))),
 					_escape_bbcode(str(data.get("text", "")))])
-		"stamina":
-			# Stamina experiment (v0.24.1): the EXHAUSTION line, own-player only. Fires exactly once per
-			# empty (the event posts on change, and hitting 0 is a change), so no throttle is needed —
-			# §2.3.4: crawling must read as "I'm exhausted", never as lag or a dropped input. Refill/regen
-			# ticks get no line (the pips are the running signal; the crawl visibly ending is the recovery
-			# tell).
-			if int(data.get("entity_id", 0)) == multiplayer.get_unique_id() \
-					and int(data.get("points", -1)) == 0:
-				add_line("Exhausted — you can barely move. Stand still to recover.")
+		# (v0.27.0: the "stamina" arm is GONE. Its one line — "Exhausted — you can barely move." — fired on
+		# every pool empty, i.e. on EVERY tactical step now that the pool is a single point, so it spammed the
+		# log with a sentence the body's own cues already tell (the recovery bar, the transparency, the drip or
+		# the distinct "winded" reject). Jeff's second playtest verdict. The `stamina` EVENT itself is untouched
+		# — main.gd still drives the HUD pips from it; only this log line went away.)
 		"pace_changed":
 			# The pace-flip cue (Tactical Zones v1, §2.8.7). A TWO-SIGNAL cue — tempo-bar emphasis + this
 			# log line — and deliberately NO sound: pace flips are a two-signal cue by audio-grammar choice
@@ -386,14 +389,16 @@ func _log_attack(data: Dictionary) -> void:
 		add_line("%s hits %s — no effect (god)." % [attacker_name, target_name])
 		return
 	var damage := int(data.get("damage", 0))
-	# Backstab (v0.11.0): a DISTINCT line before the free/normal branches (§2.3.4 — never confusable with
-	# a plain hit), driven by the "backstab" tag the referee stamped. Same running-HP readout as a normal
-	# hit, with "backstabs" + a "!" carrying the distinct outcome. On every peer (the tag rides the event).
-	if (data.get("tags", []) as Array).has("backstab"):
-		# A free (AoO) backstab keeps its free-ness visible — both outcomes are distinct cues (§2.3.4),
+	# SNEAK ATTACK (v0.11.0 as "backstab", redesigned + retagged v0.27.0): a DISTINCT line before the
+	# free/normal branches (§2.3.4 — never confusable with a plain hit), driven by the "sneak" tag the
+	# referee stamped when the rogue's dagger caught a FLANKED or STUNNED target. Same running-HP readout as
+	# a normal hit, with "sneak-attacks" + a "!" carrying the distinct outcome. On every peer (the tag rides
+	# the event).
+	if (data.get("tags", []) as Array).has("sneak"):
+		# A free (AoO) sneak attack keeps its free-ness visible — both outcomes are distinct cues (§2.3.4),
 		# so neither may swallow the other.
 		var free_prefix := "free-attack " if str(data.get("kind", "")) == "free" else ""
-		add_line("%s %sbackstabs %s for %d! (%d/%d)." % [
+		add_line("%s %ssneak-attacks %s for %d! (%d/%d)." % [
 			attacker_name, free_prefix, target_name, damage,
 			int(data.get("hp_after", 0)), int(data.get("target_max", 0))])
 		return

@@ -55,6 +55,14 @@ const _POSE_WINDBACK_FRAC := 0.20
 const _POSE_LINGER_FRAC := 0.25
 const _POSE_SHAKE_STEP_SEC := 0.03
 
+# PLAYER windup style (v0.27.0, Jeff's second playtest verdict: "the player should PULL BACK, not wiggle").
+# The monster tell is a fast plant + a nervous jitter — right for a goblin working itself up, wrong for a
+# hero drawing back for a heavy swing. So a player's pose spends MOST of the window winding back (a long
+# eased draw the eye can follow), pulls a few degrees PAST the launch angle for tension, and plays NO shake.
+# Fractions of the pose window like the monster's, so both scale with tempo.
+const _POSE_PLAYER_WINDBACK_FRAC := 0.75
+const _POSE_PLAYER_OVERDRAW_DEG := 6.0
+
 # Bow-draw feel (v0.17.0, the "draw" style). All PIXELS/feel, tune by eye. The arrow nocks a touch AHEAD
 # of the bow at draw start, PULLS back over the draw, then SPRINGS forward on release before it hides (the
 # flying arrow is the separate Projectile node — the rig arrow only nocks/looses).
@@ -148,13 +156,13 @@ func play_swing(dir: Vector2i, duration_sec: float) -> void:
 	if _swing_tween != null and _swing_tween.is_valid():
 		_swing_tween.kill()
 	_sprite.visible = true
-	_sprite.rotation = _weapon_baseline_rad()
+	_apply_sprite_baseline(sweep)
 	if posed and not is_stab:
 		# Posed launch (v0.18.2): the club is already wound back and pushed OUT to its extended radius from
 		# play_windup_pose. Do NOT reset the sprite to orbit (that would jump the club in) and do NOT snap the
 		# rig to the near edge (that would jump it forward) — snap the rig to the wound-back angle `back` and
 		# let the slash arm whip forward FROM here. This is the SINGLE authoritative snap to `back`.
-		rotation = aim - sweep * (arc * 0.5 + deg_to_rad(_weapon.windup_raise_degrees))
+		rotation = _windback_angle(aim, sweep)
 	else:
 		# Instant path (and every stab): byte-identical to the pre-v0.18.2 entry snap (sweep = +1 for a
 		# rightward aim, so this is unchanged there; a leftward aim now snaps to the mirrored near edge).
@@ -203,7 +211,12 @@ func play_swing(dir: Vector2i, duration_sec: float) -> void:
 ## Null weapon / non-positive window no-op. Reuses the swing-tween slot (a pose and a swing can't co-occur —
 ## the attacker is busy for the whole windup). Slash: the club parks `windup_raise_degrees` BEHIND the
 ## swing's start edge (aim − arc/2), the same swing-space convention as _SLASH_STARTUP_WINDBACK_RAD.
-func play_windup_pose(dir: Vector2i, hold_sec: float, weapon: WeaponType = null) -> void:
+## `player_style` (v0.27.0) picks the CHOREOGRAPHY: false = the monster tell (fast plant + jitter, unchanged),
+## true = the player pull-back (a long eased draw, a few degrees of over-draw, no shake). The flag is threaded
+## DOWN from Entity.play_windup_pose (`self is Player`) — the component never reaches up to ask what it is
+## attached to (CLAUDE.md), so the entity tells it. Same phases, same timing contract, no new fields.
+func play_windup_pose(dir: Vector2i, hold_sec: float, weapon: WeaponType = null,
+		player_style: bool = false) -> void:
 	if weapon != null:
 		_weapon = weapon                      # event-resolved weapon WINS (v0.17.1 review #9 pattern)
 	if _weapon == null or hold_sec <= 0.0:
@@ -211,14 +224,18 @@ func play_windup_pose(dir: Vector2i, hold_sec: float, weapon: WeaponType = null)
 	var unit := Vector2(dir.x, dir.y).normalized() if dir != Vector2i.ZERO else Vector2(1.0, 0.0)
 	var aim := unit.angle()
 	var orbit := _weapon.orbit_radius_px
+	# Overhead-mirror sign (v0.19.2), hoisted out of the slash branch in v0.27.0 because the SPRITE baseline
+	# needs it too (see _apply_sprite_baseline): the same sweep decides which way the orbit goes AND which way
+	# the art is mirrored, so computing it once is what keeps the two from disagreeing.
+	var pose_sweep := -1.0 if unit.x < 0.0 else 1.0
 	if _swing_tween != null and _swing_tween.is_valid():
 		_swing_tween.kill()
-	# Show at the weapon region, out on the orbit radius, at its baseline rotation (mirror play_draw —
-	# repaint the region so an event-resolved weapon overrides a stale cache).
+	# Show at the weapon region, out on the orbit radius, at its (sweep-aware) baseline rotation (mirror
+	# play_draw — repaint the region so an event-resolved weapon overrides a stale cache).
 	_sprite.visible = true
 	_sprite.region_rect = WorldGrid.atlas_region(_weapon.atlas_coords)
 	_sprite.position = Vector2(orbit, 0.0)
-	_sprite.rotation = _weapon_baseline_rad()
+	_apply_sprite_baseline(pose_sweep)
 	_swing_tween = create_tween()
 	if _weapon.attack_style == "stab":
 		# Stab: hold the rig ON the target and coil the sprite IN to its short start radius — the readable
@@ -234,32 +251,49 @@ func play_windup_pose(dir: Vector2i, hold_sec: float, weapon: WeaponType = null)
 		# the near edge (which would jump the club forward). Set at the START so a launch during ANY phase
 		# (fast tempo) still takes the posed branch. No expiry: the sequence ends parked and HOLDS.
 		_windup_posed = true
-		# Overhead-mirror (v0.19.2), same sweep sign as play_swing so the wound-back pose parks on the side the
-		# slash launches from (mirrored for a leftward aim, else unchanged).
-		var pose_sweep := -1.0 if unit.x < 0.0 else 1.0
-		var back := aim - pose_sweep * (deg_to_rad(_weapon.arc_degrees) * 0.5 + deg_to_rad(_weapon.windup_raise_degrees))
+		# The wound-back angle comes from the SHARED helper play_swing's posed launch also snaps to, so the
+		# park angle and the launch angle can never drift apart (v0.27.0 — they were two copies of one formula).
+		var back := _windback_angle(aim, pose_sweep)
 		var ext := orbit + _weapon.windup_reach_px
 		rotation = aim - pose_sweep * deg_to_rad(_weapon.arc_degrees) * 0.5   # start at the (mirrored) near edge, rest radius
 		_sprite.position = Vector2(orbit, 0.0)
-		# Phase A — WIND BACK + OUT (parallel), a fraction of the window.
-		var windback_sec := hold_sec * _POSE_WINDBACK_FRAC
-		_swing_tween.set_parallel(true)
-		_swing_tween.tween_property(self, "rotation", back, windback_sec)
-		_swing_tween.tween_property(_sprite, "position:x", ext, windback_sec)
-		_swing_tween.set_parallel(false)
-		# Phase B — LINGER wound back.
-		_swing_tween.tween_interval(hold_sec * _POSE_LINGER_FRAC)
-		# Phase C — SHAKE: rapid ± jitter around `back`, but ONLY if the remaining budget fits >= 3 pairs
-		# (else it reads as a 1-2-frame glitch — degrade to a clean hold). Remainder folds into the settle.
-		var shake_budget := hold_sec - windback_sec - hold_sec * _POSE_LINGER_FRAC
-		var shake := deg_to_rad(_weapon.windup_shake_degrees)
-		if shake > 0.0 and shake_budget >= 6.0 * _POSE_SHAKE_STEP_SEC:
-			var pairs := int(shake_budget / (2.0 * _POSE_SHAKE_STEP_SEC))
-			for i in pairs:
-				_swing_tween.tween_property(self, "rotation", back + shake, _POSE_SHAKE_STEP_SEC)
-				_swing_tween.tween_property(self, "rotation", back - shake, _POSE_SHAKE_STEP_SEC)
-			_swing_tween.tween_property(self, "rotation", back, _POSE_SHAKE_STEP_SEC)
-		# (shake skipped -> nothing more; the club HOLDS wound back until play_swing takes over. No expiry.)
+		if player_style:
+			# PLAYER PULL-BACK (v0.27.0). ONE long eased draw instead of plant-linger-jitter: the arm hauls the
+			# weapon back over ~3/4 of the window with TRANS_QUART/EASE_OUT (fast off the mark, decelerating into
+			# the held pose — the shape of a real wind-up), overshooting `back` by a few degrees so the pose
+			# reads as loaded rather than parked. NO shake: the over-draw IS the tension, and a hero's jitter
+			# read as fear in Jeff's session. The remaining ~1/4 of the window is a HOLD by construction (the
+			# tween simply ends and the pose has no expiry), which is what play_swing then whips out of — it
+			# snaps to `back`, so the over-draw releases as the first few degrees of the swing.
+			var draw_sec := hold_sec * _POSE_PLAYER_WINDBACK_FRAC
+			var pull := back - pose_sweep * deg_to_rad(_POSE_PLAYER_OVERDRAW_DEG)
+			_swing_tween.set_parallel(true)
+			_swing_tween.tween_property(self, "rotation", pull, draw_sec) \
+					.set_trans(Tween.TRANS_QUART).set_ease(Tween.EASE_OUT)
+			_swing_tween.tween_property(_sprite, "position:x", ext, draw_sec) \
+					.set_trans(Tween.TRANS_QUART).set_ease(Tween.EASE_OUT)
+			_swing_tween.set_parallel(false)
+		else:
+			# MONSTER WIGGLE — untouched (v0.18.2 choreography).
+			# Phase A — WIND BACK + OUT (parallel), a fraction of the window.
+			var windback_sec := hold_sec * _POSE_WINDBACK_FRAC
+			_swing_tween.set_parallel(true)
+			_swing_tween.tween_property(self, "rotation", back, windback_sec)
+			_swing_tween.tween_property(_sprite, "position:x", ext, windback_sec)
+			_swing_tween.set_parallel(false)
+			# Phase B — LINGER wound back.
+			_swing_tween.tween_interval(hold_sec * _POSE_LINGER_FRAC)
+			# Phase C — SHAKE: rapid ± jitter around `back`, but ONLY if the remaining budget fits >= 3 pairs
+			# (else it reads as a 1-2-frame glitch — degrade to a clean hold). Remainder folds into the settle.
+			var shake_budget := hold_sec - windback_sec - hold_sec * _POSE_LINGER_FRAC
+			var shake := deg_to_rad(_weapon.windup_shake_degrees)
+			if shake > 0.0 and shake_budget >= 6.0 * _POSE_SHAKE_STEP_SEC:
+				var pairs := int(shake_budget / (2.0 * _POSE_SHAKE_STEP_SEC))
+				for i in pairs:
+					_swing_tween.tween_property(self, "rotation", back + shake, _POSE_SHAKE_STEP_SEC)
+					_swing_tween.tween_property(self, "rotation", back - shake, _POSE_SHAKE_STEP_SEC)
+				_swing_tween.tween_property(self, "rotation", back, _POSE_SHAKE_STEP_SEC)
+			# (shake skipped -> nothing more; the club HOLDS wound back until play_swing takes over. No expiry.)
 
 
 ## Play the bow-DRAW telegraph toward `dir` over `windup_sec` (v0.17.0, the "draw" style). Driven by Main off
@@ -286,7 +320,7 @@ func play_draw(dir: Vector2i, windup_sec: float, weapon: WeaponType = null) -> v
 	_sprite.visible = true
 	_sprite.region_rect = WorldGrid.atlas_region(_weapon.atlas_coords)
 	_sprite.position = Vector2(orbit, 0.0)
-	_sprite.rotation = _weapon_baseline_rad()
+	_apply_sprite_baseline(1.0)               # bow: never mirrored (and clears a prior swing's flip_h)
 	# Nocked arrow: a touch ahead of the bow at draw start; it pulls BACK over the draw.
 	_ensure_arrow_sprite()
 	_arrow_sprite.visible = true
@@ -324,7 +358,7 @@ func play_loose(dir: Vector2i, weapon: WeaponType = null) -> void:
 	if _weapon != null:
 		_sprite.region_rect = WorldGrid.atlas_region(_weapon.atlas_coords)
 	_sprite.position = Vector2(orbit, 0.0)
-	_sprite.rotation = _weapon_baseline_rad()
+	_apply_sprite_baseline(1.0)               # bow: never mirrored (and clears a prior swing's flip_h)
 	_ensure_arrow_sprite()
 	_arrow_sprite.visible = true
 	if _weapon != null:
@@ -345,6 +379,7 @@ func hide_draw() -> void:
 		_swing_tween.kill()
 	_windup_posed = false                     # a death mid-windup must not leave a stale posed flag (v0.18.2)
 	_sprite.visible = false
+	_sprite.flip_h = false                    # nor a stale MIRROR from a leftward swing/pose (v0.27.0)
 	_sprite.position = Vector2.ZERO
 	if _arrow_sprite != null:
 		_arrow_sprite.visible = false
@@ -363,6 +398,38 @@ func _ensure_arrow_sprite() -> void:
 	_arrow_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_arrow_sprite.visible = false
 	add_child(_arrow_sprite)
+
+
+## The WOUND-BACK POSE ANGLE for a slash telegraph (v0.27.0) — `windup_raise_degrees` PAST the swing's near
+## edge, in swing space. THE ONE FORMULA, shared by the two sites that must agree exactly: play_windup_pose
+## parks the weapon here, and play_swing's posed branch snaps here to launch from it. They were two copies
+## before, and a copy that drifts shows up as the club visibly jumping at the moment of release.
+func _windback_angle(aim: float, sweep: float) -> float:
+	return aim - sweep * (deg_to_rad(_weapon.arc_degrees) * 0.5 + deg_to_rad(_weapon.windup_raise_degrees))
+
+
+## Apply the sprite's baseline rotation, MIRRORED for a leftward sweep (v0.27.0 — Jeff's second playtest
+## verdict: "the left-facing swing looks wrong").
+##
+## THE BUG: v0.19.2 mirrored the ORBIT (the rig's rotation, via `sweep`) but never the ART. The sprite kept
+## one fixed baseline, so a leftward swing was a reflected arc carrying an unreflected blade — the weapon read
+## as vertical or inverted rather than as the horizontal above-the-head raise a rightward swing shows.
+##
+## THE MATH: reflecting a picture about the vertical axis maps a shape at rotation θ to the MIRRORED shape at
+## rotation −θ. The rig already supplies the reflected orbit angle R' (= π − R), and the sprite's rotation is
+## RIG-LOCAL, so the baseline that lands the art at −(R + b) in world space is (−b − π), i.e. **π − b** modulo
+## 2π — the extra π is exactly what a naive "just negate it" mirror misses, and why the blade came out 180°
+## off. Paired with flip_h, which supplies the mirrored image itself.
+##
+## Applied for BOTH styles, stab included: a stab's rig rotation IS the aim, and for a leftward aim that aim
+## is itself the reflection of the rightward case, so the same transform is correct there. Vertical aims
+## (unit.x == 0) take sweep +1 and so are byte-identical to the pre-v0.27.0 presentation, as are all
+## rightward ones. play_draw / play_loose pass +1 explicitly, keeping the bow untouched AND clearing any
+## flip_h a previous leftward melee swing left behind.
+func _apply_sprite_baseline(sweep: float) -> void:
+	var mirrored := sweep < 0.0
+	_sprite.flip_h = mirrored
+	_sprite.rotation = (PI - _weapon_baseline_rad()) if mirrored else _weapon_baseline_rad()
 
 
 ## The baseline rotation mapping the WEAPON art's native direction onto the rig's local +x (v0.17.1): the art

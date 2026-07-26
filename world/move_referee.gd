@@ -1107,23 +1107,26 @@ func motion_tiles_of(entity_id: int) -> Array[Vector2i]:
 ## negative are monsters — one boundary, seven paired dials. Every stamina read site below goes
 ## through these, so the side split can never drift per-site.
 ## ARMOR-WEIGHT idle wait (v0.26.0, Jeff's verdict 2026-07-26 — DESIGN §2.2.10): a MONSTER reads its
-## one dial; a PLAYER's rest-to-recover wait is picked from its class's armor WEIGHT BAND, so heavier
-## armor rests slower. Duck-typed `player_class` read (exactly _stamina_max_of's pattern) resolved
-## LIVE at every arm — never cached — so a /class swap lands on the next idle timer. UNARMORED shares
-## the LIGHT dial (the lightest band is a floor, not a bonus), and so does any node without a class
-## (a future classless player, or a read racing the class seed): the fastest recovery is the safe
-## default, since the alternative would silently punish a mis-authored class.
+## one dial; a PLAYER's rest-to-recover wait is picked from its armor WEIGHT BAND, so heavier armor
+## rests slower — which since v0.26.0 IS the cost of wearing it.
+## v0.27.0: the band now comes from the WORN BODY ITEM (`equipped_body.armor_weight`, ItemType.ArmorWeight)
+## instead of the class, because armor became a real object you can put on and take off — a knight who
+## hands his chainmail away starts resting like a rogue, at the very next arm. Duck-typed `equipped_body`
+## read (exactly _stamina_max_of's `player_class` pattern) resolved LIVE at every arm, never cached.
+## UNARMORED shares the LIGHT dial (the lightest band is a floor, not a bonus), and so does any node with
+## an empty slot or an unreadable item: the fastest recovery is the safe default, since the alternative
+## would silently punish a mis-authored resource.
 func _regen_idle_beats_of(entity_id: int) -> float:
 	if entity_id <= 0:
 		return GameManager.config.monster_regen_idle_beats
 	var node = _node_of_id(entity_id)
 	if node != null:
-		var player_class = node.get("player_class")
-		if player_class != null:
-			match int(player_class.armor_weight):
-				PlayerClass.ArmorWeight.MEDIUM:
+		var body = node.get("equipped_body")
+		if body != null:
+			match int(body.armor_weight):
+				ItemType.ArmorWeight.MEDIUM:
 					return GameManager.config.player_regen_idle_medium_beats
-				PlayerClass.ArmorWeight.HEAVY:
+				ItemType.ArmorWeight.HEAVY:
 					return GameManager.config.player_regen_idle_heavy_beats
 	return GameManager.config.player_regen_idle_light_beats
 

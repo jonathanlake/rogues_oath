@@ -123,6 +123,15 @@ func resolved_tactical_radius() -> int:
 ## damage, and dies through the normal referee path. Read HOST-side by Main's monster spawn gate.
 @export var has_brain: bool = true
 
+## BANTER: is this monster NOTABLE to its pack (v0.27.0)? true = the pack treats it as important, which
+## drives two banter moments (world/banter.gd, lines in GameConfig): its DEATH draws the louder
+## `notable_death` bark from a surviving packmate INSTEAD of the ordinary `ally_died` one, and being
+## ATTACKED while allies are still fighting makes it scream `help_me` once per life. Default false — an
+## ordinary goblin is expendable and says nothing special either way. Shipped true on all three shamans
+## (the healer IS the thing a goblin pack panics about losing). Read HOST-side only; the barks are
+## host-picked and broadcast, so every peer reads the same line from the same goblin.
+@export var banter_notable: bool = false
+
 
 ## SUPPORT — HEAL ABILITY (v0.19.4). A monster with all three fields below set (has_heal_ability) is a
 ## HEALER: BEFORE it decides to chase/attack, its brain scans allied monsters and, if one within

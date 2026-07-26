@@ -963,10 +963,11 @@ func _handle_attack_event(event: Dictionary) -> void:
 	var target_id := int(data.get("target_id", 0))
 	var kind := str(data.get("kind", ""))
 	var whiff := bool(data.get("whiff", false))
-	# Backstab feedback (v0.11.0, §2.3.4 — a distinct outcome gets a distinct cue). The referee tags a
-	# rogue's dagger-from-behind hit; every peer reads the same event `tags` and plays a "!"-suffixed
-	# popup, a pitched-up impact, and (in game_log) the backstab log line. Absent on every other hit.
-	var backstab := (data.get("tags", []) as Array).has("backstab")
+	# SNEAK-ATTACK feedback (v0.11.0 as "backstab", retagged v0.27.0; §2.3.4 — a distinct outcome gets a
+	# distinct cue). The referee tags a rogue's dagger hit on a FLANKED or STUNNED target; every peer reads
+	# the same event `tags` and plays a "!"-suffixed popup, a pitched-up impact, and (in game_log) the sneak
+	# line. Absent on every other hit. The tag string is the wire contract — it changed with the mechanic.
+	var sneak := (data.get("tags", []) as Array).has("sneak")
 	var attacker := _node_for_peer(attacker_id)
 	var target := _node_for_peer(target_id)
 	# Direction of the strike, for the attacker's directional lunge. Prefer the two nodes' tiles; on
@@ -1040,9 +1041,9 @@ func _handle_attack_event(event: Dictionary) -> void:
 			# dir passed through so the victim's slash streak reads directional (v0.6.3), derived
 			# per-peer from this same event — no new wire data. SKIPPED for a godded no-op.
 			if not godded and not blocked:
-				# On a backstab the impact SFX is pitched UP a step (placeholder audio grammar, §2.3.4)
+				# On a sneak attack the impact SFX is pitched UP a step (placeholder audio grammar, §2.3.4)
 				# so the sharper hit is audibly distinct from a normal blow — same stream, per-peer local.
-				target.play_hurt(dir, 1.5 if backstab else 1.0)
+				target.play_hurt(dir, 1.5 if sneak else 1.0)
 			# HP readout still refreshes on a godded hit (harmless — the value is unchanged).
 			target.set_hp_display(int(data.get("hp_after", 0)), int(data.get("target_max", 0)))
 			# Party-frame HP mirror (v0.12.0): fan the running HP out to the HUD. A player target (positive
@@ -1062,9 +1063,9 @@ func _handle_attack_event(event: Dictionary) -> void:
 				# id-sign invariant (players POSITIVE ids, monsters NEGATIVE): target_id < 0 ⇒ a monster
 				# was struck (a player→enemy hit) → white; target_id > 0 ⇒ a player took the hit → red.
 				var hit_color := DamagePopup.PLAYER_HIT_COLOR if target_id < 0 else DamagePopup.DAMAGE_COLOR
-				# A backstab reads "-N!" (the "!" is the distinct-outcome tell, §2.3.4) in the same white.
+				# A sneak attack reads "-N!" (the "!" is the distinct-outcome tell, §2.3.4) in the same white.
 				var hit_damage := int(data.get("damage", 0))
-				var hit_text := ("-%d!" % hit_damage) if backstab else ("-%d" % hit_damage)
+				var hit_text := ("-%d!" % hit_damage) if sneak else ("-%d" % hit_damage)
 				_fx.damage_popup(hit_text, hit_color, target.tile)
 		# LOCAL-only red hit vignette (v0.6.3 juice): fires ONLY when it's OUR OWN avatar being struck
 		# (landed — we're already past the whiff branch). Suppressed on a godded no-op (no damage taken).
@@ -1251,39 +1252,59 @@ func _handle_item_used_event(event: Dictionary) -> void:
 
 
 ## Local: a LEFT-CLICK on our own inventory slot (v0.19.x loot), from the HUD's slot_activated signal. Resolve
-## the slot's content in our client mirror and submit the matching intent: a CONSUMABLE drinks (use_item), a
-## WEAPON equips (equip_item). Client-side type routing only picks the intent name; the HOST re-validates
-## authoritatively (dead / busy / wrong-type / unknown, §2.2.8). An empty or unresolvable slot is ignored.
+## the slot's content in our client mirror and submit the matching intent: a POTION drinks (use_item), while
+## EQUIPMENT and a WEAPON both equip (equip_item). Client-side type routing only picks the intent name; the
+## HOST re-validates authoritatively (dead / busy / wrong-type / unknown, §2.2.8). An empty or unresolvable
+## slot is ignored.
+##
+## v0.27.0: routed by CATEGORY through the shared `category_of` resolver instead of by "which catalog answers
+## first". The old shape asked item_by_name first and sent EVERY ItemType to use_item — which was correct
+## while every item was a potion, and became a bug the moment real armor existed (leather armor would have
+## been "drunk", and the host would have rejected it as unequippable through the wrong intent). Using the one
+## taxonomy site also means a future category picks its intent here, in one place. The unresolvable sentinel
+## (-1, a name in neither catalog = mirror drift) matches no arm and is silently ignored, as before.
 func _on_inventory_slot_activated(slot: int) -> void:
 	var me := _players.get_node_or_null(str(multiplayer.get_unique_id())) as Player
 	if me == null or slot < 0 or slot >= me.inventory.size():
 		return
-	var item_name := str(me.inventory[slot])
-	if GameManager.config.item_by_name(item_name) != null:
-		NetEvents.submit_intent("use_item", { "slot": slot })
-	elif GameManager.config.weapon_by_name(item_name) != null:
-		NetEvents.submit_intent("equip_item", { "slot": slot })
+	match GameManager.config.category_of(str(me.inventory[slot])):
+		ItemType.Category.POTION:
+			NetEvents.submit_intent("use_item", { "slot": slot })
+		ItemType.Category.EQUIPMENT, ItemType.Category.WEAPON:
+			NetEvents.submit_intent("equip_item", { "slot": slot })
 
 
-## All peers: play back a committed weapon EQUIP from the bag (v0.19.x loot, §2.3.4). The host-authored event
-## carries the newly-equipped weapon and the one it SWAPPED OUT (now sitting in the freed bag slot). Three jobs:
-## (1) repaint the rig to the equipped weapon (name-resolved every peer, like swap_weapon); (2) mirror the SWAP
-## into the client bag — the freed slot now holds the returned weapon (an empty return = the slot vacated); (3)
-## own player: repaint the HUD inventory + equipment panel + play the equip cue. The log line rides game_log.
+## All peers: play back a committed EQUIP from the bag (v0.19.x loot; BODY ARMOR joins it v0.27.0, §2.3.4).
+## The host-authored event carries the newly-equipped thing and the one it SWAPPED OUT (now sitting in the
+## freed bag slot). Three jobs: (1) adopt the equipped item — the rig repaints for a weapon, the body slot
+## fills for gear (name-resolved on every peer, like swap_weapon); (2) mirror the SWAP into the client bag —
+## the freed slot now holds the returned item (an empty return = the slot vacated); (3) own player: repaint
+## the HUD inventory + equipment panel + play the equip cue. The log line rides game_log.
+##
+## The `gear` flag (present-only, host-stamped) is what picks the slot: with it, `equipped` names an ItemType
+## bound for the BODY socket; without it, a WeaponType bound for the hand. Read with .get() + a false default
+## like every other present-only field, so the weapon path is byte-identical to v0.19.x.
 func _handle_equip_item_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
 	var entity_id := int(data.get("entity_id", 0))
 	var slot := int(data.get("slot", -1))
 	var equipped_name := str(data.get("equipped", ""))
 	var returned_name := str(data.get("returned", ""))
+	var is_gear := bool(data.get("gear", false))
 	var player := _players.get_node_or_null(str(entity_id)) as Player
 	if player == null:
 		return
-	var weapon := GameManager.config.weapon_by_name(equipped_name)
-	if weapon != null:
-		player.set_weapon(weapon)
-	# Mirror the host's authoritative swap: the freed slot takes the previously-equipped weapon, or vacates if
-	# there was none (a bare-handed equip — impossible today, but the referee mirrors this exact shape).
+	if is_gear:
+		var item := GameManager.config.item_by_name(equipped_name)
+		if item != null:
+			player.set_body_armor(item)
+	else:
+		var weapon := GameManager.config.weapon_by_name(equipped_name)
+		if weapon != null:
+			player.set_weapon(weapon)
+	# Mirror the host's authoritative swap: the freed slot takes the previously-equipped item, or vacates if
+	# there was none (bare hands / an empty body slot). Slot -1 (the /class loadout equip, which comes from a
+	# class and not from a bag slot) fails this guard and mirrors nothing, which is correct.
 	if slot >= 0 and slot < player.inventory.size():
 		if returned_name.is_empty():
 			player.inventory.remove_at(slot)
@@ -1292,7 +1313,10 @@ func _handle_equip_item_event(event: Dictionary) -> void:
 	_pickup_sfx.play()  # equip cue (Feel= placeholder — reuses the pickup tick; a distinct "gear changed" sound later)
 	if entity_id == multiplayer.get_unique_id():
 		_hud.on_inventory_changed(entity_id)
-		_hud.on_weapon_swap(entity_id)
+		if is_gear:
+			_hud.on_gear_changed(entity_id)
+		else:
+			_hud.on_weapon_swap(entity_id)
 
 
 ## All peers: play back a resolved HEAL (v0.18.0 chunk C, §2.3.4 — a distinct recovery cue). Off the one
@@ -1407,19 +1431,22 @@ func _handle_stamina_recovery_event(event: Dictionary) -> void:
 		ent.play_recovering(float(data.get("duration_sec", 0.0)))
 
 
-## All peers: the stamina 0-EDGE (v0.24.3; split by mode v0.26.0).
-## ON + hard_stop → the sweat-drop, which now means exactly ONE thing: winded, cannot move (the
-## `/winded` mode). ON without hard_stop → NOTHING here: at 0 the entity crawls and rests, and the
-## stamina_recovery event's bar + transparency carry that read — a sweat-drop as well would blur the two
-## outcomes §2.3.4 wants distinct. OFF (the point came back) → clear the sweat-drop AND end the recovery
-## presentation, whose ready-blink is the "you can act again" tell.
+## All peers: the stamina 0-EDGE (v0.24.3; split by mode v0.26.0; INVERTED v0.27.0).
+## The sweat-drop now marks the CRAWL, not the hard stop — Jeff's second playtest verdict, and the
+## v0.26.0 assignment read backwards once hard-stop became the DEFAULT: the drip was showing on the mode
+## that already announces itself twice (a distinct "winded" reject bonk every time you try to move, plus
+## the recovery bar), and showing nothing on the mode whose whole tell is "I am still moving, but wrong".
+## So: ON + hard_stop → NOTHING here (the reject + the bar carry it). ON without hard_stop → the drip,
+## which now means exactly one thing: you are crawling. OFF (the point came back) → clear the drip AND end
+## the recovery presentation, whose ready-blink is the "you can act again" tell. §2.3.4 holds either way —
+## each mode has exactly one visual signature and the two can never be confused.
 func _handle_exhausted_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
 	var ent := _node_for_peer(int(data.get("entity_id", 0))) as Entity
 	if ent == null:
 		return
 	if bool(data.get("on", false)):
-		if bool(data.get("hard_stop", false)):
+		if not bool(data.get("hard_stop", false)):
 			ent.play_exhausted()
 	else:
 		ent.hide_exhausted()
@@ -1462,6 +1489,14 @@ func _handle_blink_event(event: Dictionary) -> void:
 	var ent := _node_for_peer(int(data.get("entity_id", 0))) as Entity
 	if ent != null:
 		ent.snap_to_tile(data.get("to", ent.tile) as Vector2i)
+		# VISUAL RESET (v0.27.0): a blinker mid-swing or mid-windup arrives at its new tile in whatever pose
+		# the rig was parked in — and a WINDUP POSE has no expiry by design (play_swing hands it over), so a
+		# blink out of a telegraph left the weapon raised FOREVER. The gameplay side was already correct (the
+		# interrupt generation fizzles the resolve, so nothing lands); this clears the presentation to match.
+		# hide_weapon_rig → WeaponRig.hide_draw, which kills the tween, clears the `_windup_posed` flag, hides
+		# both sprites and zeroes the rig rotation — verified to be a full pose reset, not just a visibility
+		# toggle, so no extra reset is needed here. Every peer runs it off this one event.
+		ent.hide_weapon_rig()
 
 
 ## All peers (own-player effect only): an instant ability fired or had its cooldown charged (v0.26.0). Both
@@ -2647,6 +2682,21 @@ func peer_ready(p_name: String, client_version: String) -> void:
 				var slot_default: String = roster[existing.spawn_index % roster.size()].display_name
 				if existing.player_class.display_name != slot_default:
 					sync_player_field.rpc_id(peer_id, existing.entity_id, "class", existing.player_class.display_name)
+			# BODY ARMOR (v0.27.0 equipment phase 2), the same filter logic one field over: the joiner's copy
+			# of this player seeds its body from the SLOT-DEFAULT class's starting_body_armor in Player._ready
+			# (the class sync above repaints the sprite but deliberately never touches gear), so only a
+			# DIFFERING worn item needs the wire. That covers both ways it can differ: someone equipped armor
+			# out of their bag, or someone /class'd into another loadout. An EMPTY worn name is a meaningful
+			# sync too (a player who traded their starting armor away), which is why this compares NAMES rather
+			# than skipping on null.
+			if not roster.is_empty():
+				var slot_class: PlayerClass = roster[existing.spawn_index % roster.size()]
+				var seeded: ItemType = slot_class.starting_body_armor
+				var seeded_body: String = seeded.display_name if seeded != null else ""
+				var worn: ItemType = existing.equipped_body
+				var worn_body: String = worn.display_name if worn != null else ""
+				if worn_body != seeded_body:
+					sync_player_field.rpc_id(peer_id, existing.entity_id, "body_armor", worn_body)
 	else:
 		# Symmetric with the version branch: host-side visibility before the refusal, so a full-server
 		# rejection shows in the host's log/console too (not just on the refused client's menu).
@@ -2681,10 +2731,11 @@ func sync_tempo(beat_sec: float, tactical_beat_sec: float) -> void:
 		_game_log.add_line("Tactical: %s." % GameManager.tempo_log_text(tactical_beat_sec))
 
 
-## Host -> one late-joining client (M3.7 + v0.10.0, unified v0.10.1). Adopt one existing player's CURRENT
-## weapon OR class so the joiner's rig/sprite shows it (not its spawn-seeded default). `kind` dispatches:
-## "weapon" resolves value_name through the roster and repaints via set_weapon; "class" resolves it through
-## the class roster and repaints via set_class. Host-authored (authority) and TARGETED (no broadcast —
+## Host -> one late-joining client (M3.7 + v0.10.0, unified v0.10.1; + gear v0.27.0). Adopt one existing
+## player's CURRENT weapon, class or WORN BODY ARMOR so the joiner's rig/sprite/slot shows it (not its
+## spawn-seeded default). `kind` dispatches: "weapon" resolves value_name through the roster and repaints via
+## set_weapon; "class" resolves it through the class roster and repaints via set_class; "body_armor" resolves
+## it through item_catalog (or strips the slot on an empty name) via set_body_armor. Host-authored (authority) and TARGETED (no broadcast —
 ## existing peers already show it). A not-yet-replicated player node (the spawn race — this RPC can outrun
 ## the spawner's replication of EXISTING players) gets ONE deferred retry half a second later, which
 ## outlasts that window by orders of magnitude; only a genuinely absent player (left during the join) drops
@@ -2702,6 +2753,20 @@ func sync_player_field(entity_id: int, kind: String, value_name: String, is_retr
 			var weapon := GameManager.config.weapon_by_name(value_name)
 			if weapon != null:
 				player.set_weapon(weapon)
+		"body_armor":
+			# v0.27.0 equipment phase 2. An EMPTY value_name is MEANINGFUL — it means "this player wears
+			# nothing", which is a real state a joiner must adopt (someone stripped their starting armor), so
+			# it strips the slot rather than being ignored as an unresolvable name. A non-empty name that
+			# fails to resolve (catalog drift) leaves the seeded value alone, matching the weapon branch.
+			if value_name.is_empty():
+				player.set_body_armor(null)
+			else:
+				var body := GameManager.config.item_by_name(value_name)
+				if body != null:
+					player.set_body_armor(body)
+			# No HUD fan-out: the sync loop skips the joiner's OWN player, so this can only ever repaint
+			# somebody else's gear, which nothing on screen shows (there is no paper-doll layer and the
+			# equipment panel is own-player only).
 		"class":
 			var player_class := GameManager.config.class_by_name(value_name)
 			if player_class != null:

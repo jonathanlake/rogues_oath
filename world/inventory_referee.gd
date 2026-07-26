@@ -314,10 +314,20 @@ func _validate_equip_item(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	var bag: Array[String] = _inventories.get(sender_peer_id, [] as Array[String])
 	if slot < 0 or slot >= bag.size():
 		return { "ok": false, "reason": "nothing in that slot" }
-	# Resolve the bag entry as a WEAPON via the shared catalog (server-authoritative). A consumable / unknown name
-	# is not equippable — reject distinctly. The client only routes a use_item for a consumable, so this is the
-	# authoritative backstop against a spoofed equip of a potion.
 	var item_name: String = bag[slot]
+	# BODY ARMOR first (v0.27.0 equipment phase 2): resolve the bag entry against item_catalog and, if it is
+	# an EQUIPMENT-category item, hand it to the body-slot swap. Ordered BEFORE the weapon resolve for the
+	# same reason GameConfig.category_of resolves item-first — an ItemType carries an AUTHORED category, so it
+	# is the specific answer, while a weapon answers WEAPON purely by living in weapon_catalog. The two
+	# catalogs are kept disjoint by the startup collision guard, so the order cannot mis-route a real name.
+	# A POTION reaching here is NOT equippable and falls through to the weapon resolve, which rejects it —
+	# the authoritative backstop against a spoofed equip of a potion (the client only ever routes a use_item
+	# for one). Everything above this point — dead / stunned / busy / slot shape — already gated both paths.
+	var item: ItemType = GameManager.config.item_by_name(item_name)
+	if item != null and item.category == ItemType.Category.EQUIPMENT:
+		return _equip_body(sender_peer_id, slot, bag, item)
+	# Resolve the bag entry as a WEAPON via the shared catalog (server-authoritative). A consumable / unknown name
+	# is not equippable — reject distinctly.
 	var weapon: WeaponType = GameManager.config.weapon_by_name(item_name)
 	if weapon == null:
 		return { "ok": false, "reason": "can't equip that" }
@@ -346,6 +356,43 @@ func _validate_equip_item(sender_peer_id: int, data: Dictionary) -> Dictionary:
 		"slot": slot,
 		"equipped": weapon.display_name,
 		"returned": returned_name,
+	}, sender_peer_id)
+	return { "ok": true, "deferred": true }
+
+
+## Swap an EQUIPMENT item into the player's BODY slot (v0.27.0 equipment phase 2), host-only. Reached from
+## _validate_equip_item AFTER its dead / stunned / busy / slot gates, so this function adds no rules of its
+## own beyond resolving the player — it is the weapon branch's exact twin, one slot over.
+##
+## INSTANT, mirroring the weapon equip (and the Tab swap before it): the BUSY gate above forbids equipping
+## during any committed action, so putting armor on is atomic BETWEEN actions and cancels/redirects nothing
+## — not a Commitment Rule leak, a zero-length action that can only happen while you are already free. If
+## dressing should ever cost beats, that is a `commit_in_place` + an authored `equip_beats`, and it belongs
+## to the equipment milestone, not here.
+##
+## SWAP IN PLACE so nothing is lost: the freed slot takes the previously-worn item, or vacates when the
+## player was unarmored. Reuses the `equip_item` event with a PRESENT-ONLY `gear: true` flag — the same
+## present-only idiom as `godded`/`blocked`/`whiff` — so the weapon path's payload is byte-identical and
+## every existing consumer (the log line, the bag mirror, the HUD repaint) keeps working; main.gd branches
+## on the flag to decide whether the equipped name names a weapon or a worn item.
+func _equip_body(sender_peer_id: int, slot: int, bag: Array[String], item: ItemType) -> Dictionary:
+	var player := _players.get_node_or_null(str(sender_peer_id)) as Player
+	if player == null:
+		return { "ok": false, "reason": "not in session" }
+	var old_body: ItemType = player.equipped_body
+	var returned_name: String = old_body.display_name if old_body != null else ""
+	player.set_body_armor(item)                    # host-authoritative apply FIRST, then broadcast
+	if returned_name.is_empty():
+		bag.remove_at(slot)
+	else:
+		bag[slot] = returned_name
+	NetEvents.post_event("equip_item", {
+		"entity_id": sender_peer_id,
+		"name": player.display_name,               # server-resolved off the node, never the wire
+		"slot": slot,
+		"equipped": item.display_name,
+		"returned": returned_name,
+		"gear": true,
 	}, sender_peer_id)
 	return { "ok": true, "deferred": true }
 

@@ -23,6 +23,15 @@ extends Resource
 ## append only, or every authored .tres silently re-categorises.
 enum Category { POTION, EQUIPMENT, WEAPON }
 
+## ARMOR WEIGHT band (v0.27.0 — MOVED here from PlayerClass, which held it for the v0.26.0 class-level
+## phase 1). This resource is now the canonical home because weight is a property of a WORN OBJECT, not
+## of a class: the band a wearer sits in is read off the item in its body slot. Kept as an enum (not a
+## number) so a designer picks from a fixed vocabulary and every consumer maps the band to its own dial
+## — the stamina rest-to-recover wait (DESIGN §2.2.10), the armor flat-reduction table (§2.3.8), and the
+## envisioned spell/mobility penalties. Serialized in a .tres as its ordinal int, so NEVER reorder —
+## append only.
+enum ArmorWeight { UNARMORED, LIGHT, MEDIUM, HEAVY }
+
 
 # ── Identity ──────────────────────────────────────────────────────────────────
 
@@ -79,6 +88,27 @@ enum Category { POTION, EQUIPMENT, WEAPON }
 ## by the use referee, which applies it through the SAME CombatReferee heal path a spell would; the use
 ## event then carries the resulting hp_after so every peer renders the bar + popup, never a client compute.
 @export var heal_amount: int = 10
+
+# ── Worn armor (EQUIPMENT category only; read HOST-side by the referees) ───────
+
+## The WEIGHT BAND this item puts its wearer in (v0.27.0 equipment phase 2). Meaningful only for an
+## EQUIPMENT item that occupies the BODY slot; every other item leaves it UNARMORED (the default), which
+## is also the "no armor" answer the referees read for an empty slot. Two host-side consumers, both live
+## (never cached): MoveReferee._regen_idle_beats_of picks the stamina rest wait from it (heavier armor
+## rests slower — DESIGN §2.2.10, and since v0.26.0 that IS the armor cost curve), and
+## CombatReferee's armor seam picks the FLAT reduction from it (GameConfig.armor_flat_reduction_*).
+## Shipped: leather armor LIGHT, chainmail MEDIUM. The weight-PROMOTION rule (heaviest worn piece across
+## several slots sets the band) is still future — with ONE armor slot, the body item's band IS the band.
+@export var armor_weight: ArmorWeight = ArmorWeight.UNARMORED
+
+## PHYSICAL damage reduction as a FRACTION absorbed while this item is worn (v0.27.0 equipment phase 2):
+## 0.0 (default) = no mitigation, 0.25 = a quarter of every physical hit turned aside, 1.0 = immune.
+## Applied HOST-side at the ONE apply_damage mitigation seam (CombatReferee._phys_reduction_of), AFTER the
+## attacker's passive modify_damage chain and BEFORE the HP subtraction, and MIN-combined with the flat
+## band reduction (§2.3.8). PHYSICAL only: "smite" (magical) and "admin" (/mi pokes) pass through
+## unreduced. Read LIVE off the DEFENDER's worn item every hit, so an equip retunes the very next blow.
+## Shipped: leather armor 0.10, chainmail 0.25 (the numbers PlayerClass carried in v0.26.0 phase 1).
+@export_range(0.0, 1.0) var phys_damage_reduction: float = 0.0
 
 ## BEATS the USE action OCCUPIES on the user's one timeline (DESIGN's "N-beat commit" for item use, §2.1 /
 ## §2.8) — the whole committed window during which the user is BUSY and cannot act, exactly like an attack's

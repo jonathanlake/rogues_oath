@@ -1,19 +1,27 @@
 class_name Backstab
 extends PassiveAbility
 
-## Rogue BACKSTAB (v0.11.0, Jeff's first class passive; DESIGN §2.3). A dagger-only, attack-from-behind
-## damage multiplier — the rogue's class identity. Owned by resources/classes/rogue.tres via its
-## `passives` array; CombatReferee runs it through modify_damage at the BeforeDamageApplied seam
-## (host-only, server-authoritative). A frontal or flank hit, or a non-dagger weapon, passes through
-## untouched. Feel-tunable in backstab.tres — multiplier and the required weapon are both .tres fields.
+## Rogue SNEAK ATTACK (v0.11.0 as "backstab"; REDESIGNED v0.27.0 — Jeff's second playtest verdict). A
+## dagger-only damage multiplier that fires when the target is COMPROMISED rather than merely turned
+## around. Owned by resources/classes/rogue.tres via its `passives` array; CombatReferee runs it through
+## modify_damage at the BeforeDamageApplied seam (host-only, server-authoritative). Feel-tunable in
+## backstab.tres — multiplier and the required weapon are both `.tres` fields.
+##
+## WHY THE REDESIGN: the behind-arc test was invisible in play. A player cannot read an 8-way facing off a
+## 32px sprite, monsters turn to face whatever they attack, and a never-moved monster faces NOWHERE (ZERO)
+## and so could never be backstabbed at all — so the class's signature move fired by accident or not at
+## all. The new triggers are both things the player can SEE and CREATE: an ally on the far side of the
+## target (a flank the party sets up together — Jeff wanted it co-op-shaped), or a STUNNED target (which
+## is what the rogue's own Kick is for: kick, then sneak).
+##
+## FILENAME NOTE (v0.27.0): the script + `.tres` deliberately KEEP their `backstab.*` names even though
+## every user-facing string is now "sneak attack". Renaming a `.tres` breaks loads through Godot's uid
+## cache (a known landmine in this repo), and this release ships without harness testing — so the rename
+## is not worth the risk. The class_name, the file names and rogue.tres's ext_resource path are internal;
+## the display_name, the event tag ("sneak") and the log line are what a player reads.
 
-## world/combat_referee.gd, preloaded for its `is_attack_from_behind` STATIC (that referee has no
-## class_name by design — the referees hold each other untyped — so a passive author reaches the shared
-## behind-arc math through the loaded script rather than a global name). No instance is created here.
-const _CombatReferee := preload("uid://bxwx82w24gbfp")
-
-## Multiplier applied to the FINAL damage (post any earlier passive in the chain) on a qualifying
-## backstab. 2.0 = double; the shipped dagger's 2 damage becomes 4. A designer knob — no magic number.
+## Multiplier applied to the FINAL damage (post any earlier passive in the chain) on a qualifying sneak
+## attack. 2.0 = double; the dagger's rolled 2-6 becomes 4-12. A designer knob — no magic number.
 @export var damage_multiplier: float = 2.0
 
 ## The weapon this passive requires equipped to fire — the dagger (backstab.tres wires dagger.tres).
@@ -23,23 +31,30 @@ const _CombatReferee := preload("uid://bxwx82w24gbfp")
 @export var required_weapon: WeaponType = null
 
 
-## modify_damage (v0.11.0): double the blow when the attacker wields the required weapon AND strikes the
-## target from behind (rear 3 octants of the defender's 8-way facing; a ZERO defender facing — never
-## moved — never qualifies). On a hit, tag the outcome "backstab" so every peer plays the distinct cue
-## (§2.3.4: log line + popup + pitched sound, main.gd/game_log). Non-qualifying hits return the amount
-## unchanged and tag nothing. All inputs are host-authoritative (built by CombatReferee._build_damage_ctx).
+## modify_damage (v0.27.0 triggers): multiply the blow when the attacker wields the required weapon AND
+## the target is COMPROMISED — either FLANKED BY AN ALLY (a living, non-hostile entity stands on the tile
+## directly opposite the attacker, i.e. the target is sandwiched) or STUNNED. Both booleans are
+## precomputed HOST-side by CombatReferee._build_damage_ctx from authoritative occupancy/state, so this
+## passive stays a pure reader (the PassiveAbility contract) and no positional math lives here.
+## On a hit, tag the outcome "sneak" so every peer plays the distinct cue (§2.3.4: log line + popup +
+## pitched sound — main.gd/game_log). Non-qualifying hits return the amount unchanged and tag nothing.
+##
+## The behind-arc static (CombatReferee.is_attack_from_behind) is deliberately LEFT IN PLACE and is simply
+## no longer called from here: the parked "should an idle monster have a default facing?" question
+## (ROADMAP) still references it, and it is a pure-math helper any future system may reuse.
 func modify_damage(ctx: Dictionary) -> int:
 	var amount := int(ctx.get("amount", 0))
 	var weapon = ctx.get("weapon")
 	# Weapon gate: an equipped weapon whose path matches the required one. A bare-handed attacker
-	# (weapon null) or an unset required_weapon can never backstab.
+	# (weapon null) or an unset required_weapon can never sneak attack.
 	if weapon == null or required_weapon == null:
 		return amount
 	if weapon.resource_path != required_weapon.resource_path:
 		return amount
-	# Positional gate: the DEFENDER's own facing (ctx.target_facing) vs the approach, via the shared static.
-	if not _CombatReferee.is_attack_from_behind(ctx.get("attacker_tile"), ctx.get("target_tile"), ctx.get("target_facing")):
+	# Compromised-state gate. `.get` with a default on both, so an older/partial ctx degrades to
+	# "not a sneak attack" rather than erroring mid-hit.
+	if not (bool(ctx.get("flanked_by_ally", false)) or bool(ctx.get("target_stunned", false))):
 		return amount
 	var tags: Array = ctx.get("tags", [])
-	tags.append("backstab")
+	tags.append("sneak")
 	return int(round(amount * damage_multiplier))

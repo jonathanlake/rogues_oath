@@ -8,8 +8,16 @@ extends RefCounted
 ## and the outcome rides one `banter` event.
 ##
 ## LINES ARE CONTENT and live as @export arrays on GameConfig (banter_engaged / _retarget /
-## _last_stand / _cornered / _ally_died) — a designer rewrites goblin dialogue in game_config.tres,
-## never here (CLAUDE.md: "add a .tres, not a script"). Empty array = that moment stays silent.
+## _last_stand / _cornered / _ally_died, plus v0.27.0's _notable_death / _forced_melee / _idle /
+## _help_me) — a designer rewrites goblin dialogue in game_config.tres, never here (CLAUDE.md: "add a
+## .tres, not a script"). Empty array = that moment stays silent.
+##
+## THE NINE MOMENTS and who fires them (all host-side):
+##   engaged / retarget / last_stand / cornered — MonsterBrain._begin_think, one per story beat (v0.24.x)
+##   ally_died / notable_death                 — CombatReferee._kill_entity, forced, mutually exclusive
+##   forced_melee                              — MonsterBrain._execute_candidate, a kiter made to swing
+##   idle                                      — MonsterBrain's own 15-30s out-of-combat timer
+##   help_me                                   — MonsterBrain.notify_attacked, notable + allies fighting
 ##
 ## Throttles: banter_chance rolls per bark (story beats shouldn't ALWAYS talk — surprise is flavor)
 ## and one global cooldown (banter_cooldown_sec, wall-clock) stops a wall of text when five goblins
@@ -40,6 +48,15 @@ static func bark(speaker_id: int, speaker_name: String, moment: String, force: b
 			lines = config.banter_cornered
 		"ally_died":
 			lines = config.banter_ally_died
+		# v0.27.0 moments (Jeff's second playtest verdict — "more banter, and scope the death one"):
+		"notable_death":
+			lines = config.banter_notable_death
+		"forced_melee":
+			lines = config.banter_forced_melee
+		"idle":
+			lines = config.banter_idle
+		"help_me":
+			lines = config.banter_help_me
 	if lines.is_empty():
 		return
 	var now := Time.get_ticks_msec()

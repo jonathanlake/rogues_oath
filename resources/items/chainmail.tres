@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="ItemType" format=3]
+
+[ext_resource type="Script" path="res://resources/item_type.gd" id="1_item"]
+
+[resource]
+script = ExtResource("1_item")
+display_name = "chainmail"
+category = 1
+atlas_coords = Vector2i(3, 12)
+usable = false
+heal_amount = 0
+armor_weight = 2
+phys_damage_reduction = 0.25

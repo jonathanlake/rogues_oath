@@ -46,13 +46,16 @@ const _GAME_FIELD_SPECS := {
 	"monster_think_min_beats": { "min": 0, "max": 30, "int": true },
 	"monster_think_max_beats": { "min": 0, "max": 30, "int": true },
 	"swing_catches_adjacent": { "bool": true },
-	# v0.26.0 instants experiment (DESIGN §2.11.1): the master toggle + the two per-ability cooldown dials.
-	# All three share the plain host-side-config-write story, so they need no bespoke branch. 0..600 beats is
-	# generous on purpose — 600 beats is "once per fight, and you'll remember it", the far end of the question
-	# the experiment is asking.
+	# v0.26.0 instants experiment (DESIGN §2.11.1): the master toggle. Its two per-ability cooldown dials
+	# moved onto the ability resources in v0.27.0 (`/ab <ability> cooldown_beats <n>`), so only the toggle
+	# remains here — a plain host-side config write, no bespoke branch needed.
 	"instant_abilities_enabled": { "bool": true },
-	"shield_block_cooldown_beats": { "min": 0.0, "max": 600.0 },
-	"shadow_step_cooldown_beats": { "min": 0.0, "max": 600.0 },
+	# v0.27.0 armor FLAT reduction per weight band (DESIGN §2.3.8) — the second armor term, min-combined with
+	# the worn item's percentage. Small INTEGER amounts by nature (they are subtracted from a damage number),
+	# and capped well below any weapon's damage so a dial turn can never make a band immune by itself.
+	"armor_flat_reduction_light": { "min": 0, "max": 99, "int": true },
+	"armor_flat_reduction_medium": { "min": 0, "max": 99, "int": true },
+	"armor_flat_reduction_heavy": { "min": 0, "max": 99, "int": true },
 }
 
 # The Players container + combat/move referees, handed in by Main via activate() on the HOST only.
@@ -106,6 +109,8 @@ func validate(sender_peer_id: int, data: Dictionary) -> Dictionary:
 			return _dev_cmd_weapon(args, by)
 		"m":
 			return _dev_cmd_monster(args, by)
+		"ab":
+			return _dev_cmd_ability(args, by)
 		"god":
 			return _dev_cmd_god(sender_peer_id, by)
 		"class":
@@ -202,7 +207,29 @@ func _dev_cmd_monster(args: Array[String], by: String) -> Dictionary:
 			{ "max_hp": "(affects new spawns)" })
 
 
-## The ONE tune pipeline for /w and /m (v0.10.1 dedup). `args` is the tokens after the resource name:
+## /ab <ability> <field> <value|reset> — ACTIVE ABILITY tuning (v0.27.0). The third sibling of /w and /m:
+## resolve the ability through GameConfig.ability_catalog by display_name SLUG (lowercase,
+## spaces→underscores — so `shield_bash`, since the wire args arrive lowercased and a space would split into
+## two tokens), then hand the rest to the shared tune pipeline for the reset / allowlist / clamp / mutate work.
+##
+## WHY IT EXISTS: Jeff's second verdict put COOLDOWNS on abilities (kick + shield bash at 40 beats) and
+## retuned their stun and damage. Without a live dial, answering "is 40 beats right?" meant editing a `.tres`
+## and restarting the session — the exact loop `/w` exists to avoid for weapons. The mutation lands on the
+## SHARED loaded resource host-side, which every class's `active_abilities` points at, so a retune reaches
+## every wielder at once and is read live at the next use (stamp-and-bake: a cooldown already running keeps
+## the seconds it was stamped with). No per-instance form (the `/mi` equivalent) — abilities have no
+## instances, only wielders.
+func _dev_cmd_ability(args: Array[String], by: String) -> Dictionary:
+	if args.size() < 2:
+		return { "ok": false, "reason": "usage: /ab <ability> <field> <value|reset>" }
+	var ability := GameManager.config.ability_by_name(args[0])
+	if ability == null:
+		return { "ok": false, "reason": "unknown ability '%s'" % args[0] }
+	return _dev_tune_resource(ability, GameManager.DEV_ABILITY_FIELDS, GameManager.DEV_ABILITY_INT_FIELDS,
+			GameManager.DEV_ABILITY_CLAMPS, args.slice(1), by, ability.display_name)
+
+
+## The ONE tune pipeline for /w, /m and /ab (v0.10.1 dedup). `args` is the tokens after the resource name:
 ## a shape whose LAST token is "reset" restores every allowlisted field from disk; otherwise it is
 ## [field, value]. Validates the field against the allowlist, parses the value as a number, and REJECTS
 ## (naming the range — never silently clamps) any value outside the field's clamp table before mutating
@@ -398,6 +425,24 @@ func _dev_cmd_snapshot() -> Dictionary:
 			"damage_min": weapon.damage_min, "damage_max": weapon.damage_max,
 			"windup_beats": weapon.windup_beats, "recovery_beats": weapon.recovery_beats,
 		}
+	# CLASSES → their ABILITIES → the five tunable fields (v0.27.0), the panel's CLASSES section source.
+	# Keyed by class display_name then by ability display_name, because that is how the panel presents it
+	# ("pick a class, see its abilities") — even though the resource underneath is SHARED, which is exactly
+	# what the section heading says out loud ("all wielders"). Read off the roster host-side, so a client's
+	# panel shows host truth like every other section.
+	var classes := {}
+	for player_class in GameManager.config.class_roster:
+		if player_class == null:
+			continue
+		var abilities := {}
+		for ability in player_class.active_abilities:
+			if ability == null:
+				continue
+			var ability_fields := {}
+			for field in GameManager.DEV_ABILITY_FIELDS:
+				ability_fields[field] = ability.get(field)
+			abilities[ability.display_name] = ability_fields
+		classes[player_class.display_name] = abilities
 	var monster_types := {}
 	var dir := DirAccess.open("res://resources/monsters")
 	if dir != null:
@@ -435,7 +480,8 @@ func _dev_cmd_snapshot() -> Dictionary:
 				"fields": instance_fields,
 			}
 	NetEvents.post_event("dev_snapshot", {
-		"game": game, "weapons": weapons, "monster_types": monster_types, "instances": instances,
+		"game": game, "weapons": weapons, "classes": classes,
+		"monster_types": monster_types, "instances": instances,
 	})
 	return { "ok": true, "deferred": true }
 
@@ -475,6 +521,11 @@ func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dic
 	# player-visibly via a weapon_skipped flag on class_changed — the "success" line must not silently mislead.
 	var busy: bool = _move_referee.is_entity_moving(sender_peer_id)
 	var weapon_skipped: bool = has_roster and starting != null and busy
+	# BODY ARMOR (v0.27.0 equipment phase 2): the class also DRESSES you, and it skips for the SAME reason
+	# (re-arming gear inside a committed window is the overlap the busy gate exists to prevent). Its own flag,
+	# because the two can skip independently and the log clause has to say WHICH one did not land.
+	var starting_body: ItemType = player_class.starting_body_armor
+	var gear_skipped: bool = starting_body != null and busy
 	var class_data := {
 		"entity_id": sender_peer_id,
 		"class": player_class.display_name,
@@ -482,6 +533,8 @@ func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dic
 	}
 	if weapon_skipped:
 		class_data["weapon_skipped"] = true  # present-only, like other optional event fields
+	if gear_skipped:
+		class_data["gear_skipped"] = true  # present-only, the weapon_skipped pattern exactly
 	NetEvents.post_event("class_changed", class_data)
 	if has_roster and starting != null and not busy:
 		player_node.set_weapon(starting)
@@ -489,6 +542,21 @@ func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dic
 			"entity_id": sender_peer_id,
 			"weapon": starting.display_name,
 			"by": by,
+		}, sender_peer_id)
+	if starting_body != null and not busy:
+		# Host-authoritative apply FIRST, then broadcast — the set_weapon precedent directly above, and the
+		# SAME `equip_item {gear: true}` event the bag equip posts, so every peer adopts gear through ONE
+		# handler. slot -1 says "this did not come out of a bag": main.gd's mirror guard skips it, so no bag
+		# entry is touched. The previously-worn item is REPLACED, not returned to the bag — /class hands you a
+		# whole loadout, which is a dev convenience, not a trade; the bag equip is the real acquisition path.
+		player_node.set_body_armor(starting_body)
+		NetEvents.post_event("equip_item", {
+			"entity_id": sender_peer_id,
+			"name": player_node.display_name,
+			"slot": -1,
+			"equipped": starting_body.display_name,
+			"returned": "",
+			"gear": true,
 		}, sender_peer_id)
 	# Deferred: the class_changed broadcast IS the outcome — suppress the generic dev_command broadcast
 	# (ok:true so it isn't a reject; deferred:true so NetEvents skips the broadcast + seq).
@@ -618,13 +686,21 @@ func _dev_cmd_config(args: Array[String], by: String) -> Dictionary:
 			fields = GameManager.DEV_WEAPON_FIELDS
 			int_fields = GameManager.DEV_WEAPON_INT_FIELDS
 			clamps = GameManager.DEV_WEAPON_CLAMPS
+		elif kind == "ab":
+			# ABILITY row kind (v0.27.0). No shipped preset uses it yet — it is here so an ability-tuning
+			# loadout is a table entry rather than a code change, exactly as the "w"/"m" kinds are. Resolved
+			# through the catalog by display_name slug, the same lookup /ab uses.
+			res = GameManager.config.ability_by_name(res_name)
+			fields = GameManager.DEV_ABILITY_FIELDS
+			int_fields = GameManager.DEV_ABILITY_INT_FIELDS
+			clamps = GameManager.DEV_ABILITY_CLAMPS
 		else:
 			res = _resolve_monster(res_name)
 			fields = GameManager.DEV_MONSTER_FIELDS
 			int_fields = GameManager.DEV_MONSTER_INT_FIELDS
 			clamps = GameManager.DEV_MONSTER_CLAMPS
 		if res == null:
-			return { "ok": false, "reason": "config %s: unknown %s '%s'" % [alias, "weapon" if kind == "w" else "monster", res_name] }
+			return { "ok": false, "reason": "config %s: unknown %s '%s'" % [alias, _row_kind_label(kind), res_name] }
 		# Reuse the ONE tune pipeline per row — same allowlist / clamp / int-or-float / mutate as /w & /m. Its
 		# per-field success line is discarded (we compose a bundle summary); its REJECT reason is surfaced.
 		var tune_args: Array[String] = [field, value_token]
@@ -719,6 +795,18 @@ func _dev_cmd_stun(sender_peer_id: int, args: Array[String], by: String) -> Dict
 		target_name = name_arg
 	_combat.apply_stun(target_id, beats)
 	return { "ok": true, "data": { "line": "%s stunned %s for %.0f beats." % [by, target_name, beats] } }
+
+
+## The human label for a `/config` preset ROW KIND, used only in the unknown-resource reject (v0.27.0 — the
+## reject used to inline a two-way "weapon" / "monster" ternary, which quietly mislabelled the new "ab" kind
+## as a monster). One place to name a kind, so the fourth kind cannot repeat the mistake.
+func _row_kind_label(kind: String) -> String:
+	match kind:
+		"w":
+			return "weapon"
+		"ab":
+			return "ability"
+	return "monster"
 
 
 ## Resolve a weapon by lowercase name (v0.10.0 /w): GameConfig.weapon_by_name FIRST (catalog display_name),

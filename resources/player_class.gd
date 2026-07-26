@@ -1,11 +1,12 @@
 class_name PlayerClass
 extends Resource
 
-## ARMOR WEIGHT class (v0.26.0, Jeff's verdict 2026-07-26 — armor phase 1 at the CLASS level; real
-## equipment items + slots stay the parked milestone). The weight band a class's gear sits in, kept
-## as an enum (not a number) so a designer picks from a fixed vocabulary and every consumer maps the
-## band to its own dial rather than inventing a curve. Serialized in a .tres as its ordinal int.
-enum ArmorWeight { UNARMORED, LIGHT, MEDIUM, HEAVY }
+## (v0.27.0: the `ArmorWeight` enum and the `armor_weight` / `phys_damage_reduction` fields that lived
+## here for v0.26.0's class-level armor phase 1 are GONE. Armor is a WORN ITEM now — the enum's canonical
+## home is `ItemType` and the numbers are authored on the armor `.tres` files — and a class expresses its
+## armor identity by which item it STARTS in (`starting_body_armor` below). Nothing was lost: rogue still
+## begins in leather 0.10/LIGHT, knight in chainmail 0.25/MEDIUM; those values simply moved onto objects
+## the player can now take off, hand over, or upgrade. DESIGN §2.3.8 / §2.10.)
 
 ## Designer-editable player-class template (v0.10.0, DESIGN §2 "add a .tres, not a script"). One
 ## PlayerClass per class; a non-coder adds a class or re-skins one by editing / dropping a .tres under
@@ -57,28 +58,22 @@ enum ArmorWeight { UNARMORED, LIGHT, MEDIUM, HEAVY }
 ## the next battle entry. 0 = baseline.
 ## v0.26.0: EVERY shipped class is 0 — the rogue's +1 was dropped when Jeff's verdict made the pool a
 ## single point (a "+1" doubles a binary budget, which is a different mechanic, not a tuning nudge).
-## The field STAYS as the per-class hook: the rogue's mobility edge now lives in its lighter armor
-## weight (a faster idle wait) below, and a future class may legitimately carry a deeper pool.
+## The field STAYS as the per-class hook: the rogue's mobility edge now lives in the WEIGHT of the armor
+## it starts in (a faster idle wait — see starting_body_armor), and a future class may legitimately
+## carry a deeper pool.
 @export var bonus_stamina: int = 0
 
-## The class's ARMOR WEIGHT band (v0.26.0 armor phase 1). UNARMORED (default) = the safe empty state
-## for a fresh PlayerClass. It drives the stamina REST-TO-RECOVER idle wait (DESIGN §2.2.10 — heavier
-## armor rests slower: light/unarmored 2.5, medium 3.0, heavy 3.5 beats, resolved in
-## MoveReferee._regen_idle_beats_of), which since v0.26.0 IS the class movement differentiator, and it is
-## deliberately the hook for the ENVISIONED spell / mobility penalties that a weight band should carry
-## (a heavy-armored caster fumbling, a light class keeping its speed). Resolved HOST-side and LAZILY
-## at each read, never cached at spawn, so a mid-session /class change lands at the next read — the
-## same rule bonus_stamina follows. Shipped: rogue LIGHT, knight MEDIUM.
-@export var armor_weight: ArmorWeight = ArmorWeight.UNARMORED
-
-## PHYSICAL damage reduction as a FRACTION absorbed (v0.26.0 armor phase 1): 0.0 (default) = no armor,
-## 0.25 = a quarter of every physical hit turned aside, 1.0 = immune. Applied HOST-side at the ONE
-## apply_damage mitigation seam (CombatReferee._phys_reduction_of), AFTER the attacker's passive
-## modify_damage chain and BEFORE the HP subtraction, so a backstab is priced then armored. PHYSICAL
-## only: "smite" (magical) and "admin" (/mi hp pokes, /mi kill) pass through unreduced. Read LIVE on
-## every hit from the DEFENDER's class, so a /class swap retunes the very next hit. Rounds half-up and
-## keeps apply_damage's 0 floor. Shipped: rogue 0.10, knight 0.25.
-@export_range(0.0, 1.0) var phys_damage_reduction: float = 0.0
+## The class's STARTING BODY ARMOR (v0.27.0 equipment phase 2) — the EQUIPMENT-category ItemType a player
+## of this class begins WEARING. Null (default) = starts unarmored. Exactly two host-side consumers:
+## Player._ready SEEDS it right after the class seed (so a fresh spawn / F5 respawn is dressed on every
+## peer, deterministically from shared config — the same shape as the scene-default weapon seed), and the
+## `/class` validator equips it on a live class change (busy-SKIPPED like the weapon roster's first entry,
+## so gear can never be re-armed inside a committed window). Deliberately NOT applied inside `set_class`:
+## that runs on every peer for every class event, and a silent gear swap there would bypass the busy gate
+## the Commitment Rule needs. The ITEM now carries what the class used to (weight band + physical
+## reduction), so this is the whole of a class's armor identity. Shipped: rogue → leather armor
+## (LIGHT/0.10), knight → chainmail (MEDIUM/0.25) — v0.26.0's numbers, now on objects you can take off.
+@export var starting_body_armor: ItemType = null
 
 ## The class's WEAPON ROSTER (v0.17.0) — the loadout this class carries and Tab-cycles through. EMPTY (the
 ## default) = use the GLOBAL GameConfig.weapon_roster fallback (the shipped dagger↔longsword cycle); NON-EMPTY

@@ -64,6 +64,18 @@ var player_class: PlayerClass = null
 ## hotbar width in main.gd's handler (see the coupling note there).
 var inventory: Array[String] = []
 
+## The WORN BODY ARMOR (v0.27.0 equipment phase 2) — the ItemType in this player's one real equipment
+## slot, or null for unarmored. PLAYER-ONLY on purpose: monsters do not wear gear (MonsterType keeps its
+## own `phys_damage_reduction` as the armored-monster seam), so the field lives here rather than on Entity.
+##
+## HOST-AUTHORITATIVE where it matters: the host's own copy of this node is what CombatReferee's armor seam
+## and MoveReferee's stamina rest wait read (both duck-typed, both LIVE at every hit / arm). Every peer also
+## keeps it in step — the spawn seed below and the `equip_item` gear event both resolve the item by NAME
+## through the shared catalog, exactly as weapons and classes do — so the HUD can paint the socket with no
+## query. It is not a mirror of authoritative state; it IS the state on the host and a name-resolved copy
+## everywhere else, which is the same contract equipped_weapon has carried since v0.9.3.
+var equipped_body: ItemType = null
+
 
 func _ready() -> void:
 	super()
@@ -74,6 +86,15 @@ func _ready() -> void:
 	var roster := GameManager.config.class_roster
 	if not roster.is_empty():
 		set_class(roster[spawn_index % roster.size()])
+	# Seed the class's STARTING BODY ARMOR (v0.27.0 equipment phase 2), right after the class seed and by
+	# the same rule: every peer derives it from the SAME shared config (the slot's class → its
+	# starting_body_armor), so a fresh spawn / F5 respawn is dressed identically everywhere with no wire
+	# traffic — the shape the scene-default weapon seed below already uses. Seeded HERE and not inside
+	# set_class deliberately: set_class also runs for every live class change on every peer, and equipping
+	# gear there would bypass the busy gate the /class validator applies (Commitment Rule). A class with no
+	# starting armor (four of the six) leaves the slot empty.
+	if player_class != null and player_class.starting_body_armor != null:
+		set_body_armor(player_class.starting_body_armor)
 	# Nameplate is name-only, seeded from the pre-tree display_name; the HP readout rides its own
 	# label under the feet. max_hp is locally known everywhere (an Entity export), so the seed is
 	# correct on every peer with no query; the combat referee's attack events drive live updates via
@@ -142,6 +163,17 @@ func set_class(new_class: PlayerClass) -> void:
 func set_weapon(weapon: WeaponType) -> void:
 	super(weapon)
 	_move_input.weapon_range_tiles = weapon.range_tiles if weapon != null else 0
+
+
+## Adopt a BODY ARMOR item (v0.27.0 equipment phase 2) — the one write path for `equipped_body`, so the
+## slot can never be set from three places with three different meanings. `null` strips the slot (unarmored),
+## which is a legal state, not an error. Driven from: the spawn seed (_ready above), the host-side equip
+## validator + its broadcast `equip_item {gear: true}` event on every peer, the `/class` loadout equip, and
+## the late-join `sync_player_field "body_armor"` snap. NO presentation of its own — the worn item shows in
+## the HUD's Body socket, which repaints off the same events (hud.refresh_self); there is no paper-doll
+## sprite layer, so unlike set_weapon this touches no rig.
+func set_body_armor(item: ItemType) -> void:
+	equipped_body = item
 
 
 ## Inject the local sampler's shoot-target predicate (v0.17.1). Main wires this on the LOCAL player when it

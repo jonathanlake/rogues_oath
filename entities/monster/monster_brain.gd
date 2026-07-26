@@ -26,6 +26,14 @@ extends Node
 ## epsilon BACKSTOP (settle + epsilon = status-quo timing) recovers the chase whenever the pipeline
 ## is refused (blocked/corner/adjacent/no-path/hold-origin). See _think's busy gate for the full why.
 
+## IDLE BANTER window (v0.27.0): each brain re-arms its own randomized timer in this range (SECONDS, not
+## beats — idle muttering is wall-clock flavor with no relation to the fight's cadence, and out of combat
+## there is no tactical beat to measure it against). Wide and slow on purpose: the bark ALSO has to pass
+## the global chance roll and the one-voice-at-a-time cooldown, so the observed rate is far below one per
+## 15-30s per monster. Consts rather than config fields — the tuning surface that matters is the LINES.
+const _IDLE_BANTER_MIN_SEC := 15.0
+const _IDLE_BANTER_MAX_SEC := 30.0
+
 ## Re-think delay in BEATS after a refused/blocked action (a contested tile back-off) — converted at
 ## the live beat when used, not cached (DESIGN §2.8; matches MoveInput's held-retry cadence so a
 ## monster and a player back off a contested tile together). 1 beat = one movement step. NOTE: the
@@ -73,6 +81,12 @@ var _last_reported_target: int = 0
 var _saw_engaged_allies: bool = false
 var _last_stand_done: bool = false
 var _cornered_done: bool = false
+# v0.27.0 banter. _help_me_done: the once-per-life latch for the notable-monster scream (same shape as
+# the two above — a story beat, not a recurring noise). _banter_idle_gen: the generation token the idle
+# chatter timer captures, bumped at activate so a re-activated/pooled brain can never be driven by a
+# previous life's booked tick (the same idiom as the stun/round/cast generations elsewhere).
+var _help_me_done: bool = false
+var _banter_idle_gen: int = 0
 # The host's MoveReferee, handed in by the parent at activation. The brain reads occupancy truth
 # and submits monster intents through it (host-local — no RPC; monsters have no RTT). It never
 # reaches up to Main or the monster; the referee is its one injected dependency. Untyped so its
@@ -123,7 +137,12 @@ func activate(referee: Node, combat: Node, entity_id: int, monster_type: Monster
 	# inside Main's is_server() branch, so this uses the same global RNG the host already owns for
 	# pick_smite_tile (no new RNG plumbing; reproducibility was not asked for).
 	_roll_personality()
+	# Fresh life, fresh once-per-life banter latch + a fresh idle-chatter generation (any tick booked by
+	# a previous life no longer matches and self-drops).
+	_help_me_done = false
+	_banter_idle_gen += 1
 	_active = true
+	_arm_idle_banter()
 	_think.call_deferred()
 
 
@@ -151,6 +170,16 @@ func notify_attacked() -> void:
 	_aggroed = true
 	if not was_aggroed:
 		_rally_pack()
+	# HELP ME (v0.27.0 banter): a NOTABLE monster — a shaman — screams for cover the first time it is hurt
+	# WHILE ITS PACK IS STILL FIGHTING. Both conditions carry the moment: alone, "help me" would be
+	# addressed to nobody (that is the last_stand beat instead), and repeated every hit it would stop being
+	# a moment, hence the once-per-life latch (the _check_last_stand pattern). Forced past the chance roll
+	# like the death bark — this one should land — but still cooldown-gated. Placed ABOVE the busy return
+	# below, deliberately: a shaman hit mid-cast is exactly when it wants to scream.
+	if not _help_me_done and _monster_type != null and _monster_type.banter_notable \
+			and _pace != null and _pace.engaged_count_excluding(_entity_id) > 0:
+		_help_me_done = true
+		Banter.bark(_entity_id, _monster_type.display_name, "help_me", true)
 	# Already committed to an action (glide or attack)? Latch aggro ONLY — do NOT schedule an early think.
 	# The referee holds this monster busy for its whole action window (v0.19.0: a telegraphed attack now
 	# commits windup+recovery), and the end-of-window think already re-decides targeting. Rescheduling here
@@ -791,6 +820,13 @@ func _execute_candidate(candidate: Dictionary, my_tile: Vector2i, targets: Array
 		var melee_wait: float = _combat.wind_up(_entity_id, data.get("tile", Vector2i.ZERO))
 		if melee_wait < 0.0:
 			return false
+		# FORCED MELEE (v0.27.0 banter): the scorer just made a KITER swing a club. That is the utility AI's
+		# courage term firing (cornered, or no backup) and it is the funniest state a caster can be in, so it
+		# gets a line. Gated on the CASTER identity (flees_players — "I would rather be running"), NOT on the
+		# action, so an ordinary goblin's melee stays silent. Chance-gated, never forced: in a small room this
+		# fires repeatedly, and an always-on bark would eat the cooldown every other second.
+		if _monster_type != null and _monster_type.flees_players:
+			Banter.bark(_entity_id, _monster_type.display_name, "forced_melee")
 		_reschedule_after(melee_wait + windup_rethink_epsilon_sec)
 		return true
 	if action == UtilityScorer.ACTION_FLEE:
@@ -985,6 +1021,35 @@ func _check_last_stand() -> bool:
 ## THINKING hold read (v0.24.0): true while this brain's hesitation deadline is in the future.
 func _is_thinking() -> bool:
 	return Time.get_ticks_msec() < _thinking_until_msec
+
+
+## IDLE CHATTER (v0.27.0 banter): arm THIS brain's next out-of-combat muttering tick, 15-30s out (host
+## RNG). A get_tree() SceneTreeTimer like every other brain timer, so it survives on the host tree and
+## Godot drops the connection if this brain is freed. Deliberately its own chain rather than a hook on
+## _think: idle monsters think on a back-off cadence measured in beats and would chatter at fight tempo,
+## and a monster with nothing to decide should still have a voice. Inert on a client (never activated).
+func _arm_idle_banter() -> void:
+	if not _active:
+		return
+	get_tree().create_timer(randf_range(_IDLE_BANTER_MIN_SEC, _IDLE_BANTER_MAX_SEC)) \
+			.timeout.connect(_on_idle_banter_tick.bind(_banter_idle_gen))
+
+
+## One idle-chatter tick. Three gates, then re-arm unconditionally (the chain must not die on a skip, or a
+## monster that happened to be fighting once would go permanently mute):
+##  - generation / _active — a previous life's booked tick, or a deactivated brain: drop it entirely.
+##  - alive               — a dead monster says nothing (its node is usually freed too; belt).
+##  - NOT tactical        — this is OUT-OF-COMBAT flavor. In a fight the story-beat moments own the voice,
+##                          and idle mumbling over a swing would read as broken AI.
+## The bark itself is chance + global-cooldown gated inside Banter, which is what keeps it rare.
+func _on_idle_banter_tick(gen: int) -> void:
+	if not _active or gen != _banter_idle_gen:
+		return
+	if _combat != null and not _combat.is_alive(_entity_id):
+		return
+	if _pace == null or not _pace.is_tactical(_entity_id):
+		Banter.bark(_entity_id, _monster_type.display_name if _monster_type != null else "Goblin", "idle")
+	_arm_idle_banter()
 
 
 ## v0.25.0 (/mi per-instance tuning): migrate this brain's captured type ref to the instance-local

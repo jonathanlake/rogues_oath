@@ -4,8 +4,10 @@ extends Resource
 ## Designer-editable ACTIVE (triggered) ability (v0.20.0, active-ability system). A PlayerClass carries an
 ## Array[ActiveAbility] (resources/player_class.gd); the HUD binds them to the 1-5 hotbar and pressing a key
 ## submits a `use_ability {index}` intent the host adjudicates. Unlike a PassiveAbility (a silent combat hook),
-## an active ability is a COMMITTED action (DESIGN §2.1; no separate cooldown per Part 4 Q9): using it ROOTS the
-## player for its beats — that occupied window IS the anti-spam. HOST-ONLY / server-authoritative: the
+## an active ability is a COMMITTED action (DESIGN §2.1): using it ROOTS the player for its beats — which WAS
+## the whole anti-spam story until v0.27.0 put a `cooldown_beats` beside it (see that field: it extends the
+## §2.11.1 experiment's Part 4 Q9 suspension to strikes, and 0 = the pre-v0.27.0 behavior). HOST-ONLY /
+## server-authoritative: the
 ## AbilityReferee reads these values host-side; the wire only ever carries the slot index. Add an ability by
 ## dropping a `.tres` into a class's `active_abilities` — no code edit.
 ##
@@ -17,9 +19,11 @@ extends Resource
 ##  - STRIKE — the v0.20.0 mechanic and the only non-experimental one: a COMMITTED melee strike (+ stun) that
 ##    respects the busy gate and pays its cost in beats. Every field below is a STRIKE field.
 ##  - BLOCK  — INSTANT. Raises a one-shot guard that negates the next incoming hit. No window, no damage, no
-##    stun; gated by `GameConfig.shield_block_cooldown_beats` (charged on CONSUMPTION).
+##    stun; gated by `cooldown_beats` below, charged on CONSUMPTION (holding a guard is free).
 ##  - BLINK  — INSTANT. Teleports the user one tile OPPOSITE its facing, interrupting its own committed action;
-##    gated by `GameConfig.shadow_step_cooldown_beats`.
+##    gated by `cooldown_beats`, charged on a SUCCESSFUL teleport only.
+## (v0.27.0: both used to read a per-ability GameConfig dial; the cooldown is a field on this resource now,
+## and STRIKES carry one too — see cooldown_beats.)
 ## Both instant kinds are inert unless `GameConfig.instant_abilities_enabled` is on (they reject otherwise).
 enum Kind { STRIKE, BLOCK, BLINK }
 
@@ -52,6 +56,29 @@ enum Kind { STRIKE, BLOCK, BLINK }
 
 ## Reach in tiles for the target search (1 = 8-adjacent, the v1 default — a point-blank strike). Read HOST-side.
 @export var range_tiles: int = 1
+
+## COOLDOWN in BEATS before this ability may be used again (v0.27.0). 0 (default) = NO cooldown, which is
+## byte-for-byte the pre-v0.27.0 behavior for any ability that leaves it unset.
+##
+## THIS FIELD REPLACES the two hand-written GameConfig dials (`shield_block_cooldown_beats` /
+## `shadow_step_cooldown_beats`) the v0.26.0 instants experiment shipped: a cooldown belongs to the
+## ability, not to a global config table that only two abilities could ever address — and now that
+## STRIKES carry them too (Jeff's second verdict: kick 40, shield bash 40), one field per `.tres` is the
+## only shape that scales. Tunable live through `/ab <ability> cooldown_beats <n>` and the debug panel's
+## CLASSES section.
+##
+## SCOPE NOTE — THIS EXTENDS A SANCTIONED SUSPENSION, it does not create a new rule. Part 4 Q9 says
+## "unified occupancy — NO separate cooldowns, ever"; §2.11.1's experiment suspended that for the two
+## INSTANTS (which have no occupied window to pay with). Putting a cooldown on a STRIKE — which DOES pay
+## in beats — is a second timer beside a window that already exists, so it goes further than the original
+## suspension and is explicitly part of the SAME pending Jon+Jeff verdict (DESIGN §2.11.1). Do not build
+## on it until that is answered.
+##
+## Stamped at ACCEPT for a strike (the press is what spends it, so a blink-interrupted strike fizzles its
+## effect and the cooldown still stands) and at CONSUMPTION for Shield Block (holding a guard is free).
+## Beats × the user's RESOLVED pace at the moment it is charged — stamp-and-bake (§2.8.2), so a later
+## tempo change never re-derives a cooldown already running. Read HOST-side only.
+@export var cooldown_beats: float = 0.0
 
 
 ## True when this ability is validly authored. The ONE predicate the referee gates on, so an empty /

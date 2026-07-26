@@ -172,6 +172,11 @@ var _own_hp_text: Label = null
 # Primary-hand weapon icon: an AtlasTexture over ITEMS_TEX, region re-pointed by refresh_self / on_weapon_swap.
 var _own_weapon_icon: TextureRect = null
 var _own_weapon_atlas := AtlasTexture.new()
+# BODY-slot armor icon (v0.27.0 equipment phase 2) — the exact twin of the weapon icon above, one socket
+# over in the armor grid, re-pointed by refresh_self / on_gear_changed. The Body socket is the FIRST of the
+# nine equipment sockets to hold a real item; the other eight stay cosmetic name labels.
+var _own_body_icon: TextureRect = null
+var _own_body_atlas := AtlasTexture.new()
 # BAG item icons (v0.18.0 chunk B; renamed from _hotbar_* in v0.21.0, when "hotbar" became the bottom-center
 # ability bar): one TextureRect + its own AtlasTexture per REAL bag slot [0..inventory_slots-1], captured when
 # _build_inventory builds the grid so _refresh_bag can paint/hide them from the local player's inventory mirror.
@@ -354,6 +359,15 @@ func on_weapon_swap(entity_id: int) -> void:
 		refresh_self()
 
 
+## A player's WORN GEAR changed (v0.27.0, fanned out by main.gd off the `equip_item {gear}` event): if it is
+## our own player, refresh the equipment panel so the Body socket repaints. Its own entry point rather than a
+## reuse of on_weapon_swap purely for legibility at the call site — both land in refresh_self, which repaints
+## the whole own-player panel from the node.
+func on_gear_changed(entity_id: int) -> void:
+	if entity_id == _own_id:
+		refresh_self()
+
+
 ## A player's inventory changed (fanned out by main.gd off the item_picked_up event): if it is our own
 ## player, repaint the bag grid from its inventory mirror. Mirror of on_weapon_swap — filter to our id, then
 ## refresh. A lighter path than refresh_self (no passive re-measure / relayout): item icons never change the
@@ -388,6 +402,9 @@ func refresh_self() -> void:
 	# bar swaps with the class.
 	_refresh_abilities(me.player_class)
 	_set_weapon_icon(me.equipped_weapon)
+	# Body armor (v0.27.0): the same one-line repaint the weapon gets. Reached from the (re)spawn seed (so a
+	# fresh spawn shows its class's starting armor) and from every own gear/class change.
+	_set_body_icon(me.equipped_body)
 	# Bag (v0.18.0 chunk B): repaint the inventory grid from the player's inventory mirror. Called here so the
 	# (re)spawn seed (_seed_self → refresh_self) shows an EMPTY bag on a fresh spawn — a freed+re-made player
 	# carries nothing — and any own class/weapon refresh re-paints it too (harmless, the mirror is unchanged then).
@@ -772,7 +789,25 @@ func _build_equipment() -> void:
 	grid.add_theme_constant_override("v_separation", 2)
 	vbox.add_child(grid)
 	for label_text in ["Head", "Body", "Gloves", "Boots", "Ring", "Ring", "Amul"]:
-		grid.add_child(_make_socket(false, label_text))
+		var socket := _make_socket(false, label_text)
+		# BODY is the one live slot (v0.27.0 equipment phase 2): give it a real icon on top of its name
+		# label, built exactly like the primary hand's above. The faint "Body" label stays underneath and is
+		# simply covered while something is worn, so an empty slot still reads as the body slot.
+		if label_text == "Body":
+			_own_body_icon = TextureRect.new()
+			_own_body_icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+			_own_body_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			_own_body_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			_own_body_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			_own_body_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_own_body_atlas.atlas = ITEMS_TEX
+			# Seed a VALID single-tile region for the same reason the weapon icon does: a zero-size
+			# AtlasTexture region draws the WHOLE sheet. Hidden until refresh_self applies a real item.
+			_own_body_atlas.region = WorldGrid.atlas_region(Vector2i.ZERO)
+			_own_body_icon.texture = _own_body_atlas
+			_own_body_icon.visible = false
+			socket.add_child(_own_body_icon)
+		grid.add_child(socket)
 	grid.add_child(_make_socket(false, ""))  # blank filler cell — completes the 2×4 block
 
 
@@ -906,6 +941,19 @@ func _set_weapon_icon(weapon: WeaponType) -> void:
 		return
 	_own_weapon_atlas.region = WorldGrid.atlas_region(weapon.atlas_coords)
 	_own_weapon_icon.visible = true
+
+
+## Point the BODY socket's icon at the worn armor's items.png region (v0.27.0) — the exact twin of
+## _set_weapon_icon above. A null item hides the icon, revealing the faint "Body" label again (unarmored).
+## Refreshed by refresh_self, driven on spawn + on_gear_changed (the equip event / late-join snap).
+func _set_body_icon(item: ItemType) -> void:
+	if _own_body_icon == null:
+		return
+	if item == null:
+		_own_body_icon.visible = false
+		return
+	_own_body_atlas.region = WorldGrid.atlas_region(item.atlas_coords)
+	_own_body_icon.visible = true
 
 
 ## Paint the ABILITY BAR (v0.20.3; bottom-center since v0.21.0) from the LOCAL player's class active_abilities —

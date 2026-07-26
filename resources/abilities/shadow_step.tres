@@ -13,3 +13,4 @@ stun_beats = 0.0
 windup_beats = 0.0
 recovery_beats = 0.0
 range_tiles = 0
+cooldown_beats = 40.0

@@ -21,6 +21,16 @@ extends Resource
 
 # ── Identity ──────────────────────────────────────────────────────────────────
 
+## DAMAGE TYPE vocabulary (v0.27.0, Jeff's second playtest verdict). Physical damage now says WHAT KIND
+## of physical it is. Serialized as an ordinal int, so NEVER reorder — append only.
+##
+## LABELS, NOT BALANCE: nothing reads this to change a number. Armor's physical check stays KIND-based
+## (`_is_physical_kind` — it excludes smite/admin), so every one of these three is mitigated identically
+## today. The type is stamped onto the attack event as a lowercase string (present-only, when a weapon is
+## present) so the wire already carries it for the ENVISIONED per-type resist/vulnerability work — a
+## skeleton shrugging off piercing, a plate suit ignoring slashing. Shipped as identity, not mechanics.
+enum DamageType { SLASHING, BLUNT, PIERCING }
+
 ## Machine + display name for this weapon ("dagger", "longsword"). Doubles as the identity used
 ## everywhere: the `weapon` field on the attack/swap events, the GameConfig.weapon_roster lookup
 ## key, the debug weapon= knob token, and the log line ("HOST draws the longsword."). Kept
@@ -66,6 +76,12 @@ extends Resource
 ## this milestone; the machinery M3.5 preserved is a .tres number away. The bow's DRAW (v0.17.0) reuses
 ## it as the delay from commit to LOOSE (windup_beats before the arrow leaves the string).
 @export var windup_beats: float = 0.0
+
+## What KIND of physical damage this weapon deals (v0.27.0 — see the DamageType enum above for the
+## labels-not-balance scope). Defaults to SLASHING, which is the longsword's own type, matching this
+## file's authoring doctrine (a fresh WeaponType behaves like the longsword) — so only the weapons that
+## DIFFER author it: club BLUNT, dagger PIERCING, bow PIERCING. Read HOST-side at the attack-event stamp.
+@export var damage_type: DamageType = DamageType.SLASHING
 
 ## RANGE in tiles (v0.17.0, the ranged discriminator). 0 = a MELEE weapon (the default — dagger/longsword);
 ## > 0 = a RANGED weapon whose shot is validated host-side against the CLICKED tile by CHEBYSHEV distance

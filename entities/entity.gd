@@ -454,8 +454,13 @@ func play_draw(dir: Vector2i, windup_sec: float, weapon: WeaponType = null) -> v
 ## monster telegraph is deliberately silent (v0.6.2 grammar — the visual carries the tell), unlike the
 ## bow draw above (which pitches the whoosh). This node wires the rig; the rig owns the pose choreography.
 ## `dir` is the 8-way step TOWARD the target; the event-resolved weapon lets a late-joiner pose the right art.
+## `self is Player` picks the pose STYLE (v0.27.0, Jeff's second playtest verdict): a player draws back in one
+## long eased pull, a monster plants and jitters. The ENTITY answers "what am I" and passes it DOWN — the rig
+## is a component and must never reach up to inspect its parent (CLAUDE.md), and the alternative (a per-weapon
+## `.tres` style field) would be wrong twice over: the same club is wielded by both, and the difference is
+## about the WIELDER, not the weapon.
 func play_windup_pose(dir: Vector2i, hold_sec: float, weapon: WeaponType = null) -> void:
-	_weapon_rig.play_windup_pose(dir, hold_sec, weapon)
+	_weapon_rig.play_windup_pose(dir, hold_sec, weapon, self is Player)
 
 
 ## Bow release (v0.17.0), driven by Main off the matching `projectile_launched`. Snaps the rig's release (bow

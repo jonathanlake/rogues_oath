@@ -60,16 +60,22 @@ const _SHARED_DIALS := [
 	{ "label": "think min (beats)", "field": "monster_think_min_beats", "min": 0, "max": 30, "step": 1 },
 	{ "label": "think max (beats)", "field": "monster_think_max_beats", "min": 0, "max": 30, "step": 1 },
 	{ "label": "sticky swings", "field": "swing_catches_adjacent", "bool": true },
-	# v0.26.0 instants experiment (DESIGN §2.11.1) — the toggle Jeff flips to answer the question, plus the
-	# two cooldown dials the answer depends on.
+	# v0.26.0 instants experiment (DESIGN §2.11.1) — the toggle Jeff flips to answer the question. Its two
+	# cooldown rows moved to the CLASSES section in v0.27.0, where every ability's cooldown now lives.
 	{ "label": "instant abilities", "field": "instant_abilities_enabled", "bool": true },
-	{ "label": "shield block CD (beats)", "field": "shield_block_cooldown_beats",
-		"min": 0, "max": 600, "step": 1 },
-	{ "label": "shadow step CD (beats)", "field": "shadow_step_cooldown_beats",
-		"min": 0, "max": 600, "step": 1 },
+	# v0.27.0 armor FLAT reduction per weight band (DESIGN §2.3.8) — the flat half of the two-term rule,
+	# min-combined with the worn item's percentage. Integer damage amounts, so step 1.
+	{ "label": "armor flat LIGHT", "field": "armor_flat_reduction_light", "min": 0, "max": 99, "step": 1 },
+	{ "label": "armor flat MEDIUM", "field": "armor_flat_reduction_medium", "min": 0, "max": 99, "step": 1 },
+	{ "label": "armor flat HEAVY", "field": "armor_flat_reduction_heavy", "min": 0, "max": 99, "step": 1 },
 ]
 
 const _WEAPON_FIELDS := ["damage_min", "damage_max", "windup_beats", "recovery_beats"]
+
+## The five tunable ABILITY fields (v0.27.0 CLASSES section) — the same list GameManager.DEV_ABILITY_FIELDS
+## enforces host-side, restated here only to fix the ROW ORDER on screen (a snapshot dictionary's key order
+## is insertion order, which is that same list — but the panel should not depend on that for its layout).
+const _ABILITY_FIELDS := ["damage", "stun_beats", "windup_beats", "recovery_beats", "cooldown_beats"]
 
 # Pending widget edits: row key -> {cmd, args}. Keyed so scrubbing a SpinBox collapses to one
 # intent per flush; flushed by _flush_timer 0.3s after the last change.
@@ -92,6 +98,11 @@ var _stamina_button: Button = null
 var _winded_button: Button = null
 var _type_selector: OptionButton = null
 var _type_grid: GridContainer = null
+# CLASSES section (v0.27.0): a class picker + a rebuilt-on-selection box of per-ability field grids. Same
+# selector+grid shape as MONSTER TYPES above, one level deeper (a class has several abilities).
+var _classes_box: VBoxContainer = null
+var _class_selector: OptionButton = null
+var _class_abilities_box: VBoxContainer = null
 # field -> editor Control for repaint-in-place (game + weapon rows). Instance/type editors rebuild.
 var _game_editors: Dictionary = {}
 var _weapon_editors: Dictionary = {}
@@ -207,6 +218,10 @@ func _build() -> void:
 	scroll.add_child(body)
 	_game_box = _make_section(body, "GAME / STAMINA (players | monsters)")
 	_weapons_box = _make_section(body, "WEAPONS")
+	# v0.27.0: abilities became tunable (cooldowns, retuned stuns/damage), so they get a section. The heading
+	# states the sharing model out loud — an ActiveAbility .tres is shared by every class holding it, so
+	# editing "Kick" under rogue edits Kick everywhere, exactly as MONSTER TYPES edits every instance.
+	_classes_box = _make_section(body, "CLASSES (ability .tres — all wielders)")
 	_types_box = _make_section(body, "MONSTER TYPES (shared .tres — all instances)")
 	_instances_box = _make_section(body, "LIVE INSTANCES (this one monster only)")
 	_build_game_rows()
@@ -370,6 +385,8 @@ func _apply_snapshot(data: Dictionary) -> void:
 				"HARD STOP" if bool(game.get("player_exhausted_blocks_movement", false)) else "crawl")
 	_paint_weapons(data.get("weapons", {}))
 	# Rebuilding sections: skipped entirely while one of their children owns focus (see above).
+	if focused == null or not _classes_box.is_ancestor_of(focused):
+		_paint_classes(data.get("classes", {}))
 	if focused == null or not _types_box.is_ancestor_of(focused):
 		_paint_types(data.get("monster_types", {}))
 	if focused == null or not _instances_box.is_ancestor_of(focused):
@@ -424,6 +441,70 @@ func _weapon_field_label(field: String) -> String:
 		"damage_max":
 			return "dmg max"
 	return field.trim_suffix("_beats")
+
+
+## CLASSES section (v0.27.0) — a class OptionButton over a box of per-ability field grids, built ONCE (the
+## selector is populated from the first snapshot that carries classes) and repainted on every snapshot.
+## Deliberately the _paint_types selector+grid pattern rather than a flat list of every ability: five fields
+## × several abilities × six classes would be an unscrollable wall, and "which class am I tuning" is how a
+## playtester thinks about it. Edits queue a `/ab <slug> <field> <value>` intent under the key
+## "ab:<ability>:<field>", so scrubbing one spin collapses to one intent per flush like every other row.
+func _paint_classes(classes: Dictionary) -> void:
+	if _class_selector == null:
+		if classes.is_empty():
+			return                          # nothing to build yet (a pre-v0.27.0 host, or an empty roster)
+		_class_selector = OptionButton.new()
+		for class_name_key in classes:
+			_class_selector.add_item(str(class_name_key))
+		if _class_selector.item_count > 0:
+			_class_selector.select(0)       # start populated, not on a blank grid (the _paint_types lesson)
+		_class_selector.item_selected.connect(func(_index: int): _rebuild_class_grid())
+		_classes_box.add_child(_class_selector)
+		_class_abilities_box = VBoxContainer.new()
+		_class_abilities_box.add_theme_constant_override("separation", 2)
+		_classes_box.add_child(_class_abilities_box)
+	_rebuild_class_grid()
+
+
+## Rebuild the selected class's ability editors from the last snapshot. One sub-label per ability, then a
+## 2-column (label 170 + spin 80) grid of its five fields — the same widths the MONSTER TYPES grid uses, so
+## the rows are known to fit the dock's fixed 422 units.
+func _rebuild_class_grid() -> void:
+	if _class_abilities_box == null or _class_selector == null or _class_selector.selected < 0:
+		return
+	for child in _class_abilities_box.get_children():
+		child.queue_free()
+	var class_name_key := _class_selector.get_item_text(_class_selector.selected)
+	var abilities: Dictionary = _snapshot.get("classes", {}).get(class_name_key, {})
+	if abilities.is_empty():
+		_class_abilities_box.add_child(_label("(no active abilities)", 170))
+		return
+	for ability_name in abilities:
+		_class_abilities_box.add_child(_label(str(ability_name), 250))
+		var fields: Dictionary = abilities[ability_name]
+		var grid := GridContainer.new()
+		grid.columns = 2
+		_class_abilities_box.add_child(grid)
+		# The /ab token is the display_name SLUG (lowercase, spaces→underscores) — GameConfig.ability_by_name
+		# normalizes both sides the same way, and submitting the slug keeps the arg a SINGLE token (a raw
+		# "Shield Bash" would arrive as two args and resolve to nothing).
+		var slug := str(ability_name).to_lower().replace(" ", "_")
+		for field in _ABILITY_FIELDS:
+			if not fields.has(field) or fields[field] == null:
+				continue
+			grid.add_child(_label(str(field), 170))
+			var spin := SpinBox.new()
+			spin.custom_minimum_size = Vector2(80, 0)
+			spin.min_value = 0.0
+			# Cooldowns reach 600 beats (the instants band); every other ability field is well under 100.
+			spin.max_value = 600.0 if field == "cooldown_beats" else 100.0
+			spin.step = 1.0 if field == "damage" else 0.5
+			spin.set_value_no_signal(float(fields[field]))
+			var key := "ab:%s:%s" % [slug, field]
+			spin.value_changed.connect(func(value: float):
+				if not _painting:
+					_queue(key, "ab", [slug, str(field), str(value)]))
+			grid.add_child(spin)
 
 
 func _paint_types(types: Dictionary) -> void:

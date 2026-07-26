@@ -22,6 +22,24 @@ const DEV_WEAPON_CLAMPS := {
 	"recovery_beats": [0.05, 30.0],
 	"windup_beats": [0.0, 30.0],
 }
+## Dev ABILITY tuning table (v0.27.0 `/ab`) — the third sibling of the weapon/monster allowlists above,
+## same three-part shape (fields / int fields / clamps) fed through the SAME _dev_tune_resource pipeline, so
+## `/ab kick stun_beats 8` gets the identical reject-not-clamp validation and `reset`-from-disk semantics.
+## Exists because Jeff's second verdict put COOLDOWNS on abilities: retuning one meant editing a `.tres` and
+## restarting, which is not a playtest loop. Every field is an ActiveAbility @export.
+## Clamp reasoning: damage shares the weapons' [0, 999]; stun [0, 60] beats is "up to a very long lock, not
+## a permanent one"; windup/recovery share the weapons' [0, 30] window bounds; cooldown [0, 600] matches the
+## band the instants experiment already used (600 beats = "once per fight and you'll remember it").
+const DEV_ABILITY_FIELDS := ["damage", "stun_beats", "windup_beats", "recovery_beats", "cooldown_beats"]
+const DEV_ABILITY_INT_FIELDS := ["damage"]
+const DEV_ABILITY_CLAMPS := {
+	"damage": [0, 999],
+	"stun_beats": [0.0, 60.0],
+	"windup_beats": [0.0, 30.0],
+	"recovery_beats": [0.0, 30.0],
+	"cooldown_beats": [0.0, 600.0],
+}
+
 const DEV_MONSTER_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles",
 	"bonus_windup_beats", "bonus_recovery_beats", "bonus_damage",
 	# Spell-casting params (v0.19.10) — ALL live-tunable via /m, not just the heal (Jon's ask).
@@ -107,7 +125,14 @@ const DEV_GAME_FIELDS := ["tactical_beat_sec",
 		"player_exhausted_blocks_movement", "monster_exhausted_blocks_movement",
 		"stamina_max", "monster_stamina_max",
 		"monster_think_min_beats", "monster_think_max_beats", "swing_catches_adjacent",
-		"instant_abilities_enabled", "shield_block_cooldown_beats", "shadow_step_cooldown_beats"]
+		"instant_abilities_enabled",
+		"armor_flat_reduction_light", "armor_flat_reduction_medium", "armor_flat_reduction_heavy"]
+## v0.27.0: `shield_block_cooldown_beats` / `shadow_step_cooldown_beats` are GONE from this list because the
+## GameConfig fields are gone — a cooldown lives on its ActiveAbility `.tres` now and is tuned with `/ab`
+## (DEV_ABILITY_FIELDS above) or the panel's CLASSES section. A stale `/config shield_block_cooldown_beats`
+## therefore rejects as an unknown field, which is correct. The three ARMOR FLAT dials joined in their place
+## (the flat half of the two-term armor rule, DESIGN §2.3.8) — plain host-side config writes read live at the
+## apply_damage seam, so they need no bespoke branch, only a _GAME_FIELD_SPECS row.
 
 ## Dev CONFIG PRESETS (v0.19.7): `/config <alias>` applies a whole BUNDLE of /w + /m tunings in one command, so
 ## a repeated test loadout is a single keystroke instead of five. Lives HERE (beside the DEV_* allowlists) so

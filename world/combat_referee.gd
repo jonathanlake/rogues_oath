@@ -324,8 +324,10 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 		var block_ability: ActiveAbility = _blocking[target_id]
 		_blocking.erase(target_id)
 		# COOLDOWN STARTS ON CONSUMPTION (not on the raise): holding a guard is free, spending it is what costs.
-		var block_cooldown_sec := _stamp_cooldown(target_id, block_ability,
-				GameManager.config.shield_block_cooldown_beats)
+		# v0.27.0: the beats come from the ABILITY resource (`cooldown_beats`, shield_block.tres 30) — the
+		# GameConfig dial this used to read is gone. _blocking stores the ability object precisely so this
+		# site can reach it.
+		var block_cooldown_sec := _stamp_cooldown(target_id, block_ability)
 		# The blow still gets an `attack` event — §2.3.4 forbids a silent negation. Reuses the ONE attack-dict
 		# builder with damage 0, hp UNCHANGED and a present-only `blocked` flag (the `godded` pattern exactly),
 		# so every other kind's payload is byte-identical and clients render "turned aside", never "missed".
@@ -359,20 +361,44 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 		# below has no ceiling, so a buggy passive returning a negative must never heal a target here.
 		amount = maxi(0, int(ctx["amount"]))
 		tags = ctx["tags"]
-	# ARMOR MITIGATION (v0.26.0 armor phase 1, Jeff's verdict 2026-07-26). Placed AFTER the attacker's
-	# passive chain and BEFORE the HP subtraction — the attacker's bonuses price the blow, then the
-	# DEFENDER's armor turns part of it aside, which is the only order where a backstab-then-armor and
-	# an armor-then-backstab can't disagree. PHYSICAL only (_is_physical_kind): a smite is magical and
-	# an "admin" poke must stay exact (/mi kill against an armored knight has to actually kill).
-	# The reduction is read LIVE off the defender each hit (never cached at spawn), so a /class swap
-	# retunes the very next hit. Round HALF-UP so a 5-damage hit at 0.25 reads as 4 taken, not 3 — the
-	# player-facing number a designer tunes against. maxi(0, …) keeps apply_damage's floor invariant.
-	# The "armor" tag rides the existing attack event payload ONLY when the number actually changed, so
-	# mitigation is visible rather than a silent nerf (feedback rule §2.3.4); the client/log rendering
-	# of that tag lands in a later chunk — the tag itself is on the wire now.
-	if _is_physical_kind(kind):
+	# ARMOR MITIGATION (v0.26.0 phase 1; TWO-TERM + FLOOR since v0.27.0, Jeff's second verdict). Placed
+	# AFTER the attacker's passive chain and BEFORE the HP subtraction — the attacker's bonuses price the
+	# blow, then the DEFENDER's armor turns part of it aside, which is the only order where a
+	# sneak-then-armor and an armor-then-sneak can't disagree. PHYSICAL only (_is_physical_kind): a smite
+	# is magical and an "admin" poke must stay exact (/mi kill against an armored knight has to kill).
+	# Every value is read LIVE off the defender each hit (never cached at spawn), so an equip or a /class
+	# retunes the very next blow.
+	#
+	# PLAYERS get BOTH TERMS, min-combined: the PERCENT path (round HALF-UP, so a 5-damage hit at 0.25
+	# reads as 4 taken, not 3 — the player-facing number a designer tunes against) and a FLAT path from
+	# the worn item's weight band (GameConfig.armor_flat_reduction_*). Whichever leaves the defender
+	# taking LESS wins. Why both: a percentage does nothing against SMALL hits (25% of 2 rounds back to
+	# 2), which is exactly where Jeff expected plate to matter, while a pure flat rule would trivialize
+	# big ones. UNARMORED is a genuine no-op on both terms (0% and flat 0), so the absence of armor can
+	# never itself mitigate.
+	#
+	# Then the MONSTER-DAMAGE FLOOR: a monster's hit on a player never lands for 0. Jeff's worked example
+	# is 2 damage vs chainmail — pct 2, flat 0, so the min is 0, and an enemy that cannot hurt you is a
+	# broken fight. Gated on attacker_id < 0 and target_id > 0 (monster → player) so it can never turn a
+	# player's own armor-shaved hit on a MONSTER into a phantom point, and on amount > 0 so a genuinely
+	# zero-damage source stays zero.
+	#
+	# MONSTER defenders keep the plain percent path — no weight band and no flat table exists for them
+	# (MonsterType carries only the fraction), and inventing one here would be balance by accident.
+	# The "armor" tag rides the attack event ONLY when the number actually changed, so mitigation is
+	# visible rather than a silent nerf (feedback rule §2.3.4).
+	if _is_physical_kind(kind) and amount > 0:
 		var reduction := _phys_reduction_of(target)
-		if reduction > 0.0 and amount > 0:
+		if target is Player:
+			var pct_result := maxi(0, int(floor(amount * (1.0 - reduction) + 0.5)))
+			var flat_result := maxi(0, amount - _armor_flat_of(_armor_weight_of(target)))
+			var final_amount := mini(pct_result, flat_result)
+			if attacker_id < 0 and target_id > 0:
+				final_amount = maxi(1, final_amount)
+			if final_amount != amount:
+				amount = final_amount
+				tags.append("armor")
+		elif reduction > 0.0:
 			var reduced := maxi(0, int(floor(amount * (1.0 - reduction) + 0.5)))
 			if reduced != amount:
 				amount = reduced
@@ -865,6 +891,21 @@ func _validate_use_ability(sender_peer_id: int, data: Dictionary) -> Dictionary:
 		push_warning("[CombatReferee] use_ability: unhandled ActiveAbility.Kind %d on '%s'" % [
 				ability.kind, ability.display_name])
 		return { "ok": false, "reason": "no such ability" }
+	# STRIKE COOLDOWN (v0.27.0, Jeff's second verdict: kick + shield bash are 40-beat abilities). Checked
+	# HERE — after the instant dispatch (so the instants path above is byte-identical to v0.26.0) and
+	# BEFORE the busy gate and before ANY commit — for two reasons. (1) Precedence: "on cooldown" is the
+	# more informative refusal than "busy" when both are true, and it is the cheaper check. (2) Purity: no
+	# state is touched by a cooldown reject, so it can never leave a window committed or a facing turned.
+	# The reason string carries the remaining SECONDS, matching the instants' wording exactly, so it
+	# travels the normal §2.2.8 reject pipe (bonk + sender-only log line) with no new plumbing and the
+	# HUD's name-keyed cooldown overlay needs zero changes.
+	#
+	# SUSPENSION SCOPE: this extends §2.11.1's Part 4 Q9 suspension from the instants to STRIKES, which DO
+	# already pay in occupied beats — a second timer beside a real window. Flagged in DESIGN as part of the
+	# same pending Jon+Jeff verdict; an ability authored with cooldown_beats 0 behaves exactly as before.
+	var strike_remaining := _cooldown_remaining_sec(sender_peer_id, ability)
+	if strike_remaining > 0.0:
+		return { "ok": false, "reason": "on cooldown (%.1fs)" % strike_remaining }
 	if _move_referee.is_entity_moving(sender_peer_id):
 		return { "ok": false, "reason": "busy" }
 	# Target: the first ADJACENT hostile (facing neighbour preferred). No target → a clean reject, not a whiff —
@@ -885,17 +926,42 @@ func _validate_use_ability(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	if windup_sec <= 0.0:
 		if not _move_referee.commit_in_place(sender_peer_id, recovery_sec):
 			return { "ok": false, "reason": "busy" }
+		_charge_strike_cooldown(sender_peer_id, ability)
 		_resolve_ability(sender_peer_id, target_tile, ability.damage, ability.stun_beats, ability.log_verb, recovery_sec)
 		return { "ok": true, "deferred": true }
 	# Telegraphed (windup > 0) — commit the FULL window, resolve at windup end (dodgeable), like a monster windup.
 	if not _move_referee.commit_in_place(sender_peer_id, windup_sec + recovery_sec):
 		return { "ok": false, "reason": "busy" }
+	_charge_strike_cooldown(sender_peer_id, ability)
 	# interrupt_gen captured AT COMMIT (v0.26.0) and re-checked at fire: a caster who SHADOW-STEPPED out of
 	# this telegraph never lands the strike (see _resolve_ability's guard).
 	get_tree().create_timer(windup_sec).timeout.connect(
 			_resolve_ability.bind(sender_peer_id, target_tile, ability.damage, ability.stun_beats,
 					ability.log_verb, recovery_sec, _move_referee.interrupt_gen_of(sender_peer_id)))
 	return { "ok": true, "deferred": true }
+
+
+## Charge a STRIKE ability's cooldown at ACCEPT and tell the user's HUD (v0.27.0). Called from BOTH accept
+## branches — instant and telegraphed — immediately after the commit succeeds, i.e. at the moment the
+## decision becomes irrevocable.
+##
+## SPENT AT COMMIT, NOT AT CONTACT, deliberately (matching the instants): a strike that whiffs, or one
+## whose resolve is FIZZLED by a blink or a stun, still burns the cooldown. You spent the ability the
+## instant you committed to it — refunding on a bad outcome would make the cooldown a reward for
+## connecting rather than a cost of pressing, and would hand the player a free retry out of a committed
+## decision. (This is distinct from v0.26.0's recovery-on-contact refund, which releases the BUSY WINDOW
+## on a whiff: that is the referee shortening a commitment it owns, not returning a spent resource.)
+##
+## The `ability_used` event is the same {entity_id, ability, cooldown_sec} shape the instants post, and the
+## HUD's overlay is name-keyed, so the ability bar darkens a strike's socket with ZERO HUD changes. Posted
+## even at cooldown 0 (a uniform "an instant/strike fired" signal per press — the overlay no-ops on 0).
+func _charge_strike_cooldown(user_id: int, ability: ActiveAbility) -> void:
+	var cooldown_sec := _stamp_cooldown(user_id, ability)
+	NetEvents.post_event("ability_used", {
+		"entity_id": user_id,
+		"ability": ability.display_name,
+		"cooldown_sec": cooldown_sec,
+	}, user_id)
 
 
 ## Resolve an active-ability strike against its committed TILE (host-only). Caster alive-gated (killed mid-windup
@@ -1020,7 +1086,7 @@ func _use_shadow_step(user_id: int, ability: ActiveAbility) -> Dictionary:
 	# here is a genuine "it isn't legal after all" and still leaves nothing changed.
 	if not _move_referee.teleport_entity(user_id, dest):
 		return { "ok": false, "reason": "blocked" }
-	var cooldown_sec := _stamp_cooldown(user_id, ability, GameManager.config.shadow_step_cooldown_beats)
+	var cooldown_sec := _stamp_cooldown(user_id, ability)
 	# `blink` is its OWN action, never a `glide_to`: a glide event means "tween over duration_sec", and a
 	# teleport has no travel to tween. from/to both ride it so each peer can place the vanish and the arrival.
 	NetEvents.post_event("blink", { "entity_id": user_id, "from": from, "to": dest }, user_id)
@@ -1041,12 +1107,15 @@ func _cooldown_remaining_sec(entity_id: int, ability: ActiveAbility) -> float:
 	return maxf(0.0, float(ready_at - Time.get_ticks_msec()) / 1000.0)
 
 
-## Charge `cooldown_beats` against this entity's `ability` starting NOW, and return the stamped SECONDS (which
-## ride the ability_used / ability_cooldown events so every HUD drains its overlay over the host's own span —
-## stamp-and-bake, §2.8.2: a later tempo change never re-derives a cooldown already running). Beats × the
-## entity's RESOLVED pace, so a cooldown incurred in a fight is measured on the fight's clock.
-func _stamp_cooldown(entity_id: int, ability: ActiveAbility, cooldown_beats: float) -> float:
-	var cooldown_sec := maxf(0.0, cooldown_beats) * PaceReferee.beat_or_explore(_pace, entity_id)
+## Charge this entity's `ability` its own authored cooldown starting NOW, and return the stamped SECONDS
+## (which ride the ability_used / ability_cooldown events so every HUD drains its overlay over the host's
+## own span — stamp-and-bake, §2.8.2: a later tempo change never re-derives a cooldown already running).
+## Beats × the entity's RESOLVED pace, so a cooldown incurred in a fight is measured on the fight's clock.
+## v0.27.0: the beats are read from `ability.cooldown_beats` here rather than passed in by each caller —
+## the two GameConfig dials are gone, so every call site would otherwise re-fetch the same field. A 0
+## authored cooldown stamps a ready-at in the past, which reads as ready (no behavior change).
+func _stamp_cooldown(entity_id: int, ability: ActiveAbility) -> float:
+	var cooldown_sec := maxf(0.0, ability.cooldown_beats) * PaceReferee.beat_or_explore(_pace, entity_id)
 	var per_entity: Dictionary = _ability_ready_at_msec.get(entity_id, {})
 	per_entity[ability.display_name] = Time.get_ticks_msec() + int(cooldown_sec * 1000.0)
 	_ability_ready_at_msec[entity_id] = per_entity
@@ -1504,7 +1573,28 @@ func _build_attack_data(attacker: Node, attacker_id: int, target: Node, target_i
 	# (no longsword rig arc over a bash) — the attacker's lunge in _handle_attack_event is its melee cue.
 	if attacker is Entity and attacker.equipped_weapon != null and kind != "kick" and kind != "ability":
 		data["weapon"] = attacker.equipped_weapon.display_name
+		# DAMAGE TYPE (v0.27.0): a PRESENT-ONLY label, stamped in the same breath as the weapon identity
+		# and under exactly the same condition — a weapon is present AND this hit is that weapon's own
+		# blow (a `kick` is a ranged wielder's desperation poke and an `ability` is a bash, neither of
+		# which is the weapon striking, which is why both already suppress the weapon field). Absent on
+		# every weaponless hit, so any reader MUST use .get() with a default, exactly like `whiff` /
+		# `blocked` / `gear`. Nothing reads it yet — armor's physical test stays kind-based — it is on the
+		# wire now so the envisioned per-type resist work has its data from day one.
+		data["damage_type"] = _damage_type_name(attacker.equipped_weapon.damage_type)
 	return data
+
+
+## The lowercase wire name for a WeaponType.DamageType ordinal (v0.27.0). A STRING crosses the wire, not
+## the enum int, for the same reason every other event carries names: an ordinal is meaningless to a
+## reader (a log line, a future resist table) without the enum, and reordering the enum would silently
+## re-label old traces. SLASHING is the fallback, matching the resource default.
+func _damage_type_name(damage_type: int) -> String:
+	match damage_type:
+		WeaponType.DamageType.BLUNT:
+			return "blunt"
+		WeaponType.DamageType.PIERCING:
+			return "piercing"
+	return "slashing"
 
 
 ## Resolve an attack against its committed TILE. Shared by both shapes (decision 3; DESIGN §2.8):
@@ -1640,16 +1730,24 @@ func _kill_entity(entity_id: int, ent_name: String) -> void:
 	_ability_ready_at_msec.erase(entity_id)
 	_move_referee.clear_entity(entity_id)
 	NetEvents.post_event("died", { "entity_id": entity_id, "name": ent_name })
-	# Goblin banter (v0.24.4): a MONSTER death makes a random living packmate bark revenge — Jon's
+	# Goblin banter (v0.24.4): a MONSTER death makes a living packmate IN THE FIGHT bark revenge — Jon's
 	# marquee moment ("the healer dies and a goblin says 'you'll pay for that'"). Forced past the
 	# chance roll (the moment should reliably land) but still cooldown-gated. AFTER the erases above,
 	# so the dying monster can never be picked as its own mourner (_hp no longer holds it).
+	#
+	# v0.27.0 — NOTABLE deaths get their own, louder moment: if the dying monster's TYPE is flagged
+	# banter_notable (the shamans), the survivor barks `notable_death` INSTEAD of `ally_died`. Exclusive
+	# by construction (one bark, chosen by the moment name) — two barks for one death would fight the
+	# global cooldown and the second would just be swallowed anyway. The type is read off the node
+	# captured ABOVE the erases, since it is still valid until the end-of-frame queue_free.
 	if entity_id < 0:
 		var mourner_id := _pick_living_monster_excluding(entity_id)
 		if mourner_id != 0:
 			var mourner := _node_of_id(mourner_id)
+			var dead_type = node.get("monster_type") if node != null else null
+			var moment := "notable_death" if dead_type != null and dead_type.banter_notable else "ally_died"
 			Banter.bark(mourner_id,
-					str(mourner.display_name) if mourner != null else "Goblin", "ally_died", true)
+					str(mourner.display_name) if mourner != null else "Goblin", moment, true)
 	if node != null:
 		_drop_weapon_of(node, death_tile)
 		node.queue_free()
@@ -1659,14 +1757,24 @@ func _kill_entity(entity_id: int, ent_name: String) -> void:
 ## reads the authoritative _hp map (the dying monster was erased before this runs), never node
 ## state. has_brain gates the pick — the first kill-check run had the Training Dummy mourn a goblin
 ## ("no... NO!"), which is funny exactly once; a mourner must be something that can think.
+##
+## v0.27.0 — ONLY MONSTERS IN THE FIGHT MOURN (Jeff's second playtest verdict): the candidate must also
+## resolve TACTICAL on the pace referee. Before this, killing one goblin made a goblin three rooms away
+## shout revenge, which read as the whole dungeon being psychic. Engagement is exactly the right test —
+## it IS "am I in this fight" — and it needs no new state. With no engaged survivor the moment stays
+## SILENT, deliberately: a bark from nobody relevant is worse than no bark. Null-pace (a parse/unit-safety
+## path only; the host always injects a resolver) falls back to the pre-v0.27.0 unscoped pick.
 func _pick_living_monster_excluding(dead_id: int) -> int:
 	var living: Array[int] = []
 	for child in _monsters.get_children():
 		if child is Entity and child.entity_id < 0 and child.entity_id != dead_id \
 				and _hp.has(child.entity_id):
 			var monster_type = child.get("monster_type")
-			if monster_type != null and monster_type.has_brain:
-				living.append(child.entity_id)
+			if monster_type == null or not monster_type.has_brain:
+				continue
+			if _pace != null and not _pace.is_tactical(child.entity_id):
+				continue
+			living.append(child.entity_id)
 	return living.pick_random() if not living.is_empty() else 0
 
 
@@ -1742,6 +1850,8 @@ func _passives_of(node) -> Array:
 func _build_damage_ctx(attacker: Node, attacker_id: int, target: Node, target_id: int, amount: int, kind: String) -> Dictionary:
 	var attacker_tile: Vector2i = _move_referee.tile_of_entity(attacker_id)
 	var target_tile: Vector2i = _move_referee.tile_of_entity(target_id)
+	# The approach vector, reused for the flank probe (the tile on the target's FAR side).
+	var attack_dir := (target_tile - attacker_tile).sign()
 	return {
 		"amount": amount,
 		"attacker": attacker,
@@ -1754,9 +1864,39 @@ func _build_damage_ctx(attacker: Node, attacker_id: int, target: Node, target_id
 		"target_tile": target_tile,
 		"attacker_facing": _move_referee.facing_of(attacker_id),
 		"target_facing": _move_referee.facing_of(target_id),
-		"attack_dir": (target_tile - attacker_tile).sign(),
+		"attack_dir": attack_dir,
+		# SNEAK-ATTACK conditions (v0.27.0), precomputed here so passives stay pure readers — see the
+		# doc block above. Both are host-authoritative: the stun latch is this referee's own truth and
+		# the flank probe reads MoveReferee occupancy, never a rendered position.
+		"target_stunned": is_stunned(target_id),
+		"flanked_by_ally": _is_flanked_by_ally(attacker, attacker_id, target_tile + attack_dir),
 		"tags": [],
 	}
+
+
+## Is the target SANDWICHED — does a living ALLY of the attacker stand on the tile directly OPPOSITE the
+## attacker (v0.27.0 sneak attack)? `opposite` is target_tile + attack_dir, i.e. one step further along
+## the approach, so attacker / target / ally form a line through the target.
+##
+## True only when that tile holds an entity that (a) exists, (b) is not the attacker itself — impossible
+## through this geometry, but the guard keeps the predicate honest if a caller ever passes another tile —
+## (c) is ALIVE, and (d) is NOT hostile to the attacker. Hostility is asked of the ATTACKER's node
+## (server truth, the same call every other targeting site uses), so the debug `all_hostile` knob
+## correctly makes flanking impossible: with everyone hostile, nobody is an ally.
+##
+## A ZERO attack_dir (attacker and target on the same tile — unreachable for a real hit) makes `opposite`
+## the target's own tile, whose occupant is the target: not hostile to the attacker's enemy list? It IS
+## hostile, so the predicate answers false. No special case needed.
+func _is_flanked_by_ally(attacker: Node, attacker_id: int, opposite: Vector2i) -> bool:
+	var occ: int = _move_referee.entity_at(opposite)
+	if occ == _NO_ENTITY or occ == attacker_id:
+		return false
+	if not is_alive(occ):
+		return false
+	var occ_node := _node_of_id(occ)
+	if occ_node == null or attacker == null:
+		return false
+	return not attacker.is_hostile_to(occ_node)
 
 
 ## The id -> node resolver over this referee's own containers (mirror of MoveReferee's). Positive is
@@ -1839,27 +1979,62 @@ func _bonus_damage_of(node: Node) -> int:
 	return 0
 
 
-## The DEFENDER's physical damage reduction as a fraction 0..1 (v0.26.0 armor phase 1), read LIVE at
-## the apply_damage mitigation seam. Duck-typed off the node exactly as MoveReferee._stamina_max_of
-## reads `player_class`: a PLAYER answers from its class (`player_class.phys_damage_reduction`), a
-## MONSTER from its authored type, and anything else (a null node, an untyped future entity) reads 0.0
-## — armor is opt-in, so an unknown defender is simply unarmored. Null-safe at every hop: a player
-## whose class hasn't been equipped yet falls through to 0.0 rather than crashing a hit. Clamped
-## defensively even though the export is range-bound, because /class can point at any authored .tres.
+## The DEFENDER's physical damage reduction as a fraction 0..1, read LIVE at the apply_damage mitigation
+## seam. v0.27.0 moved the PLAYER read off the CLASS and onto the WORN BODY ITEM (`equipped_body`, the
+## equipment-phase-2 slot): armor is an object now, so taking it off actually takes the mitigation off.
+## Duck-typed off the node exactly as MoveReferee._stamina_max_of reads `player_class` — a Monster has no
+## `equipped_body` property, so `get` answers null there and falls through to its authored type; anything
+## else (a null node, an untyped future entity) reads 0.0, because armor is opt-in and an unknown defender
+## is simply unarmored. Null-safe at every hop: an undressed player falls through to 0.0 rather than
+## crashing a hit. Clamped defensively even though the export is range-bound, since any authored .tres
+## could be pointed at the slot.
 func _phys_reduction_of(node: Node) -> float:
 	if node == null:
 		return 0.0
-	var pc = node.get("player_class")
-	if pc != null:
+	var body = node.get("equipped_body")
+	if body != null:
 		# Null-checked get (same shape as _ability_of): a hand-authored .tres pointing at some other
 		# Resource type would answer null here rather than crash the hit on a missing property.
-		var reduction = pc.get("phys_damage_reduction")
+		var reduction = body.get("phys_damage_reduction")
 		if reduction == null:
 			return 0.0
 		return clampf(float(reduction), 0.0, 1.0)
 	if node is Monster and node.monster_type != null:
 		return clampf(node.monster_type.phys_damage_reduction, 0.0, 1.0)
 	return 0.0
+
+
+## The DEFENDER's ARMOR WEIGHT band as an ItemType.ArmorWeight ordinal (v0.27.0), read LIVE at the same
+## seam. Same duck-typed shape as _phys_reduction_of above, and the same reason: the band lives on the
+## worn body item. An undressed player / a monster / anything unresolvable reads UNARMORED, whose flat
+## reduction is 0 — so "no armor" leaves the incoming amount untouched (an absence must never mitigate).
+## With ONE armor slot the body item's band IS the wearer's band; the weight-PROMOTION rule (heaviest of
+## several worn pieces) is future work (DESIGN §2.10) and would replace exactly this function.
+func _armor_weight_of(node: Node) -> int:
+	if node == null:
+		return ItemType.ArmorWeight.UNARMORED
+	var body = node.get("equipped_body")
+	if body == null:
+		return ItemType.ArmorWeight.UNARMORED
+	var weight = body.get("armor_weight")
+	if weight == null:
+		return ItemType.ArmorWeight.UNARMORED
+	return int(weight)
+
+
+## The FLAT damage reduction for an armor weight band (v0.27.0) — the second armor term, from the three
+## authored GameConfig dials. UNARMORED returns 0 EXPLICITLY (there is deliberately no config field for
+## it): no armor means the flat path subtracts nothing, so min(pct, flat) collapses to the untouched
+## amount. Kept as one match here so the band→amount mapping has exactly one site.
+func _armor_flat_of(weight: int) -> int:
+	match weight:
+		ItemType.ArmorWeight.LIGHT:
+			return GameManager.config.armor_flat_reduction_light
+		ItemType.ArmorWeight.MEDIUM:
+			return GameManager.config.armor_flat_reduction_medium
+		ItemType.ArmorWeight.HEAVY:
+			return GameManager.config.armor_flat_reduction_heavy
+	return 0
 
 
 ## Is this damage `kind` PHYSICAL — i.e. does armor apply to it (v0.26.0)? Everything is physical
