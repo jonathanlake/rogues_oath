@@ -160,6 +160,42 @@ hesitation (whole brain held) at story-beat moments — battle entry (a "!" aler
 dots), target-died retarget, last-stand (allies all dead — the finale pause), and a cornered stall
 (each once per life; v0.24.3).
 
+**RECOVERY LOCKS ACTIONS (v0.28.0, `recovery_locks_actions`, DEFAULT ON — Jeff's third batch: "try not
+allowing the player or the enemy to do any actions when your stamina is recovering from a move").** While
+an entity sits at 0 stamina in tactical pace — the recovery bar showing — every **NON-MOVEMENT** action is
+refused with its own distinct **`recovering`** reject (its own token, never folded into `winded`): a bump
+attack, an ability (STRIKE *and* instant — the gate sits with the stun gate, above the instant dispatch, so
+"a stun blocks instants" and "recovering blocks instants" agree), a shot, a drink, an equip, a pickup. A
+MONSTER is gated the same way, in its brain, at every attack/cast decision — a monster's swing never passes
+through an intent validator, so that is where the enemy half lives; it reschedules to the end of the
+recovery wait rather than spinning on its back-off cadence.
+  - **It is a gate on STARTING an action, never a cancel of one in flight** — same position and shape as the
+    STUN gate it mirrors, touching no busy or pending record, so §2.1 is untouched.
+  - **SCOPE: it does NOT cover movement.** Moving at 0 stamina stays the winded/crawl dials' business, so the
+    two are **independently toggleable**: `/winded 0` + lockout ON = crawl freely but cannot attack;
+    `/winded 1` + lockout OFF = frozen in place but may still swing. They are not orthogonal *conditions*
+    (both fire off the same 0-stamina signal) — they are two **channels** over one condition, each with its
+    own dial. They cannot mask each other structurally: a plain move never reaches the action gate (it lives
+    inside the hostile-occupant branch of the glide validator), and a bump never reaches the movement spend
+    site (it returns at the windup route / bump commit, ~35 lines earlier).
+  - **Hostile bump only, and that is an assumption with a shelf life.** A hostile bump is the only
+    attack-shaped MOVE today — no doors, no destructibles, nothing bumpable. The first one that lands must
+    revisit that gate or it will silently escape the lockout.
+  - `stamina_enabled 0` makes the whole lockout a **no-op** (it is the predicate's first term), so "default
+    ON" means "on whenever the stamina system itself is on".
+  - **Two different "recoveries", deliberately NOT wired together:** this one is the stamina POOL at 0 (the
+    green bar). §2.3.9's `whiff_pays_recovery` concerns an attack's committed recovery BEATS. Attacks never
+    spend stamina, so releasing a whiff's window cannot move the pool and there is no state to keep in sync.
+  - **Status: PENDING Jeff's verdict, alongside the instants experiment** — graduate or revert with
+    `recovery_locks_actions 0`.
+
+**ENVISIONED, not scheduled (Jeff, 2026-07-26).** The green recovery bar eventually replacing recovery
+*animation frames* for ALL actions — a post-swing recovery shown as the bar rather than as a held pose. That
+is where this section's pool and §2.3.9's committed windows would MERGE into one read. Not this version.
+
+**THE SYSTEM'S NAME IS STILL OPEN.** Jeff asked for a better one than "stamina"; Jon deferred the decision
+(2026-07-26), so it stays "stamina" in every command, field and doc until he calls it. Nothing was renamed.
+
 **Presentation (v0.26.0, §2.3.4; sweat INVERTED v0.27.0).** A spent entity — player or monster — goes
 semi-transparent and grows a thin vertical **recovery bar** beside its body that fills over the
 host-stamped wait, ending in a two-pulse **ready blink**; the bar restarts whenever activity restarts the
@@ -186,7 +222,15 @@ per life). **EARSHOT (v0.27.1, `banter_earshot_tiles` = 12):** the two REACTION 
 bark and help-me — additionally require the reacting monster to be within that Chebyshev distance of the
 moment (the corpse's tile / an engaged ally's tile). Engagement alone answers "is a fight happening
 *somewhere*", which with three authored packs in separate rooms and a party that splits up produced
-cross-fight barks; earshot is what makes it "*my* fight". Every dial is split player_/monster_ (v0.25.0) and lives on the backtick DEBUG
+cross-fight barks; earshot is what makes it "*my* fight". **v0.28.0 widened that one dial to mean "how far
+a bark CARRIES" (Jon: gate ALL barks by distance, not just idle):** every bark now ships the speaker's
+authoritative tile, and each peer's COMBAT LOG prints the line only when its own player is within
+`banter_earshot_tiles` of it. The **overhead label stays ungated** — it floats over the speaker, so distance
+already hides it, and per-peer gating would break the "every peer reads the same line" premise. Three cases
+print past the gate: no own player (a **dead player is an earshot-less SPECTATOR and hears everything** — a
+corpse has no tile to measure from, and losing the log while watching the fight you just died in is worse
+than overhearing a distant goblin; a tradeoff Jeff can veto), a missing/malformed speaker tile, and a
+wall-sentinel tile on either side — a sentinel must never silently swallow a line. Every dial is split player_/monster_ (v0.25.0) and lives on the backtick DEBUG
 TUNING PANEL (docs/dev-commands.md) — a GUI over the same server-authoritative dev_command pipe,
 with per-INSTANCE monster forks via `/mi`. Intent, unchanged: movement improves positioning but can
 no longer invalidate attacks (the kiting thread) — a fleeing healer burns dry and crawls. `/stamina`
@@ -266,6 +310,17 @@ revert switch it was while this was provisional.
    feedback signal (sound + visual + combat log line). A player must never confuse "the
    attack missed" with "my input didn't register." *(This rule extends to movement
    rejection — see 2.2.8.)*
+   **The WIND-UP no longer writes a log line (v0.28.0, Jeff's third batch: "nothing needs to be written in
+   the combat log when someone winds up or is about to attack").** A telegraph is not an outcome, and the
+   one line fired on every melee windup, every ability-strike telegraph and every bow draw — at fight
+   volume it was most of the log. The `windup` EVENT is untouched and still carries the whole telegraph:
+   the coil, the white flash, the telegraph sound and the weapon rig's raised pose. Four tells go quiet in
+   text only; the likeliest to come back is the player's OWN bow draw, whose remaining tells are just the
+   rig's skyward raise and the pitched-down draw sound (the cheap restore is a player-initiated-only
+   variant of the line, not the whole arm). Monster CAST channels keep their lines — a heal channel and a
+   smite channel are the shaman's only tell, and Jeff asked for those explicitly.
+   **A refused PICKUP finally has both channels (v0.28.0):** `pickup_item` was the one reject pipe with no
+   bonk *and* no log arm, so a refused G press was indistinguishable from a dropped keypress.
 5. Combat presentation stays abstracted (targeted commands, no implied precise physical
    contact). Do not show pre-commit hit percentages.
 6. RNG budget: keep output randomness low-magnitude. Replayability comes from input
@@ -388,18 +443,31 @@ revert switch it was while this was provisional.
      wearing **goes back into your bag**, so a dev-tool class swap can never destroy gear. A full bag
      refuses the swap and says so, keeping what you have on. See §2.10.
 
-9. **§2.3.9 — Recovery beats only on CONTACT (v0.26.0; Jeff's verdict 2026-07-26).** A committed
-   attack still owns its whole window when it LANDS — windup plus the planted recovery tail, exactly
-   as before (Part 4 Q9's unified occupancy is untouched, and so is the v0.19.0 same-window
-   double-hit fix). But when the same attack **whiffs** — the telegraphed tile was vacated, the
-   ability found nothing, the smite's target dodged — the remaining recovery is RELEASED at
-   resolution: you paid for the miss with the miss, not with a nap on top of it. Both sides,
-   symmetric: a whiffing goblin re-thinks that same frame.
-   - **Why.** The recovery tail is the *cost of having connected*; charging it for a swing at empty
-     air double-punished a mistake and made whiffs read as bugs ("why is he standing there?").
-     Dodging still WORKS — the attacker loses the hit — it just no longer freezes the attacker
-     longer than the dodger.
-   - **This is not a Commitment Rule leak.** The release is the referee's, at the host's own resolve
+9. **§2.3.9 — Whiff recovery: A TOGGLE, and it now ships ON (`whiff_pays_recovery` = true, v0.28.0;
+   was "recovery only on contact" v0.26.0–v0.27.x).** A committed attack owns its whole window when it
+   LANDS — windup plus the planted recovery tail (Part 4 Q9's unified occupancy is untouched, and so is
+   the v0.19.0 same-window double-hit fix). What the dial decides is the **whiff** — the telegraphed tile
+   was vacated, the ability found nothing, the smite's target dodged:
+   - **`whiff_pays_recovery` TRUE (the DEFAULT since v0.28.0, and the pre-v0.26.0 behavior Jeff asked to
+     have back):** the miss pays its full recovery tail. The committed window plays out untouched, the
+     whiff event carries the real recovery seconds, and every peer shows the spent-recovery tint for it.
+   - **FALSE (the v0.26.0 experiment):** the remaining recovery is RELEASED at resolution — you paid for
+     the miss with the miss, not with a nap on top of it — the event stamps a zero gameplay duration, and
+     a whiffing goblin re-thinks that same frame (the `busy_released` monster wake). Both sides,
+     symmetric.
+   With the flag TRUE, `busy_released` never fires, so the v0.26.0 whiff-wake is inert by construction.
+   Positive polarity deliberately matches `stamina_enabled` / `recovery_locks_actions` — these get flipped
+   live mid-playtest and an inverted flag is a footgun. **Not the same "recovery" as §2.2.10's lockout**,
+   which reads the stamina POOL; this one is a committed-action window. The v0.26.0 rationale, kept because
+   the toggle keeps it reachable:
+   - **Why the release was tried.** The recovery tail is the *cost of having connected*; charging it for a
+     swing at empty air double-punished a mistake and made whiffs read as bugs ("why is he standing
+     there?"). Dodging still WORKS — the attacker loses the hit — it just no longer froze the attacker
+     longer than the dodger. **Why it went back off by default:** Jeff played it and wanted the whiff to
+     cost again (2026-07-26) — a swing you committed to should be a swing you are stuck in, which is
+     simply the Commitment Rule read literally.
+   - **The release is not a Commitment Rule leak** (relevant only with the flag FALSE, and the default now
+     avoids the question entirely). The release is the referee's, at the host's own resolve
      point, decided by the world's state (was anything there?) — no input cancels anything, and the
      actor cannot choose to whiff for tempo (whiffing forfeits the damage). Rule-of-thumb check:
      "can a player back out of a decision for free?" No — the decision already resolved.
@@ -407,9 +475,10 @@ revert switch it was while this was provisional.
      A **stun-fizzled** action keeps its full window — the stun IS the punishment (§2.11), and
      shortening it would reward being crowd-controlled. **Ranged keeps its full draw + tail** — the
      arrow is an independent effect with its own timeline (§2.9), so the loose always "happened."
-   - **Presentation.** A whiff event carries a zero gameplay duration but still hands the client a
-     present-only swing time, so the weapon rig plays a complete arc — §2.3.4 requires the miss to
-     look like a miss, not like a dropped input.
+   - **Presentation.** With the flag FALSE a whiff event carries a zero gameplay duration but still hands
+     the client a present-only swing time, so the weapon rig plays a complete arc — §2.3.4 requires the
+     miss to look like a miss, not like a dropped input. With the flag TRUE the two are equal and the
+     choreography is the pre-v0.26.0 one.
 10. **§2.3.10 — SNEAK ATTACK: compromised, not turned around (v0.27.0; Jeff's second verdict
    2026-07-26).** The rogue's dagger multiplier (×2, `resources/passives/backstab.tres`) now fires when the
    target is **FLANKED BY AN ALLY** — a living, non-hostile body **standing (settled, not mid-step)** on the

@@ -57,6 +57,19 @@ from the allowlist, so it is never stale — this table is the annotated version
 | `instant_abilities_enabled` | 0\|1 | **Experiment master toggle** (default ON) — Shield Block + Shadow Step (v0.26.0) **and the STRIKE cooldowns on Kick / Shield Bash** (v0.27.0), DESIGN §2.11.1. OFF = the two instants reject, the strike cooldowns are neither checked nor stamped (no refusal, no timer, no `ability_used` event) whatever `cooldown_beats` is authored, and nothing else anywhere behaves differently — i.e. the pre-v0.26 game exactly. **v0.27.1 made that literally true**: v0.27.0 shipped the strike cooldown ungated, so "they all switch off together" was a promise the code did not keep. This is the dial Jeff flips to answer the verdict question. |
 | `armor_flat_reduction_light` / `_medium` / `_heavy` | 0–99 (int) | **v0.27.0** — the FLAT half of the two-term armor rule (defaults 1 / 2 / 3), keyed to the worn body item's weight band. A physical hit on a player takes the SMALLER of the percentage result and `amount - flat`; UNARMORED is flat 0 (and 0%), so no armor never mitigates. Monster defenders keep the plain percentage path. **v0.27.1: a mitigated hit is now VISIBLE** — steel-blue damage popup, and the log line names the amount ("… for 2 (13/20, armor absorbs 2)."). DESIGN §2.3.8. |
 | `banter_earshot_tiles` | 0–60 (int) | **v0.27.1** — how far a bark's REACTION travels, in Chebyshev tiles (default 12 ≈ a room and a bit). The revenge/notable-death bark needs a living packmate within earshot **of the corpse**, and `help_me` needs an engaged ally within earshot **of the screamer**. Engagement alone only answered "a fight is happening somewhere", which with packs in separate rooms produced cross-fight barks. 0 makes both reactions silent. |
+| `whiff_pays_recovery` | 0\|1 | **v0.28.0** — does a WHIFFED attack still pay its recovery tail? **1 (the
+default) = pre-v0.26.0**: the committed window plays out, the whiff event carries the real recovery seconds,
+and every peer shows the spent tint — Jeff's third-batch ask. 0 = the v0.26.0/v0.27.x "recovery only on
+contact" experiment: the tail is released at resolve, the event stamps `duration_sec` 0.0, and a whiffing
+goblin wakes in the same frame. Read host-side at each whiff, so a flip lands on the very next miss.
+DESIGN §2.3.9. |
+| `recovery_locks_actions` | 0\|1 | **v0.28.0** — the 0-stamina **ACTION** lockout (default ON, Jeff's
+third-batch ask). While an entity sits at 0 stamina in tactical pace, every NON-MOVEMENT action is refused
+with the distinct `recovering` reject (bump attack, ability — STRIKE *and* instant — shot, drink, equip,
+pickup) and the line "Still recovering — wait for the bar."; a monster's brain skips its attack/cast
+decisions and waits out the bar. **Movement is deliberately NOT covered** — that stays
+`player_`/`monster_exhausted_blocks_movement` (`/winded`), so all four combinations are reachable and
+testable. **A no-op while `/stamina` is off** (the predicate's first term). DESIGN §2.2.10. |
 
 **REMOVED in v0.27.0:** `shield_block_cooldown_beats` and `shadow_step_cooldown_beats`. Cooldowns live on the
 ABILITY resource now (`ActiveAbility.cooldown_beats`) — use `/ab shield_block cooldown_beats 30` or the panel's

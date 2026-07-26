@@ -9,6 +9,50 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.28.0 (2026-07-26) — JEFF'S THIRD BATCH: A QUIETER LOG, LOCAL GOBLINS, AND TWO TOGGLES.**
+  Four asks from the notes after v0.27.1, plus one small feedback gap closed on the way.
+  **THE COMBAT LOG STOPS ANNOUNCING WIND-UPS.** "Nothing needs to be written in the combat log when
+  someone winds up or is about to attack" — so the *"X winds up..."* line is gone entirely. It was firing
+  on every goblin telegraph, every melee swing of yours, every ability strike **and every bow draw**, which
+  at fight volume was most of the log. Nothing else changed: the goblin still coils and flashes white, the
+  telegraph sound still plays, your weapon still lifts, the arrow still gets drawn. Only the *text* went.
+  Four things lose their line — a monster's melee telegraph, your own melee windup, an ability strike, and
+  your bow draw. **The bow draw is the one most likely to want back:** all it has left is the raised bow and
+  the low draw sound, so if it feels blind, say so — putting back a line for YOUR OWN shots only is a small
+  change. The shaman's **cast** lines ("channels a heal toward...", "begins to smite...") are untouched —
+  you asked for those and they stay.
+  **GOBLIN CHATTER IS NOW LOCAL.** A bark only reaches your combat log if the goblin saying it is within
+  earshot — the same 12-tile dial that already decided which goblin *reacts* to a death now also decides who
+  *hears* it, so one number means "how far a bark carries". Jon's call: this covers **every** bark, not just
+  the idle muttering. The speech floating over the goblin's head is unchanged — if you can see it, distance
+  has already done that job. **One tradeoff to veto if you hate it:** while you are DEAD you hear
+  everything, because a corpse has no position to measure from and going log-blind while watching the fight
+  that killed you seemed worse than overhearing a goblin two rooms away. Tune with
+  `/config banter_earshot_tiles <n>` (0 = silent).
+  **A MISSED SWING COSTS YOU AGAIN (`whiff_pays_recovery`, ON by default).** v0.26.0 let a whiffed
+  attack — yours or a goblin's — skip its recovery and act again immediately. You wanted that back the
+  old way, so it is back the old way: **swing at empty air and you are stuck in the follow-through**, with
+  the usual spent-look while it lasts. It is a toggle now rather than a rewrite, so
+  `/config whiff_pays_recovery 0` returns the v0.26.0 feel (including goblins snapping straight back into
+  another swing after a miss) if you want to compare.
+  **RECOVERING MEANS YOU CAN'T *ACT* (`recovery_locks_actions`, ON by default).** Your ask: "try not
+  allowing the player or the enemy to do any actions when your stamina is recovering from a move." While
+  that green bar is filling you cannot attack, use an ability, shoot, drink, equip or pick anything up — you
+  get a distinct thud and the line **"Still recovering — wait for the bar."** Goblins are held to the same
+  rule and simply wait out their bar instead of swinging.
+  **What it deliberately does NOT cover is MOVING.** Moving at zero stamina is still the `/winded` dial's
+  job, kept separate so you can try all four combinations: `/winded` off + this on = you can crawl around
+  but not swing; `/winded` on + `/config recovery_locks_actions 0` = you are rooted but can still fight from
+  where you stand. Note that turning the whole stamina system off (`/stamina`) also switches this off — it
+  has nothing to measure without it. Both new toggles are on the backtick panel.
+  **SMALL FIX ON THE WAY PAST:** pressing **G** with nothing to pick up (or while recovering) used to be
+  completely silent — no sound, no line — which is indistinguishable from a dropped keypress. It now thuds
+  and says why.
+  **STILL OPEN:** you asked for a better name than "stamina". Jon has parked that decision, so it is still
+  called stamina everywhere for now — nothing was renamed. Also noted for later, not built: your idea that
+  the green bar could eventually replace recovery *animation* for all actions, so post-swing recovery would
+  read as the bar too.
+
 - **v0.27.1 (2026-07-26) — FIXES TO YESTERDAY'S BUILD.** No new features: this is a code-review pass over
   v0.27.0, which shipped on a boot check only. Ten findings, all of them things that were either invisible
   or lying.

@@ -224,6 +224,16 @@ Not scheduled — pulled in when their moment comes:
   seam in MoveReferee — the passive framework is combat-only); monster stamina counts in the F3
   `/ai` overlay (two-line add to ai_decision); the deferred two-instance verification matrix
   (recorded in the v0.24.0 plan file), only insofar as it still describes shipped behavior.
+  **NEW v0.28.0, two open items of its own:** (1) **the system's NAME** — Jeff asked for a better one than
+  "stamina"; Jon DEFERRED the decision (2026-07-26), so nothing was renamed and every command, field and
+  doc still says stamina. A rename is a mechanical sweep whenever he calls it. (2) **`recovery_locks_actions`
+  (default ON) is itself a PENDING graduate-or-revert**, alongside the instants verdict below: it is Jeff's
+  "no actions at all while recovering" ask, shipped as a toggle covering NON-MOVEMENT actions only
+  (DESIGN §2.2.10 has the scope and the hostile-bump-only caveat). Yes ⇒ fold it into §2.2.10 as a plain
+  rule and drop the dial; no ⇒ `/config recovery_locks_actions 0` and the gates come out. Nothing is built
+  on top until then. Same shape for **`whiff_pays_recovery`** (default ON = pre-v0.26.0), which is the A/B
+  switch for DESIGN §2.3.9 rather than a pending experiment — the default IS Jeff's answer; the flag exists
+  so he can re-compare.
 - **INSTANT ABILITIES + ABILITY COOLDOWNS — in-flight PROVISIONAL EXPERIMENT (v0.26.0
   `instant_abilities_enabled`, default ON; WIDENED v0.27.0)**: Shield Block (knight) + Shadow Step (rogue),
   and since v0.27.0 **cooldowns on STRIKE abilities too** (Kick 40 / Shield Bash 40, authored on the
