@@ -873,7 +873,7 @@ func _begin_bump(attacker_id: int, attacker, target_id: int, target, dir: Vector
 	_facing[attacker_id] = dir
 	# KICK vs SWING (v0.17.1, option A): a RANGED weapon (range_tiles > 0) has no melee swing, so a
 	# point-blank bump is a weaponless KICK — a flat kick_damage (config), kind "kick", NO weapon graphic
-	# (combat_referee suppresses the weapon stamp for a kick). A MELEE weapon keeps its swing damage_of +
+	# (combat_referee suppresses the weapon stamp for a kick). A MELEE weapon keeps its swing roll_damage_of +
 	# kind "bump". NOTE: range_tiles > 0 is today equivalent to "ranged" (only the bow has it) — it is the
 	# kick-eligibility predicate. If a future MELEE reach weapon ever wants range_tiles > 0, gate the kick
 	# on a dedicated weapon flag instead of raw range. Option D (a 1-tile knockback on the kick) slots in here.
@@ -882,7 +882,7 @@ func _begin_bump(attacker_id: int, attacker, target_id: int, target, dir: Vector
 	var weapon: WeaponType = attacker.equipped_weapon if attacker is Entity else null
 	var is_kick := weapon != null and weapon.range_tiles > 0
 	var kind := "kick" if is_kick else "bump"
-	var damage: int = GameManager.config.kick_damage if is_kick else _combat.damage_of(attacker)
+	var damage: int = GameManager.config.kick_damage if is_kick else _combat.roll_damage_of(attacker)
 	# before_attack observation seam (v0.11.0): fire the attacker's passives' read-only pre-commit hook
 	# at bump ENTRY, before any damage math. Host-only (this referee is inert on clients). Delegated to
 	# CombatReferee, which owns passive resolution + the ctx build; a no-passive attacker (or a monster) no-ops.
@@ -950,7 +950,7 @@ func _trigger_attacks_of_opportunity(from: Vector2i, mover_peer_id: int, mover) 
 			continue
 		if not _combat.is_alive(mover_peer_id):
 			return true
-		var mover_died: bool = _combat.apply_damage(occupant_id, mover_peer_id, _combat.damage_of(occupant), "free", 0.0)
+		var mover_died: bool = _combat.apply_damage(occupant_id, mover_peer_id, _combat.roll_damage_of(occupant), "free", 0.0)
 		if mover_died:
 			return true
 	return false

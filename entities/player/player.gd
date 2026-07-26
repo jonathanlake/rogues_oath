@@ -34,7 +34,7 @@ extends Entity
 ## DAMAGE MODIFIER (v0.19.0 base+wielder-modifier model, DESIGN §2.3.7): a flat bonus ADDED to the equipped
 ## weapon's base damage, the same shape MonsterType.bonus_damage uses. 0 today — this is the hook a future
 ## strength stat / PlayerClass writes so a stronger player hits harder with the SAME weapon. Read HOST-side
-## by CombatReferee.damage_of (floored at 0 there); never trusted from the wire. Melee windup/recovery have
+## by CombatReferee.roll_damage_of (floored at 0 there); never trusted from the wire. Melee windup/recovery have
 ## no player bonus (players don't slow their own weapon — those bonuses are monster-only, and melee-gated).
 @export var bonus_damage: int = 0
 

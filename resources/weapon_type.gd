@@ -42,7 +42,7 @@ extends Resource
 
 ## DAMAGE BAND (v0.26.1, Jeff's Q11 answer): the INCLUSIVE min/max hit points removed per LANDED
 ## strike. The referee rolls uniformly in [damage_min, damage_max] once per landed hit, HOST-side
-## (CombatReferee.damage_of for melee; the loose bind in _validate_shoot for a ranged shot) — the
+## (CombatReferee.roll_damage_of for melee; the loose bind in _validate_shoot for a ranged shot) — the
 ## rolled number then rides the existing attack/arrow events, so no client ever rolls anything.
 ## TO-HIT stays DETERMINISTIC (DESIGN §2.3.1 as amended v0.26.1): every attack that resolves against
 ## a body still LANDS — only the number it lands for is rolled. Position decides IF you are hit; the

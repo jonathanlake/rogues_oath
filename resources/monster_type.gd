@@ -49,7 +49,7 @@ extends Resource
 ## DAMAGE MODIFIER (v0.19.0): a flat bonus ADDED to the equipped weapon's base damage when this monster
 ## attacks (base + wielder-modifier model, DESIGN §2.3.7 — the same shape a future player strength stat
 ## uses). Signed: a designer can make a monster hit harder (+) or softer (−) with the SAME weapon; the
-## referee floors the sum at 0. 0 = the weapon's raw damage. Read HOST-side by CombatReferee.damage_of.
+## referee floors the sum at 0. 0 = the weapon's raw damage. Read HOST-side by CombatReferee.roll_damage_of.
 @export var bonus_damage: int = 0
 
 ## WINDUP MODIFIER in BEATS (v0.19.0): ADDED to the equipped MELEE weapon's base windup — the telegraph

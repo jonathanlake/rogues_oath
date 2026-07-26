@@ -1109,7 +1109,7 @@ func _hostile_at(tile: Vector2i, attacker: Node) -> int:
 ## branches each roll independently, but only one of them executes per resolve), so a single strike
 ## never rolls twice. Host-side only: the rolled number rides the existing attack event, so no client
 ## rolls anything. TO-HIT is still deterministic — the attack lands; only the number is rolled.
-func damage_of(node: Node) -> int:
+func roll_damage_of(node: Node) -> int:
 	# Weapon band roll + wielder bonus (v0.26.1 / v0.19.0), floored at 0. Layer order is UNCHANGED:
 	# rolled weapon base → flat wielder bonus → (in apply_damage) the conditional passive modify_damage
 	# chain → armor mitigation. mini/maxi order the pair so a live `/w club damage_min 9` retune that
@@ -1547,7 +1547,7 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 	if occ_id != _NO_ENTITY:
 		var occ := _node_of_id(occ_id)
 		if occ != null and is_alive(occ_id) and attacker != null and attacker.is_hostile_to(occ):
-			apply_damage(attacker_id, occ_id, damage_of(attacker), kind, recovery_sec)
+			apply_damage(attacker_id, occ_id, roll_damage_of(attacker), kind, recovery_sec)
 			return
 	# STICKY SWING (v0.24.8 experiment, Jon: "swings still land if the target moved but is still
 	# directly around the swinger"): the committed tile has no valid hostile, but the INTENDED victim
@@ -1571,7 +1571,7 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 				break
 		if victim != null and attacker != null and attacker.is_hostile_to(victim) \
 				and not WorldGrid.is_wall(attacker_tile) and all_adjacent:
-			apply_damage(attacker_id, intended_id, damage_of(attacker), kind, recovery_sec)
+			apply_damage(attacker_id, intended_id, roll_damage_of(attacker), kind, recovery_sec)
 			return
 
 	# Whiff: swing into empty/vacated ground. Distinct outcome — no damage, hp_after -1 (absent),

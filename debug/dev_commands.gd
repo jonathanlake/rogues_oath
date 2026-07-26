@@ -162,9 +162,11 @@ func _dev_cmd_weapon(args: Array[String], by: String) -> Dictionary:
 	# pipeline still sees it as a reset (which restores EVERY allowlisted field from disk, bands included).
 	if rest.size() == 1 and rest[0] != "reset":
 		var value_token: String = rest[0]
-		# damage_min first, and BAIL on its reject before touching damage_max — a rejected shorthand must
-		# leave the band exactly as it found it, not half-written. (Both fields share one clamp range
-		# today, so a divergent verdict is unreachable; the ordering is defense against that changing.)
+		# damage_min first; bail on its reject before touching damage_max. HONEST SCOPE (GLM v0.26.1
+		# review): this only guarantees no-write on a MIN reject. Because both writes carry the SAME
+		# token against the SAME clamp/kind, a max-reject-after-min-accept is unreachable today — if it
+		# ever fires (clamps diverged, or _dev_tune_resource grew a post-mutation failure), the band IS
+		# half-written, so we say so loudly instead of pretending atomicity we don't have.
 		var min_verdict := _dev_tune_resource(weapon, GameManager.DEV_WEAPON_FIELDS,
 				GameManager.DEV_WEAPON_INT_FIELDS, GameManager.DEV_WEAPON_CLAMPS,
 				["damage_min", value_token] as Array[String], by, weapon.display_name)
@@ -174,6 +176,8 @@ func _dev_cmd_weapon(args: Array[String], by: String) -> Dictionary:
 				GameManager.DEV_WEAPON_INT_FIELDS, GameManager.DEV_WEAPON_CLAMPS,
 				["damage_max", value_token] as Array[String], by, weapon.display_name)
 		if not bool(max_verdict.get("ok", false)):
+			push_warning("[DevCommands] /w shorthand half-write: %s damage_min accepted but damage_max rejected (%s) — band left split; re-run '/w %s damage_max <n>' to mend it"
+					% [weapon.display_name, str(max_verdict.get("reason", "?")), args[0]])
 			return max_verdict
 		# One composed line for the pair (the two per-field lines are discarded), naming the collapse so
 		# nobody reads "set damage" and wonders which field moved.
