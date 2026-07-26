@@ -69,7 +69,9 @@ extends Resource
 @export var bonus_recovery_beats: float = 0.0
 
 ## PHYSICAL damage reduction as a FRACTION absorbed (v0.26.0 armor phase 1) — the monster mirror of
-## PlayerClass.phys_damage_reduction, so "armor" means one thing on both sides of the fight. 0.0
+## ItemType.phys_damage_reduction (the player field lived on PlayerClass for phase 1 and MOVED to the worn
+## body ITEM in v0.27.0), so "armor" means one thing on both sides of the fight. Monsters wear no gear, so
+## the field stays authored per TYPE here — that asymmetry is deliberate, not drift. 0.0
 ## (default) = no reduction, a no-op for every shipped monster; 0.25 = a quarter of each physical hit
 ## turned aside; 1.0 = immune to physical. LIVE read path: CombatReferee._phys_reduction_of duck-types
 ## the DEFENDER at the apply_damage mitigation seam, so a value set here takes effect on the next hit.

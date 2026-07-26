@@ -126,7 +126,11 @@ const DEV_GAME_FIELDS := ["tactical_beat_sec",
 		"stamina_max", "monster_stamina_max",
 		"monster_think_min_beats", "monster_think_max_beats", "swing_catches_adjacent",
 		"instant_abilities_enabled",
-		"armor_flat_reduction_light", "armor_flat_reduction_medium", "armor_flat_reduction_heavy"]
+		"armor_flat_reduction_light", "armor_flat_reduction_medium", "armor_flat_reduction_heavy",
+		# v0.27.1: the banter EARSHOT radius — how far a bark's reaction travels. A live dial because the
+		# thing it fixes (cross-fight barks with packs in separate rooms) is a feel question about a
+		# distance, and answering it by restarting for each number is exactly what these dials exist to avoid.
+		"banter_earshot_tiles"]
 ## v0.27.0: `shield_block_cooldown_beats` / `shadow_step_cooldown_beats` are GONE from this list because the
 ## GameConfig fields are gone — a cooldown lives on its ActiveAbility `.tres` now and is tuned with `/ab`
 ## (DEV_ABILITY_FIELDS above) or the panel's CLASSES section. A stale `/config shield_block_cooldown_beats`
@@ -154,11 +158,13 @@ const CONFIG_PRESETS := {
 		["w", "club", "windup_beats", 1.0],
 		["w", "club", "recovery_beats", 3.0],
 		["m", "goblin", "bonus_windup_beats", 1.0],
-		# The fight-feel row (v0.22.1): halve the TACTICAL beat from its 0.50s default so this preset's
-		# cadence (windup 1 beat / attack 3 beats) lands at 0.25s telegraphs and 0.75s swings for anyone
-		# the pace referee has resolved TACTICAL. Game-level kind "g" — routed through the
-		# set_tactical_tempo broadcast, never a direct GameManager write (see DEV_GAME_FIELDS above);
-		# "tempo" is a label, not a resource name.
+		# The fight-feel row (v0.22.1): pin the TACTICAL beat at 0.25s, so this preset's cadence
+		# (windup 1 beat / attack 3 beats) lands at 0.25s telegraphs and 0.75s swings for anyone the pace
+		# referee has resolved TACTICAL. NOTE (v0.27.1 doc fix): this row USED to halve the then-0.50s
+		# default, but 0.25s IS the shipped default since v0.27.0 — so as written it now merely RESTATES
+		# the default, and its only remaining job is restoring the beat if someone nudged it with [ / ].
+		# Game-level kind "g" — routed through the set_tactical_tempo broadcast, never a direct
+		# GameManager write (see DEV_GAME_FIELDS above); "tempo" is a label, not a resource name.
 		["g", "tempo", "tactical_beat_sec", 0.25],
 	],
 	# Preset 2 (v0.23.2, Jon): the heavier-telegraph loadout — every weapon gets a LONG windup and a fat

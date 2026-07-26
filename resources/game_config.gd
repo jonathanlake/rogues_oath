@@ -181,11 +181,14 @@ extends Resource
 ## any activity restarts the clock. Beats at the entity's resolved pace.
 ##
 ## ARMOR-WEIGHT GRADUATION (v0.26.0): the PLAYER idle wait is no longer one number — it is picked
-## from the mover's class ARMOR WEIGHT band (PlayerClass.armor_weight), so heavier armor rests
-## slower. The lightest dial covers BOTH UNARMORED and LIGHT (an unarmored class is not faster than
-## a leather one — the floor is the same); a player whose class is missing/absent also reads it.
-## Resolved HOST-side per arm in MoveReferee._regen_idle_beats_of — never cached, so a /class swap
-## lands at the next arm.
+## from the mover's ARMOR WEIGHT band, so heavier armor rests slower. The lightest dial covers BOTH
+## UNARMORED and LIGHT (an unarmored wearer is not faster than a leather one — the floor is the same);
+## a player with an empty or unreadable slot also reads it.
+## v0.27.0 moved the band OFF the class and onto the WORN BODY ITEM (`ItemType.armor_weight`) — armor is
+## an object now, so the band changes when you take it off, not when you change class. v0.27.1 routes the
+## read through the ONE resolver, `Player.worn_armor_weight()`.
+## Resolved HOST-side per arm in MoveReferee._regen_idle_beats_of — never cached, so an EQUIP (or a
+## /class loadout swap, which reconciles the body slot) lands at the next arm.
 ## (Jeff 2026-07-26; units pending Jeff confirmation — he tuned beat-denominated panel dials)
 @export var player_regen_idle_light_beats: float = 2.5
 ## (Jeff 2026-07-26; units pending Jeff confirmation — he tuned beat-denominated panel dials)

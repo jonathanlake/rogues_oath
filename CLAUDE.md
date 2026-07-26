@@ -84,7 +84,9 @@ decision.
   (Jeff's second verdict): Part 4 Q9's "no separate cooldowns" is now suspended for STRIKE abilities too
   (`ActiveAbility.cooldown_beats` — kick/shield bash 40 beats), which goes further than the original
   carve-out because a strike already pays in occupied beats. It is part of the SAME pending verdict and
-  reverts the same way (`cooldown_beats 0`). Do not widen it again or build on it.
+  reverts the same way — **and since v0.27.1 `instant_abilities_enabled` off genuinely reverts the strike
+  cooldowns too** (v0.27.0 shipped that half ungated, breaking the one-dial promise); `cooldown_beats 0` is
+  the per-ability revert while the experiment is on. Do not widen it again or build on it.
 
 - **Networking: server-authoritative intent → verdict, event-sync only** (DESIGN §2.5).
   Clients send commit requests; the server adjudicates and stamps duration/outcome. Gameplay

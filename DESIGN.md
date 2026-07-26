@@ -182,7 +182,11 @@ last-stand / cornered (story-beat thinks), ally-died and its louder twin notable
 monster — the shamans — dying; mutually exclusive, both forced past the chance roll and now scoped to a
 packmate actually IN the fight), forced-melee (a kiter made to swing), idle (rare out-of-combat muttering
 on each monster's own 15-30s timer) and help-me (a notable monster hurt while its pack still fights, once
-per life). Every dial is split player_/monster_ (v0.25.0) and lives on the backtick DEBUG
+per life). **EARSHOT (v0.27.1, `banter_earshot_tiles` = 12):** the two REACTION moments — the death
+bark and help-me — additionally require the reacting monster to be within that Chebyshev distance of the
+moment (the corpse's tile / an engaged ally's tile). Engagement alone answers "is a fight happening
+*somewhere*", which with three authored packs in separate rooms and a party that splits up produced
+cross-fight barks; earshot is what makes it "*my* fight". Every dial is split player_/monster_ (v0.25.0) and lives on the backtick DEBUG
 TUNING PANEL (docs/dev-commands.md) — a GUI over the same server-authoritative dev_command pipe,
 with per-INSTANCE monster forks via `/mi`. Intent, unchanged: movement improves positioning but can
 no longer invalidate attacks (the kiting thread) — a fleeing healer burns dry and crawls. `/stamina`
@@ -355,19 +359,34 @@ revert switch it was while this was provisional.
      `modify_damage` chain and BEFORE the HP subtraction: a hit is priced (weapon base → wielder
      bonus → passives, e.g. a sneak attack) and only then armored. **Rounds half-up**, keeps the existing
      0 floor, and read LIVE from the DEFENDER's worn item so an equip retunes the very next hit.
-     A reduced hit carries an **`armor` tag** on its event — §2.3.4 requires the mitigation be
-     visible, never a silent number change.
+     A reduced hit carries an **`armor` tag** *and the points `absorbed`* on its event, and both are
+     rendered (v0.27.1): the damage popup floats **steel blue** instead of the usual hit colour, and the
+     log line names the amount — *"Goblin hits Knight for 2 (13/20, armor absorbs 2)."* Until v0.27.1 the
+     tag had **no consumer at all**, so this section's own §2.3.4 claim was false: at shipped defaults
+     nearly every monster hit on a player is mitigated, and a chainmail knight saw a plain "-2".
+   - **The band has ONE resolver (v0.27.1).** `Player.worn_armor_weight()` answers "what weight band is
+     this wearer in", and both consumers — this flat term and the §2.2.10 rest wait — read it. The
+     weight-**promotion** rule below therefore has exactly one site to land in.
    - **The tradeoff philosophy (Jeff).** Heavy armor is not free defense: the *cost* is TEMPO. The
      armor weight band drives the stamina rest-to-recover wait (§2.2.10 — light 2.5, medium 3.0,
      heavy 3.5), so a heavier wearer acts less often, which since v0.26.0 is the primary way builds
      differ in movement — and since v0.27.0 it is a **choice you can change mid-run**: hand your
      chainmail to someone and you start resting like a rogue. **Envisioned, not built:** the same band
      carrying spellcasting penalties (a heavy-armored caster fumbling) and further mobility penalties.
-   - **Phase 2 = ONE real slot.** Body armor equips, unequips and swaps through the bag (§2.10) with the
-     weapon-equip precedent (instant, busy-gated). Still future: armor in the other eight sockets, and the
-     **weight-promotion rule** (the heaviest worn piece across several slots setting the band). With one
-     armor slot, the body item's band IS the wearer's band — promotion is a no-op today, which is why it
-     could wait. See §2.10 and the ROADMAP equipment-slot bullet.
+   - **Phase 2 = ONE real slot, and the slot is now NAMED (v0.27.1).** Body armor equips, unequips and
+     swaps through the bag (§2.10) with the weapon-equip precedent (instant, busy-gated). `ItemType`
+     carries an **`equip_slot`** enum (body / off-hand / head / hands / feet / ring / amulet) and the host
+     routes on it: **only BODY is implemented**, and anything else is refused with its own reason
+     ("nowhere to wear that yet"). Before that, *any* EQUIPMENT item was body armor by assumption, so the
+     off-hand kite shield §2.11.1 is waiting on would have silently replaced worn chainmail. Still future:
+     the other eight sockets themselves, and the **weight-promotion rule** (the heaviest worn piece across
+     several slots setting the band). With one armor slot, the body item's band IS the wearer's band —
+     promotion is a no-op today, which is why it could wait, and it now has a single home to land in (the
+     resolver above). See §2.10 and the ROADMAP equipment-slot bullet.
+   - **`/class` reconciles the body slot to the class loadout (v0.27.1).** Becoming a class puts you in
+     exactly what that class wears — *including nothing*, which strips you — and the piece you were
+     wearing **goes back into your bag**, so a dev-tool class swap can never destroy gear. A full bag
+     refuses the swap and says so, keeping what you have on. See §2.10.
 
 9. **§2.3.9 — Recovery beats only on CONTACT (v0.26.0; Jeff's verdict 2026-07-26).** A committed
    attack still owns its whole window when it LANDS — windup plus the planted recovery tail, exactly
@@ -393,8 +412,12 @@ revert switch it was while this was provisional.
      look like a miss, not like a dropped input.
 10. **§2.3.10 — SNEAK ATTACK: compromised, not turned around (v0.27.0; Jeff's second verdict
    2026-07-26).** The rogue's dagger multiplier (×2, `resources/passives/backstab.tres`) now fires when the
-   target is **FLANKED BY AN ALLY** — a living, non-hostile body on the tile directly opposite the attacker,
-   so the target is sandwiched — **OR STUNNED**. It no longer reads the defender's facing at all.
+   target is **FLANKED BY AN ALLY** — a living, non-hostile body **standing (settled, not mid-step)** on the
+   tile directly opposite the attacker, so the target is sandwiched — **OR STUNNED**. It no longer reads the
+   defender's facing at all. *(The "settled" word is load-bearing and was made true in v0.27.1: raw
+   occupancy answers with reserved tiles and can lead the sprite by a step under pipelining, so the probe
+   reads a stricter "standing still on that tile" predicate. A ×2 off a body the player cannot see in place
+   would be the same unreadability the behind-arc trigger was retired for.)*
    - **Why the behind-arc went.** It was invisible in play: you cannot read an 8-way facing off a 32px
      sprite, a monster turns to face whoever it attacks, and a never-moved monster faces NOWHERE and so
      could never be backstabbed. The class's signature move fired by accident or not at all.
@@ -685,6 +708,16 @@ rogue leather, knight chainmail), seeded at spawn on every peer from shared conf
 their slot default. Routing is now by CATEGORY through `category_of`, so POTION drinks while EQUIPMENT and
 WEAPON equip — the old "any ItemType drinks" shortcut would have tried to drink the leather.
 
+**WHICH SOCKET, AND `/class` AS A LOADOUT (v0.27.1).** Two things the phase-2 pass left implicit are now
+explicit. (1) **`ItemType.equip_slot`** names the socket a wearable claims (§2.3.8) — the host routes on it
+and **refuses any socket but BODY**, so the off-hand shield §2.11 waits on rejects cleanly instead of quietly
+taking the armor slot. (2) **`/class` RECONCILES the body slot** to `starting_body_armor` including *null*
+(an armour-less class strips you), and the piece you were wearing **returns to your bag** at the first free
+slot — the same "swap in place, nothing lost" invariant the bag equip holds. A FULL bag refuses: you keep
+what you have on and the log says why. Its gates now match the bag path exactly (dead / stunned / busy), and
+strip / swap / bag-full each read as their own line (§2.3.4). Before this, an armour-less class silently left
+you in the previous class's armor, and a swap **destroyed** the piece it replaced.
+
 **Shipped so far:** item resources + catalog, ground items + walk-over pickup, a 5-slot bag,
 use-as-commit + heal pipe, dev spawn (v0.18.0); weapon drop-on-death + loot-to-bag + left-click
 use/equip-with-swap (v0.19.x); item CATEGORIES, potion-only autopickup + the "press G" invitation,
@@ -794,7 +827,14 @@ CLASSES section.
 - **This goes FURTHER than the original suspension, deliberately and on the record.** An instant has no
   window to pay with; a strike DOES, and it now pays twice — occupied beats *and* a timer. That is squarely
   what Q9 forbids, so it is flagged here as part of the SAME pending Jon+Jeff verdict rather than treated as
-  settled. An ability authored `cooldown_beats 0` behaves exactly as pre-v0.27.0, which is the revert.
+  settled.
+- **THE TOGGLE GATES THE STRIKE COOLDOWNS TOO (v0.27.1).** `instant_abilities_enabled` off skips both the
+  cooldown CHECK and the cooldown STAMP for a strike, so kick and shield bash behave exactly as they did
+  pre-v0.27.0 — no refusal, no timer, no `ability_used` cooldown event — *whatever* `cooldown_beats` is
+  authored. The whole experiment therefore still switches off with one dial, which is what makes it an
+  experiment rather than a rewrite. `cooldown_beats 0` remains the PER-ABILITY revert while the experiment
+  is on. *(v0.27.0 shipped the strike cooldown ungated, which quietly broke the one-dial promise this
+  section and `docs/dev-commands.md` both make.)*
 - **Spent at COMMIT, not at contact.** A strike whose resolve whiffs, or is fizzled by a stun or a blink,
   still burns the cooldown — you spent the ability the moment you committed. (Distinct from §2.3.9's
   recovery-on-contact refund, which shortens a window the referee owns rather than returning a resource.)

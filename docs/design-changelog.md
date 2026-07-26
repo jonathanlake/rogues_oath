@@ -9,6 +9,51 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.27.1 (2026-07-26) — FIXES TO YESTERDAY'S BUILD.** No new features: this is a code-review pass over
+  v0.27.0, which shipped on a boot check only. Ten findings, all of them things that were either invisible
+  or lying.
+  **THE KICK NO LONGER LOOKS BROKEN.** Kick deals 0 damage on purpose now (it is a stun setup), but the
+  game was still rendering that as a hit: a floating **"-0"** over the goblin and a log line reading
+  *"Rogue kicks Goblin for 0 (10/10)."* Both are gone — the kick now just says **"Rogue kicks Goblin."** and
+  the stun icon and its own line carry the outcome. The contact still thumps and flashes; only the number
+  that wasn't the point went away. Related: a "sneak attack" on a zero-damage hit no longer crows about
+  doubling nothing.
+  **ARMOR VISIBLY ABSORBS NOW.** Armor has been shaving nearly every monster hit since yesterday, and there
+  was no way to tell — a chainmail knight saw exactly the same plain red number an unarmored rogue did.
+  A mitigated hit now floats in **steel blue** and the log names the amount: *"Goblin hits Knight for 2
+  (13/20, armor absorbs 2)."* Wearing armor finally *reads* as wearing armor.
+  **THE OFF SWITCH SWITCHES EVERYTHING OFF AGAIN.** Yesterday's notes promised you that the instants
+  experiment and the new Kick / Shield Bash cooldowns "all switch off together". They didn't — the strike
+  cooldowns ran regardless of the toggle. Now `/config instant_abilities_enabled 0` genuinely restores the
+  pre-experiment game: no cooldown check, no timer, nothing.
+  **SNEAK ATTACK NEEDS AN ALLY WHO IS ACTUALLY STANDING THERE.** The flank check was reading the rules'
+  internal bookkeeping, which can be up to one step ahead of what you see on screen — so the ×2 could fire
+  off a teammate who hadn't arrived on the far tile yet. It now requires them to be **settled** there.
+  Flanking is something you set up together, so it has to be something you can see.
+  **/class HANDS YOUR ARMOR BACK.** Two bugs, one rule. Switching to a class that wears no armor used to
+  silently leave you in the *previous* class's armor; and when it did swap, **the piece you were wearing was
+  destroyed** (the log line even claimed it had gone to your bag). Now `/class` puts you in exactly what
+  that class wears — including nothing, which strips you — and whatever you were wearing **goes back into
+  your bag**. If your bag is full it refuses and keeps your armor on, and says so. It also now skips the
+  armor step when you're stunned or dead, not just busy, with a clear line for each.
+  **THE GOBLINS ONLY REACT TO FIGHTS THEY CAN HEAR.** Yesterday's revenge bark was scoped to goblins "in a
+  fight" — which, with three packs in different rooms and a party that splits up, still meant the far room
+  reacting to a death it couldn't have seen. There is now an **earshot** (12 tiles, tunable as
+  `/config banter_earshot_tiles`): the mourner has to be near the body, and a shaman screaming for help has
+  to have a fighting friend nearby.
+  **Also fixed, quieter:** flipping `/winded` (or its panel checkbox) while someone is already out of
+  stamina no longer leaves the wrong cue showing — the sweat drop and the hard stop can't both be on the
+  same body any more. The armor weight band is resolved in **one** place instead of two, and an unrecognised
+  band now warns instead of silently handing out the best of everything. And an **EQUIPMENT item now says
+  which socket it wants** — so the off-hand shield we've been talking about will refuse cleanly ("nowhere to
+  wear that yet") instead of quietly replacing your chainmail. A rejected equip also gets a log line at all,
+  which it never had.
+  *(Verified two-instance with event traces plus presentation captures on BOTH peers: the zero-damage kick's
+  missing popup and clause; the toggle off landing two kicks with no cooldown refusal; a club hit on a
+  chainmail knight carrying its absorbed amount and rendering blue; /class stowing leather into a bag slot;
+  /class wizard stripping the slot. Doc drift from v0.27.0 swept in the same pass: the sweat-drop meaning,
+  the deleted stamina log line, `/config 1`'s no-op tempo row, and two stale field homes.)*
+
 - **v0.27.0 (2026-07-26) — JEFF'S SECOND VERDICT: the test loadout becomes the game, armor you can take
   off, and backstab becomes SNEAK ATTACK.** Driven end-to-end by **Jeff's second playtest batch** (~35
   items). Big picture: the `/config 2` loadout everyone had been testing with is now simply *the game*, real

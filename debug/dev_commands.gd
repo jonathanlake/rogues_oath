@@ -59,6 +59,9 @@ const _GAME_FIELD_SPECS := {
 	"armor_flat_reduction_light": { "min": 0, "max": 99, "int": true },
 	"armor_flat_reduction_medium": { "min": 0, "max": 99, "int": true },
 	"armor_flat_reduction_heavy": { "min": 0, "max": 99, "int": true },
+	# v0.27.1 banter EARSHOT in TILES — how far a bark's reaction travels (0 = both reactions silent).
+	# Capped at 60, comfortably past the map's diagonal, so a large value means "unlimited" in practice.
+	"banter_earshot_tiles": { "min": 0, "max": 60, "int": true },
 }
 
 # The Players container + combat/move referees, handed in by Main via activate() on the HOST only.
