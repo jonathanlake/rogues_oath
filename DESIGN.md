@@ -321,6 +321,19 @@ revert switch it was while this was provisional.
    smite channel are the shaman's only tell, and Jeff asked for those explicitly.
    **A refused PICKUP finally has both channels (v0.28.0):** `pickup_item` was the one reject pipe with no
    bonk *and* no log arm, so a refused G press was indistinguishable from a dropped keypress.
+   **THE DAMAGE-NUMBER COLOUR CONVENTION (v0.28.1, Jon's ruling 2026-07-26).** Floating combat text carries
+   ONE meaning in its colour: **who a number happened to.** Four colours, defined in exactly one place
+   (`DamagePopup`'s const block) and applied at one site (main.gd's attack/heal handlers):
+   **RED** = a PLAYER took the damage · **WHITE** = anything else took it (a monster) · **GREEN** = a heal,
+   on any target · **YELLOW** = a CRITICAL hit — **RESERVED and unused**, since no crit system exists.
+   White, red and green are live; yellow is a held reservation so nothing else claims it. **Grey stays
+   OUTSIDE the convention** as the *no-number-happened* colour (a whiff's "miss", a godded "0", a
+   block), so it can never read as a real number. Colour is keyed off the **TARGET** — one predicate that
+   answers monster-on-monster and any future PvP exhaustively — where Jon framed the rule by attacker; the
+   two readings are identical for every case that exists today, and the one divergence (self-damage /
+   thorns / reflect would read RED) is recorded at the const block to be re-decided if that mechanic lands.
+   **Colour never encodes MITIGATION** — v0.27.1's steel-blue "armor absorbed some" popup is gone (§2.3.8);
+   armor's §2.3.4 obligation is met by the log line, which can name the amount.
 5. Combat presentation stays abstracted (targeted commands, no implied precise physical
    contact). Do not show pre-commit hit percentages.
 6. RNG budget: keep output randomness low-magnitude. Replayability comes from input
@@ -414,11 +427,14 @@ revert switch it was while this was provisional.
      `modify_damage` chain and BEFORE the HP subtraction: a hit is priced (weapon base → wielder
      bonus → passives, e.g. a sneak attack) and only then armored. **Rounds half-up**, keeps the existing
      0 floor, and read LIVE from the DEFENDER's worn item so an equip retunes the very next hit.
-     A reduced hit carries an **`armor` tag** *and the points `absorbed`* on its event, and both are
-     rendered (v0.27.1): the damage popup floats **steel blue** instead of the usual hit colour, and the
-     log line names the amount — *"Goblin hits Knight for 2 (13/20, armor absorbs 2)."* Until v0.27.1 the
-     tag had **no consumer at all**, so this section's own §2.3.4 claim was false: at shipped defaults
-     nearly every monster hit on a player is mitigated, and a chainmail knight saw a plain "-2".
+     A reduced hit carries an **`armor` tag** *and the points `absorbed`* on its event, and mitigation is
+     made visible **by the COMBAT LOG** — *"Goblin hits Knight for 2 (13/20, armor absorbs 2)."* Until
+     v0.27.1 the tag had **no consumer at all**, so this section's own §2.3.4 claim was false: at shipped
+     defaults nearly every monster hit on a player is mitigated, and a chainmail knight saw a plain "-2".
+     v0.27.1 answered that with a steel-blue popup *as well*; **v0.28.1 removed the colour half** (Jon),
+     because popup colour now carries exactly one meaning — who took the number (§2.3.4's colour
+     convention) — and a fifth colour answering a different question was fighting it. The log clause is
+     the better channel anyway: it can say *how much*, which a tint cannot.
    - **The band has ONE resolver (v0.27.1).** `Player.worn_armor_weight()` answers "what weight band is
      this wearer in", and both consumers — this flat term and the §2.2.10 rest wait — read it. The
      weight-**promotion** rule below therefore has exactly one site to land in.
@@ -781,11 +797,24 @@ WEAPON equip — the old "any ItemType drinks" shortcut would have tried to drin
 explicit. (1) **`ItemType.equip_slot`** names the socket a wearable claims (§2.3.8) — the host routes on it
 and **refuses any socket but BODY**, so the off-hand shield §2.11 waits on rejects cleanly instead of quietly
 taking the armor slot. (2) **`/class` RECONCILES the body slot** to `starting_body_armor` including *null*
-(an armour-less class strips you), and the piece you were wearing **returns to your bag** at the first free
-slot — the same "swap in place, nothing lost" invariant the bag equip holds. A FULL bag refuses: you keep
-what you have on and the log says why. Its gates now match the bag path exactly (dead / stunned / busy), and
-strip / swap / bag-full each read as their own line (§2.3.4). Before this, an armour-less class silently left
-you in the previous class's armor, and a swap **destroyed** the piece it replaced.
+(an armour-less class strips you) — before v0.27.1, an armour-less class silently left you in the previous
+class's armor. Its gates match the bag path exactly (dead / stunned / busy), and strip / swap each read as
+their own line (§2.3.4).
+
+**`/class` DESTROYS THE PIECE IT REPLACES — a sanctioned debug-path exception (v0.28.1, Jon's ruling
+2026-07-26).** v0.27.1 had the old armor **return to your bag**, extending this track's "swap in place,
+nothing is lost" invariant to the class swap. Jeff's playtest showed the cost: a few character swaps and the
+bag is full of armor nobody asked for. So `/class` now **discards** it, and this is the ONE place in the game
+where an item is destroyed. Why that is acceptable rather than a hole in the invariant: `/class` is a **debug
+command** — you cannot change class mid-run in real play — so no player decision is ever undone by it; the
+**weapon** half of the same swap has always discarded (a bare `set_weapon`, no bag call on any path), so the
+two slots are now consistent instead of split; and every path a player actually uses to handle gear (the bag
+equip, §2.10's own flow) still swaps in place and loses nothing. It is **not silent** (§2.3.4): the
+`equip_item` event carries a present-only **`discarded`** field — deliberately *not* `returned`, which means
+"went back into your bag" on the bag path and would mislabel a destruction as recoverable — and the log reads
+*"Host equips the chainmail. (The leather armor is discarded.)"* **This deliberately overrules v0.27.1 review
+finding #6** ("`/class` silently destroys worn armor") on Jon's authority; a future reviewer should not
+re-file it. With no bag traffic left on the path, the v0.27.1 "bag full" refusal is gone too.
 
 **Shipped so far:** item resources + catalog, ground items + walk-over pickup, a 5-slot bag,
 use-as-commit + heal pipe, dev spawn (v0.18.0); weapon drop-on-death + loot-to-bag + left-click

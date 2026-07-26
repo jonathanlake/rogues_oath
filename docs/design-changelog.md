@@ -9,6 +9,35 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.28.1 (2026-07-26) — THE CLASS-CHANGE BAG FIX, AND WHAT THE DAMAGE NUMBERS' COLOURS MEAN.**
+  Two small things, both from Jeff's v0.28.0 pass.
+  **CHANGING CLASS NO LONGER FILLS YOUR BAG.** Jeff: *"When you change class it unequips the armor it's
+  wearing and puts it in the inventory."* Correct, and it was my over-correction one version earlier — a
+  v0.27.1 review flagged "a class swap keeps the old armor" as a lost guarantee, so I made `/class` stow the
+  piece you were wearing. The result was that swapping characters a few times filled your bag with armor you
+  never asked for. **`/class` now swaps the armor and throws the old piece away.** You still end up wearing
+  exactly what that class wears — *including nothing*, which strips you, since "give me the knight's kit"
+  has to mean the whole kit — and the log says what happened: *"Host equips the chainmail. (The leather
+  armor is discarded.)"* Nothing reaches your bag, so nothing accumulates. **This is the one place in the
+  game where an item is destroyed**, and it is deliberate: `/class` is a debug command (you cannot change
+  class mid-run in real play), so no decision of yours is ever undone by it — and the *weapon* half of a
+  class swap has always worked this way. Everywhere you actually handle gear — equipping armor out of your
+  bag — still swaps in place and loses nothing.
+  **DAMAGE NUMBERS NOW HAVE A COLOUR RULE.** The floating numbers had drifted into meaning several things
+  at once, so Jon pinned it down: **the colour tells you WHO the number happened to.**
+  - **WHITE** — something you hit took it. *(Live now.)*
+  - **RED** — a player took it. *(Live now.)*
+  - **GREEN** — a heal, on anyone. *(Live now, unchanged — heal popups were already green.)*
+  - **YELLOW** — a critical hit. **RESERVED, not live:** there is no crit system yet, so you will never
+    see yellow. It is written down so nothing else claims the colour before crits land.
+
+  Grey stays outside the rule for "no number happened" — a miss, a blocked blow, a hit on someone in god
+  mode — so it can never be mistaken for a real number.
+  **The steel-blue "armor absorbed some of that" colour from v0.27.1 is gone.** It was a fifth meaning
+  fighting the other four (it answered "was that mitigated?" rather than "who took it?"). Armor is still
+  visible, in the place that can say how much: the log line reads *"Goblin hits Knight for 2 (13/20, armor
+  absorbs 2)"* exactly as before. A mitigated hit on you now floats plain red like any other hit you take.
+
 - **v0.28.0 (2026-07-26) — JEFF'S THIRD BATCH: A QUIETER LOG, LOCAL GOBLINS, AND TWO TOGGLES.**
   Four asks from the notes after v0.27.1, plus one small feedback gap closed on the way.
   **THE COMBAT LOG STOPS ANNOUNCING WIND-UPS.** "Nothing needs to be written in the combat log when
