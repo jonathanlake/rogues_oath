@@ -169,31 +169,14 @@ func try_pickup(mover_id: int, tile: Vector2i) -> void:
 	})
 
 
-## Host-only: put `item_name` into `entity_id`'s bag at the FIRST FREE SLOT and return that slot index, or
-## -1 when the bag is FULL (v0.27.1). The shared "a name goes into a bag" primitive, extracted so a caller
-## outside this referee can neither hand-roll the capacity rule nor reach into `_inventories` — today's one
-## caller is the `/class` loadout swap, which has to put the armor you were WEARING somewhere rather than
-## destroying it (DESIGN §2.10's "swap in place so nothing is lost", one slot over).
-##
-## The bag is a COMPACT pickup-order array, so "first free slot" IS the append index — deliberately the
-## same `var slot := bag.size(); bag.append(...)` shape try_pickup and the G-key path commit with, reading
-## capacity from the same authored `inventory_slots`.
-##
-## POSTS NOTHING, on purpose: this is a bag mutation, not an outcome. The caller owns the §2.3.4 feedback
-## for whatever it was doing (a /class stow rides its `equip_item` event), and a -1 return is the caller's
-## cue to refuse VISIBLY rather than lose the item. Monsters (negative ids) and an empty name are refused.
-func try_add_to_bag(entity_id: int, item_name: String) -> int:
-	if entity_id <= 0 or item_name.is_empty():
-		return -1
-	if not _inventories.has(entity_id):
-		var fresh: Array[String] = []
-		_inventories[entity_id] = fresh
-	var bag: Array[String] = _inventories[entity_id]
-	if bag.size() >= GameManager.config.inventory_slots:
-		return -1
-	var slot := bag.size()
-	bag.append(item_name)
-	return slot
+## NO GENERIC "add a name to a bag" PRIMITIVE (v0.28.1). v0.27.1 added `try_add_to_bag` for exactly one
+## caller — the `/class` loadout swap, stowing the armor you were wearing — and Jon's 2026-07-26 ruling made
+## that swap DISCARD the old piece instead (a debug command must not fill your bag). With no caller left, the
+## method is gone rather than left as dead public API: every bag mutation in the game is once again committed
+## inside an ADJUDICATED path here (try_pickup / _validate_pickup_item / _validate_use_item /
+## _validate_equip_item), each posting its own §2.3.4 outcome event, so `_inventories` has no writer that
+## isn't also an announcer. A future non-loot bag insert should re-extract this shape (append index ==
+## first free slot, capacity from the authored `inventory_slots`) rather than reach into the dict.
 
 
 ## Host-only F5 round-reset hook (v0.18.0), called by Main._reset_round beside CombatReferee.reset_round():

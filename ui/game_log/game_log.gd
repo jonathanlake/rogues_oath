@@ -285,13 +285,11 @@ func _on_event_received(event: Dictionary) -> void:
 			# validator reconciles beside the weapon and skips for its own reasons. Its own flag and its own
 			# clause, because the two can skip independently and a merged "gear not equipped" would not tell
 			# you WHICH — and unlike the weapon there is no Tab shortcut to recover it.
-			# v0.27.1: FOUR distinct skips, four distinct sentences (§2.3.4). "bag full" is the important new
-			# one — the swap was REFUSED to protect the piece you are wearing, which is a different fact from
-			# "you were busy" and must never read as a generic failure.
+			# v0.27.1: distinct skips, distinct sentences (§2.3.4). v0.28.1 dropped the fourth, "bag full":
+			# /class no longer puts the old piece in your bag (it is discarded), so no bag can refuse the swap
+			# and the reason is unproducible. The default arm still catches any unknown string.
 			if bool(data.get("gear_skipped", false)):
 				match str(data.get("gear_skip_reason", "busy")):
-					"bag full":
-						class_line += " (armor unchanged — your bag is full, so what you're wearing had nowhere to go.)"
 					"stunned":
 						class_line += " (armor not equipped — stunned; re-run /class once it wears off.)"
 					"dead":
@@ -371,17 +369,25 @@ func _on_event_received(event: Dictionary) -> void:
 			# BAG path the swapped-out thing is not named (it went back into the freed slot, not lost — keep
 			# the line terse).
 			# v0.27.1 — TWO more shapes, both from /class's loadout reconcile, each read distinctly:
-			#  STRIP: an EMPTY `equipped` means the new class wears nothing, so the slot was cleared. "equips
-			#         the ." was the alternative, which is not a sentence.
-			#  STOW:  a present `stowed_slot` means the piece being replaced went into a NEW bag slot rather
-			#         than back into the slot the equip came from — worth naming precisely BECAUSE v0.27.0
-			#         destroyed it here, so "where did my chainmail go" has to have an answer in the log.
+			#  STRIP:     an EMPTY `equipped` means the new class wears nothing, so the slot was cleared.
+			#             "equips the ." was the alternative, which is not a sentence.
+			#  DISCARDED: a present `discarded` names the piece the class swap DESTROYED (v0.28.1, Jon's
+			#             ruling) — it replaced v0.27.1's bag stow, and keeps that line's PARENTHETICAL
+			#             SAME-LINE structure so every equip outcome still reads with one uniform shape.
+			#             §2.3.4: the loss is deliberate but must never be SILENT, so the log names it.
+			#             MUTUALLY EXCLUSIVE with `returned` BY CONSTRUCTION: /class is the only producer
+			#             of `discarded` and no longer sets `returned` at all, while the bag-equip path
+			#             (InventoryReferee._validate_equip_item / _equip_body) sets `returned` and never
+			#             `discarded` — so this branch cannot label a recoverable bag return as a
+			#             destruction. A future path emitting BOTH would be a contradiction, not a shape
+			#             to quietly support here.
 			var who := str(data.get("name", "Someone"))
 			var equipped_thing := str(data.get("equipped", ""))
 			var gear_line := ("%s takes off their armor." % who) if equipped_thing.is_empty() \
 					else ("%s equips the %s." % [who, equipped_thing])
-			if int(data.get("stowed_slot", -1)) >= 0 and not str(data.get("returned", "")).is_empty():
-				gear_line += " (The %s goes into their bag.)" % str(data.get("returned", ""))
+			var discarded_thing := str(data.get("discarded", ""))
+			if not discarded_thing.is_empty():
+				gear_line += " (The %s is discarded.)" % discarded_thing
 			add_line(gear_line)
 		"heal":
 			# A resolved heal (v0.18.0 chunk C, §2.3.4 — a distinct recovery line with the running HP readout,

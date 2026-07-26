@@ -84,19 +84,18 @@ var _monsters: Node2D = null
 # bool, so every /item spawn still routes through the ONE guarded, id-assigning path. Empty (unbound) on
 # clients — /item is host-adjudicated, so it is only ever called inside the host's validate.
 var _spawn_item: Callable = Callable()
-# The InventoryReferee, handed in by Main via activate() on the HOST only (v0.27.1). /class needs it: a
-# loadout swap now RETURNS the armor you were wearing to your bag instead of destroying it, and the bag is
-# that referee's authority — so the command asks it (try_add_to_bag) rather than touching bag internals.
-# Untyped (its script has no class_name, like the other referee refs). Null on clients / until injected;
-# every use site is null-guarded, so an unwired referee degrades to "the old piece has nowhere to go".
-var _inventory = null
+# NO INVENTORY REF (v0.28.1). v0.27.1 injected the InventoryReferee here so /class could put the armor you
+# were wearing back in your bag; Jon's 2026-07-26 ruling reverted that — a class swap DISCARDS the old
+# piece — so the field, its injection and the referee's try_add_to_bag primitive are all gone again. No
+# dev command touches a bag now, and /class is the only path in the game that destroys an item (see the
+# gear block in _dev_cmd_class for why that is sanctioned on a debug-only command).
 
 
 ## Host-only entry point, called by Main inside its is_server() branch after the referees are wired.
 ## Never called on clients (their node stays inert). `spawn_item` is the /item ground-item spawn Callable
 ## (v0.18.0) — Main binds it to _spawn_item_at so this component gains item-spawn access without a Main ref.
 func activate(players: Node2D, combat: Node, move_referee: Node, spawn_item: Callable = Callable(),
-		monsters: Node2D = null, inventory: Node = null) -> void:
+		monsters: Node2D = null) -> void:
 	_players = players
 	_combat = combat
 	_move_referee = move_referee
@@ -104,8 +103,6 @@ func activate(players: Node2D, combat: Node, move_referee: Node, spawn_item: Cal
 	# v0.25.0: the Monsters container joins the injection set — /mi resolves live instances and
 	# /snapshot enumerates them. Null-safe like every other ref (inert on clients).
 	_monsters = monsters
-	# v0.27.1: the inventory referee joins it too, for /class's armor-back-to-the-bag swap.
-	_inventory = inventory
 
 
 # ── Public methods ──────────────────────────────────────────────────────────────
@@ -519,9 +516,9 @@ func _dev_cmd_snapshot() -> Dictionary:
 ## broadcast a generic dev_command event (the class_changed event is the whole outcome — no double log).
 ## Late-join is handled separately (sync_player_field "class" in peer_ready).
 ##
-## v0.27.1 — /class RECONCILES THE BODY SLOT to the class loadout, and the piece you were wearing goes
-## BACK INTO YOUR BAG (a full bag refuses the swap out loud). See the gear block below for the three rules
-## and the four distinct skip reasons.
+## v0.27.1 — /class RECONCILES THE BODY SLOT to the class loadout. v0.28.1 — and the piece you were wearing
+## is DISCARDED (Jon's ruling, 2026-07-26), never bagged. See the gear block below for the two rules and the
+## three distinct skip reasons.
 func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dictionary:
 	if args.is_empty():
 		return { "ok": false, "reason": "usage: /class <name>" }
@@ -552,23 +549,27 @@ func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dic
 	# player-visibly via a weapon_skipped flag on class_changed — the "success" line must not silently mislead.
 	var busy: bool = _move_referee.is_entity_moving(sender_peer_id)
 	var weapon_skipped: bool = has_roster and starting != null and busy
-	# BODY ARMOR — /class IS A FULL LOADOUT SWAP, AND IT LOSES NOTHING (v0.27.1 rewrite of the v0.27.0
-	# equipment-phase-2 equip). Three rules, all of them fixes to the first pass:
+	# BODY ARMOR — /class IS A FULL LOADOUT SWAP, AND THE OLD PIECE IS DISCARDED (v0.28.1, Jon's ruling
+	# 2026-07-26, after Jeff hit the v0.27.1 behavior: "when you change class it unequips the armor it's
+	# wearing and puts it in the inventory"). Two rules:
 	#
-	# 1. RECONCILE, don't only equip. The body slot is set to the class's `starting_body_armor`
-	#    UNCONDITIONALLY — INCLUDING null, which STRIPS you. v0.27.0 equipped only when the new class
-	#    authored armor, so becoming an armour-less class silently left you in the PREVIOUS class's
-	#    chainmail: /class stopped being a live read of the class you are, which is its whole contract.
-	# 2. THE OLD PIECE GOES BACK IN THE BAG, at the first free slot, through the inventory referee's own
-	#    primitive (try_add_to_bag). v0.27.0 destroyed it — while the log line's comment claimed it had
-	#    gone back to the bag. Same "swap in place so nothing is lost" invariant the bag equip holds.
-	# 3. A FULL BAG REFUSES, VISIBLY: keep the armor you are wearing, skip the class armor, and say so
-	#    (`gear_skip_reason "bag full"`). Never a silent loss (§2.3.4).
+	# 1. RECONCILE, don't only equip (v0.27.1, KEPT). The body slot is set to the class's
+	#    `starting_body_armor` UNCONDITIONALLY — INCLUDING null, which STRIPS you. v0.27.0 equipped only
+	#    when the new class authored armor, so becoming an armour-less class silently left you in the
+	#    PREVIOUS class's chainmail: /class stopped being a live read of the class you are, which is its
+	#    whole contract. "Give me the starting equipment of class X" means exactly that, empty slot included.
+	# 2. THE OLD PIECE IS DESTROYED, NOT BAGGED (v0.28.1, reverting v0.27.1's rule 2). A DELIBERATE,
+	#    Jon-approved EXCEPTION to DESIGN §2.10's "swap in place so nothing is lost" — and it is scoped to
+	#    exactly this command: you cannot change class in real play, so no player decision is ever undone by
+	#    it, and v0.27.1's bagging made a character swap FILL YOUR BAG, which is the worse bug. It also makes
+	#    the two slots consistent: the weapon step below has always discarded (a bare set_weapon, no bag call
+	#    on any path). NOT SILENT, though — the `discarded` field below drives a log line that names the piece
+	#    (§2.3.4). This overrules v0.27.1 review finding #6 on Jon's authority; do not re-file it.
 	#
-	# GATES now match the bag equip exactly — dead → stunned → busy — rather than busy alone (all three are
-	# "you cannot re-arm right now", and the bag path already rejected on all three). The class change
-	# itself still lands in every case: it is cosmetic + passives, and skipping it would make the command
-	# useless mid-fight. Each skip reason travels as its OWN string so the log line can say WHICH.
+	# GATES stay the bag equip's — dead → stunned → busy (all three are "you cannot re-arm right now"). The
+	# class change itself still lands in every case: it is cosmetic + passives, and skipping it would make the
+	# command useless mid-fight. Each skip reason travels as its OWN string so the log line can say WHICH.
+	# The v0.27.1 "bag full" reason is GONE with the bag traffic that could produce it.
 	var starting_body: ItemType = player_class.starting_body_armor
 	var worn: ItemType = player_node.equipped_body
 	# Nothing to do when the slot already holds exactly what the class wants (including both null) — no
@@ -582,15 +583,6 @@ func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dic
 			gear_skip_reason = "stunned"
 		elif busy:
 			gear_skip_reason = "busy"
-	# STOW THE OLD PIECE BEFORE ANY BROADCAST. The bag can refuse (full), and that refusal has to ride the
-	# class_changed event — you cannot amend an event peers already received (the v0.17.1 reason the whole
-	# eligibility resolve happens up here). On success this ALREADY mutated the authoritative bag; the
-	# equip_item event below carries the slot so every peer mirrors it.
-	var stow_slot := -1
-	if gear_reconcile and gear_skip_reason.is_empty() and worn != null:
-		stow_slot = int(_inventory.try_add_to_bag(sender_peer_id, worn.display_name)) if _inventory != null else -1
-		if stow_slot < 0:
-			gear_skip_reason = "bag full"
 	var gear_skipped: bool = not gear_skip_reason.is_empty()
 	var class_data := {
 		"entity_id": sender_peer_id,
@@ -601,7 +593,7 @@ func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dic
 		class_data["weapon_skipped"] = true  # present-only, like other optional event fields
 	if gear_skipped:
 		class_data["gear_skipped"] = true  # present-only, the weapon_skipped pattern exactly
-		class_data["gear_skip_reason"] = gear_skip_reason  # v0.27.1: four distinct skips, four distinct lines
+		class_data["gear_skip_reason"] = gear_skip_reason  # v0.28.1: THREE distinct skips, three distinct lines
 	NetEvents.post_event("class_changed", class_data)
 	if has_roster and starting != null and not busy:
 		player_node.set_weapon(starting)
@@ -614,20 +606,24 @@ func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dic
 		# Host-authoritative apply FIRST, then broadcast — the set_weapon precedent directly above, and the
 		# SAME `equip_item {gear: true}` event the bag equip posts, so every peer adopts gear through ONE
 		# handler. slot -1 still says "this did not come out of a bag" (main.gd's bag-slot mirror guard skips
-		# it); an EMPTY `equipped` is the STRIP, and the present-only `stowed_slot` is the NEW bag slot the
-		# previously-worn piece was appended into — a different mirror operation from the bag equip's
-		# in-place return, hence its own field rather than an overload of `slot`.
+		# it), and an EMPTY `equipped` is the STRIP.
+		#
+		# `discarded` (present-only, v0.28.1) names the piece that was DESTROYED. Deliberately NOT `returned`:
+		# on the bag-equip path that field means "went back into your bag", so reusing it here would tell every
+		# consumer the armor is recoverable when it no longer exists. The two fields are MUTUALLY EXCLUSIVE BY
+		# CONSTRUCTION — this is the only producer of `discarded` and the bag path (InventoryReferee's
+		# _validate_equip_item / _equip_body) never sets it, while this path no longer sets `returned` at all —
+		# so game_log's branch on `discarded` cannot mislabel a bag return.
 		player_node.set_body_armor(starting_body)
 		var gear_data := {
 			"entity_id": sender_peer_id,
 			"name": player_node.display_name,
 			"slot": -1,
 			"equipped": starting_body.display_name if starting_body != null else "",
-			"returned": worn.display_name if worn != null else "",
 			"gear": true,
 		}
-		if stow_slot >= 0:
-			gear_data["stowed_slot"] = stow_slot
+		if worn != null:
+			gear_data["discarded"] = worn.display_name
 		NetEvents.post_event("equip_item", gear_data, sender_peer_id)
 	# Deferred: the class_changed broadcast IS the outcome — suppress the generic dev_command broadcast
 	# (ok:true so it isn't a reject; deferred:true so NetEvents skips the broadcast + seq).
