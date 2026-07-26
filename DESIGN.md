@@ -42,7 +42,9 @@ Explicitly not: an action game, a twitch game, an MMO, a turn-based game with a 
 *Two sanctioned exceptions exist, both scoped and both documented at their site: an opponent-imposed
 **STUN** interrupts an in-flight attack/cast (§2.11 — crowd control, not a self-take-back), and rule 3
 plus Part 4 Q9 are **suspended for two abilities inside the `instant_abilities_enabled` experiment**
-(§2.11.1 — provisional, verdict pending; off = these rules hold everywhere).*
+(§2.11.1 — provisional, verdict pending; off = these rules hold everywhere). **That experiment SHIPS ON**
+(`instant_abilities_enabled` default true, no `.tres` override), so the second exception is LIVE by
+default — a reader must not take "off = the invariant holds" as a description of the shipped build.*
 
 ### 2.2 Movement
 
@@ -54,8 +56,11 @@ plus Part 4 Q9 are **suspended for two abilities inside the `instant_abilities_e
    tiers are currently AUTHORED to the same 0.25s beat — one action rhythm for every
    entity ("if I hold right and the goblin holds right, we reach the edge together" —
    Jeff). The tier structure stays; variation returns by editing .tres values.
-   **v0.7.0:** tiers are now authored in BEATS (`glide_beats`, all 1.0) against the global
-   beat (§2.8). **v0.8.0 (Responsive Beat):** a step is back to **1 beat TOTAL**
+   **v0.7.0:** tiers are now authored in BEATS (`glide_beats`) against the global
+   beat (§2.8) — fast/normal/slow all 1.0, and since v0.23.0 the authored-but-unused
+   `speed_lumbering` tier sits at **1.5** (the Warren brute's anvil pace, waiting on a
+   hold-position behavior — §2.12), so the rhythm experiment's uniformity is now
+   "every tier a monster actually uses", not literally every tier. **v0.8.0 (Responsive Beat):** a step is back to **1 beat TOTAL**
    (`move_rest_beats` default 0.0, kept as a reversible/ANSWERED experiment). The v0.7.0
    committed rest read as lag in feel-testing (Jon+Jeff; Jeff's ChatGPT consult and Fable's
    own analysis converged) — grid feel comes from ATOMICITY (whole-tile commits, snapping),
@@ -144,7 +149,9 @@ tactical-pace steps spend 1 stamina from a pool. **The pool is ONE point, both s
 verdict; the rogue's per-class +1 was dropped with it) — a tactical step is a single decision that
 spends everything, so the design question moved from "how many steps left" to "am I ready yet."
 What varies is RECOVERY: the rest-to-recover idle wait is picked from the mover's **armor weight**
-(§2.3.8 armor phase 1) — light/unarmored 2.5, medium 3.0, heavy 3.5, monsters 3.5 **beats**
+(§2.3.8 — since v0.27.0 that band is read off the WORN body item through the one resolver
+`Player.worn_armor_weight()`, not off the class; the class-level phase-1 fields were deleted with it) —
+light/unarmored 2.5, medium 3.0, heavy 3.5, monsters 3.5 **beats**
 (*units pending Jeff confirmation — he tuned beat-denominated panel dials*). Heavier armor rests
 slower; that is the whole cost curve. The per-point interval and instant-refill dials survive
 live-tunable but are **moot at max 1** (the first tick fills the pool). At 0 stamina you **cannot move at
@@ -269,6 +276,8 @@ revert switch it was while this was provisional.
    experiment note (v0.6.0):** windup authored to the 0.25s beat (Jeff's literal "windup+
    attack take the same time as a move"), so the deliberate-dodge window is effectively
    closed and whiffs are incidental — the mechanic is PARKED, restored by one .tres number.
+   *(It WAS: v0.27.0 restored it by authoring windup on every melee weapon — see the v0.27.0
+   amendment below. The "one .tres number" prediction held exactly.)*
    Playtest question ANSWERED NO within one solo test (Jon, v0.6.0: "winded up maybe
    once... attacked me pretty fast") — the 0.25s yellow blink inside a ~0.3s attack
    cycle was sub-perceptual and the cadence tripled the goblin's DPS. **v0.6.1
@@ -291,14 +300,31 @@ revert switch it was while this was provisional.
    beat is invisible. New shape, BOTH sides symmetric: **instant deterministic strike +
    committed N-beat RECOVERY** with a visible "spent" tell (§2.3.4) — the tell moves from
    before the hit (invites the degenerate dodge-dance) to after it (readable state: "the
-   goblin is spent — now's my window"). Player and goblin recovery both authored 2 beats,
-   so attack rate = movement rate ("equal in terms of time and ability" — Jon's note).
-   The telegraph/whiff machinery is PRESERVED behind `windup_beats` — a future heavy monster
+   goblin is spent — now's my window"). Player and goblin recovery were both authored 2 beats
+   at v0.7.0, so attack rate = movement rate ("equal in terms of time and ability" — Jon's note).
+   The telegraph/whiff machinery was PRESERVED behind `windup_beats` — a future heavy monster
    may windup, ideally re-tested WITH AoO enabled, the configuration where dodging finally
    costs something (parked beside the §2.2.6 AoO toggle). *(Superseded v0.18.x/v0.19.0: the
-   goblin now DOES telegraph — its club has base windup 0 and the goblin adds a **+1 windup
-   wielder-modifier** (§2.3.7 base+modifier), so the telegraph lives on the slow WIELDER, not
-   the weapon; a player wielding the same club still bumps instantly.)*
+   goblin DOES telegraph — its club had base windup 0 and the goblin adds a **+1 windup
+   wielder-modifier** (§2.3.7 base+modifier), so the telegraph lived on the slow WIELDER, not
+   the weapon.)*
+   **AMENDED v0.27.0 — the heavy telegraph is now the DEFAULT, and so are longer recoveries
+   (Jeff's second playtest verdict promoted the whole `/config 2` loadout to shipped values).**
+   Two claims above are no longer current truth:
+   - **Nothing is instant any more.** Every shipped melee weapon authors `windup_beats > 0` —
+     longsword 3, club 3, dagger 2 — against the 0.25s tactical beat that shipped in the same
+     release (§2.8.7), so a 3-beat telegraph is 0.75s of readable wind-up. A PLAYER telegraphs
+     too: `MoveReferee` routes a bump through the shared `wind_up` path whenever
+     `CombatReferee.melee_windup_beats_of(mover) > 0`, which is now every melee weapon.
+   - **Recovery is no longer 2 beats and attack rate is no longer movement rate.** Every player
+     weapon authors `recovery_beats` 4.0; the goblin's club resolves to 5 (base 4 + its
+     `bonus_recovery_beats` 1). The only surviving 2.0 is `Player.attack_recovery_beats`, the
+     no-weapon fallback — which is not what the v0.7.0 sentence meant. An attack is deliberately
+     several steps' worth of commitment now.
+   What is still PARKED is only the OTHER half of the pairing: **AoO stays disabled**
+   (`attacks_of_opportunity_enabled = false` in game_config.tres), so the telegraph shipped and was
+   playtested in the configuration where dodging is still free. Re-enabling AoO is the remaining
+   feel pass (§2.2.6, and the Part 4 Q9 tail).
    **Aggro persistence (same session):** `aggro_range_tiles` becomes the ACQUIRE gate
    only — once aggroed, a monster stays aggroed (`aggro_persists`, MonsterType, default
    true; Jon: "he shouldn't turn off aggro"). The v0.6.0 range-as-leash behavior (chase
@@ -350,23 +376,33 @@ revert switch it was while this was provisional.
    designer resource (`WeaponType`, `resources/weapons/*.tres`) — add a weapon by dropping a
    `.tres`, never by touching code (the §2.5 designer rule). Two field groups:
    - **Gameplay** (read HOST-side by the combat referee; never the wire): `recovery_beats` (renamed from `attack_beats` v0.23.1 — the
-     BEATS this attack OCCUPIES on the attacker's one timeline — the whole action window, no
-     separate cooldown, per Part 4 Q9), **`damage_min` / `damage_max`** (the rolled band, v0.26.1 —
-     replacing the single deterministic `damage`; see item 1), and `windup_beats` (0 = the
-     instant strike at commit — today's default for both weapons; > 0 = the preserved
-     telegraph/whiff machinery for a future heavy weapon). HONEST STATUS (v0.9.0): the
-     referee reads the equipped weapon's damage band and `recovery_beats` when it stamps a bump;
-     `windup_beats` is AUTHORED-BUT-NOT-YET-WIRED for players — the player-side referee hookup
-     (bump-with-windup through the proven monster machinery) ships with the first windup
-     weapon, a deliberate M3.7 scope cut. The legacy player exports
+     BEATS this attack OCCUPIES *after* it resolves, with no separate cooldown beside it, per Part 4
+     Q9), **`damage_min` / `damage_max`** (the rolled band, v0.26.1 —
+     replacing the single deterministic `damage`; see item 1), and `windup_beats` (the telegraph
+     before the strike; 0 = an instant strike at commit). The occupied window is the SUM —
+     `commit_in_place(windup_sec + recovery_sec)`, one busy record (the v0.19.0 double-hit fix) — so
+     Q9's "one timeline, one window" holds; it is just no longer spelled by `recovery_beats` alone.
+     **STATUS (v0.9.0, AMENDED v0.27.0 — now current):** the referee reads the equipped weapon's
+     damage band, `recovery_beats` *and* `windup_beats` when it stamps a bump. Player windup was the
+     v0.9.0 scope cut ("authored but not yet wired"); it was wired for players in v0.19.2 and became
+     the DEFAULT bump path in v0.27.0, when every melee weapon gained a nonzero telegraph — a player
+     bump now routes through the shared `wind_up` machinery whenever
+     `CombatReferee.melee_windup_beats_of(mover) > 0`, and the instant path survives only for a
+     windup-0 weapon (none ships) and the ranged point-blank kick. The legacy player exports
      (`melee_damage`/`attack_recovery_beats`) are the no-weapon fallback only.
    - **Base + wielder modifier (v0.19.0).** A weapon's damage band /`windup_beats`/`recovery_beats`
      are the BASE; the wielder adds a SIGNED modifier on top, floored at 0 by the referee —
      `MonsterType.bonus_damage`/`bonus_windup_beats`/`bonus_recovery_beats` and `Player.bonus_damage`
-     (the future strength-stat hook). This is how the SAME weapon is slower in a monster's hands than
-     a player's: the goblin's **club** has base `windup_beats` 0 (instant as a player bump) and the
-     goblin adds **+1 windup** to telegraph it (§2.1) plus **+1 recovery** so its attack rate sits
-     below the player's. The beat-bonuses are **melee-only** (a ranged weapon's `windup_beats` is its
+     (the future strength-stat hook). The modifier is still how the SAME weapon is slower in a
+     monster's hands: the goblin adds **+1 windup** and **+1 recovery** to whatever it holds, so its
+     club resolves to 4 windup / 5 recovery against a player's 3 / 4. **AMENDED v0.27.0 — but the
+     TELEGRAPH no longer comes from the wielder.** The v0.19.0 form of this claim was "club base
+     `windup_beats` 0, instant as a player bump, and the goblin's +1 is the whole telegraph." The club
+     now authors **windup 3**, so 3 of the goblin's 4 telegraph beats live on the WEAPON and a player
+     wielding the same club telegraphs 3 beats too. The honest reading of the split today: the weapon
+     says how heavy a swing is, the wielder says how much *worse* they are at it — a difference of
+     degree (one extra beat), not the difference between telegraphed and instant.
+     The beat-bonuses are **melee-only** (a ranged weapon's `windup_beats` is its
      draw — a wielder bonus must never retune the bow); `bonus_damage` applies to all.
      **LAYER ORDER, restated for the band (v0.26.1): rolled weapon damage → flat wielder
      `bonus_damage` → passive `modify_damage` chain → armor mitigation (§2.3.8) → HP.** The roll is
@@ -380,8 +416,14 @@ revert switch it was while this was provisional.
      equips the very same object, resolving its stats through their own (0-today) modifiers.
    - **Animation** (presentation-only; gameplay NEVER reads these): `atlas_coords` into
      items.png, `attack_style` (stab | slash, v1), the phase fractions
-     `startup_frac`/`active_frac`/`recovery_frac`, and the small tween knobs
-     (`arc_degrees`/`reach_px`/`lean_degrees`/`recoil_px`). The client-side **weapon rig** plays
+     `startup_frac`/`active_frac`/`recovery_frac`, the small tween knobs
+     (`orbit_radius_px`/`arc_degrees`/`reach_px`/`lean_degrees`/`recoil_px`) and — added as the
+     telegraph became real art — the three WINDUP-pose knobs
+     `windup_raise_degrees`/`windup_reach_px`/`windup_shake_degrees` (how far behind the swing's start
+     edge the rig parks, how far past `orbit_radius_px` it sits so it clears the silhouette, and the
+     pre-launch jitter). Those three are ignored at windup 0 and for stab/draw styles; with windup live
+     on every melee weapon since v0.27.0 they are the knobs a designer actually reaches for.
+     The client-side **weapon rig** plays
      the three phases as fractions of the STAMPED window (it NORMALIZES them at playback, so a
      `.tres` authoring error can never push a phase past the window — the referee's
      slide_fraction-clamp spirit).
@@ -391,9 +433,15 @@ revert switch it was while this was provisional.
    pose must LOOK simultaneous with its damage flash — `startup` is ANTICIPATION ONLY and is
    kept ≤ ~0.15 of the window (the strike lands within the causality-perception threshold). A
    readable pre-hit windup is exactly what `windup_beats > 0` is for, where the damage genuinely
-   lands later and a long startup is honest. The first two authored weapons — dagger (1 beat,
-   quick, band **2-6** since v0.26.1) and longsword (2 beats, today's feel, band **3-5**) — carry
-   equal-ish DPS with a chunk/quick contrast, all Feel=-tunable in the `.tres`.
+   lands later and a long startup is honest — which since v0.27.0 is EVERY melee weapon, so the
+   anticipation cap now governs only the no-weapon fallback and the ranged kick.
+   **The quick/chunk contrast moved from RECOVERY to WINDUP (v0.27.0).** At v0.9.0 it was authored as
+   dagger 1 recovery beat vs longsword 2. Today both weapons author `recovery_beats` **4.0** and the
+   contrast is the TELEGRAPH: dagger windup **2** vs longsword **3** (club 3), bands **2-6** and
+   **3-5** (v0.26.1). So the dagger is the weapon that commits sooner and swings wilder, not the one
+   that recovers faster — a knife-fighter's tempo read from the front of the action instead of the
+   back. Both still Feel=-tunable in the `.tres`, and the free-beat kite the 1-beat dagger used to buy
+   is gone with the 4-beat tail.
    **Weapon swap** is a dev-era control this milestone (the tempo-keys spirit): refused while
    busy (the Commitment Rule — no swapping out of a committed action), otherwise instant,
    host-validated, broadcast, over a hardwired 2-weapon roster (`GameConfig.weapon_roster`). The
@@ -454,10 +502,15 @@ revert switch it was while this was provisional.
      several slots setting the band). With one armor slot, the body item's band IS the wearer's band —
      promotion is a no-op today, which is why it could wait, and it now has a single home to land in (the
      resolver above). See §2.10 and the ROADMAP equipment-slot bullet.
-   - **`/class` reconciles the body slot to the class loadout (v0.27.1).** Becoming a class puts you in
-     exactly what that class wears — *including nothing*, which strips you — and the piece you were
-     wearing **goes back into your bag**, so a dev-tool class swap can never destroy gear. A full bag
-     refuses the swap and says so, keeping what you have on. See §2.10.
+   - **`/class` reconciles the body slot to the class loadout (v0.27.1; the old piece is DISCARDED
+     since v0.28.1).** Becoming a class puts you in exactly what that class wears — *including
+     nothing*, which strips you. v0.27.1 returned the piece you were wearing to your bag; Jon's
+     2026-07-26 ruling made it **DESTROY** that piece instead, because a few character swaps filled the
+     bag with armor nobody asked for. So `/class` is the ONE path in the game that destroys an item —
+     sanctioned because it is debug-only and the weapon half always worked that way — and with no bag
+     traffic left, the v0.27.1 "bag full" refusal is gone too. Not silent: the `equip_item` event
+     carries a present-only `discarded` field and the log reads *"(The leather armor is discarded.)"*
+     The full rationale lives in **§2.10**.
 
 9. **§2.3.9 — Whiff recovery: A TOGGLE, and it now ships ON (`whiff_pays_recovery` = true, v0.28.0;
    was "recovery only on contact" v0.26.0–v0.27.x).** A committed attack owns its whole window when it
@@ -583,7 +636,9 @@ revert switch it was while this was provisional.
      other's state)
    - nameplates / ally-enemy color coding
    - minimap that also shows teammate positions
-   - combat log carrying the per-roll feedback from 2.3.4
+   - combat log carrying the per-OUTCOME feedback from 2.3.4 (wording fixed v0.28.1: "per-roll"
+     was pre-v0.26.1 vocabulary — there is no to-hit roll, only the damage band, and §2.3.1 keeps
+     miss/crit/block/dodge/resist parked)
 3. Not needed ever: initiative / turn-order UI. There are no turns.
 
 ### 2.7 Explicitly Out of Scope for v1
@@ -635,10 +690,15 @@ revert switch it was while this was provisional.
    retired committed-rest experiment as the grid-tell control.
 7. **Two paces, two dials (v0.9.2 — Jeff's two-dial model).** The beat splits into an
    EXPLORE pace (+/- keys, the live beat everything stamps from today) and a TACTICAL
-   pace (`[`/`]` keys, `tactical_beat_sec`, default 0.50). Both are any-peer adjustable
+   pace (`[`/`]` keys, `tactical_beat_sec`, **default 0.25 since v0.27.0** — Jeff's second
+   playtest verdict promoted the `/config 2` fight cadence to the shipped game; it was 0.50
+   from v0.9.2). Both are any-peer adjustable
    through the intent pipe with the same clamps (shared deliberately pending §2.8.7's
-   zone design), both display on-screen, both sync to late joiners. As of v0.9.3 nothing
-   stamps from the tactical dial — it goes live with tactical zones below.
+   zone design), both display on-screen, both sync to late joiners. *(The v0.9.3 note that
+   nothing stamps from the tactical dial expired with Tactical Zones v1 in v0.9.5: EVERY stamp
+   site now resolves through `PaceReferee.beat_or_explore`, which returns this beat for any
+   entity the referee has resolved TACTICAL. So the weapon windups authored in v0.27.0 are
+   authored against THIS beat — raise it without shortening them and every telegraph doubles.)*
 
 #### 2.8.7 Tactical zones (v1 SHIPPED — v0.9.5)
 
@@ -686,9 +746,9 @@ becomes a positioning decision.
 
 ### 2.9 Ranged Combat (v1 SHIPPED — v0.17.0)
 
-**Capability track** (CLAUDE.md doc policy): a living spec + status checklist for a capability
-that matures across many versions. This section is current-truth and edits freely; the
-append-only changelog stays the per-release history. Ranged attacks as a whole — the bow is
+**Capability track** (CLAUDE.md doc policy): a living spec for a capability that matures across many
+versions. This section is current-truth and edits freely; the append-only changelog stays the
+per-release history, and stage status lives in ROADMAP. Ranged attacks as a whole — the bow is
 v1/prototype, not the end state.
 
 The pillar: ranged must carry the SAME hard-choice pressure as melee — no perpetual kiting
@@ -715,7 +775,7 @@ shooting range; needs a server-authoritative defender-move system vs the Commitm
 LoS-correct, feel-locked. *(Stage-by-stage progress is tracked in ROADMAP's parking lot, not here —
 this section is the design; checkboxes live only in ROADMAP.)*
 
-### 2.10 Items & Inventory (v1 SHIPPED — v0.18.0)
+### 2.10 Items & Inventory (v1 SHIPPED — v0.18.0; equipment body slot v0.27.0, `/class` discard v0.28.1)
 
 **Capability track.** Pick up, carry, and use (later equip) designer-authored items; the
 `.tres`-only content pipeline is the end goal (its gate is milestone **M5**).
@@ -738,11 +798,15 @@ WEAPON. `ItemType` carries `category` as an @export enum; WEAPON is answered by 
 weapon_catalog, an unresolvable sentinel otherwise) — the same item-first order the HUD's bag
 icons resolve in. The default is deliberately EQUIPMENT, so a designer who *forgets* the field
 fails CLOSED: the item sits on the ground waiting to be picked up rather than being silently
-hoovered up. The EQUIPMENT bucket is wired but EMPTY today — no armour/shield/boot/ring/amulet
-resources exist, and the HUD's equipment sockets stay cosmetic. **The equip-SLOT model (what a
-worn item does, where it goes, how it stacks with weapons) is a separate future milestone** and is
-deliberately not part of this track's v1; the category exists now so acquisition can already tell
-"wearable" apart from "drinkable."
+hoovered up. *At v0.21.0 the EQUIPMENT bucket was wired but EMPTY — no armour/shield/boot/ring/amulet
+resources existed, all nine HUD sockets were cosmetic, and the equip-SLOT model was deliberately left
+out of this track's v1; the category existed only so acquisition could tell "wearable" from
+"drinkable."* **AMENDED v0.27.0/v0.27.1:** two EQUIPMENT resources now exist (`leather_armor.tres`,
+`chainmail.tres`, both in `game_config.tres`'s `item_catalog`), `ItemType.equip_slot` names the socket a
+wearable claims, the host routes on it (`InventoryReferee` — BODY takes the real path, every other slot
+refuses distinctly), and the HUD paints the **Body** socket's icon. The **other eight sockets are still
+cosmetic** and the rest of the slot model is still future work — see "THE BODY SLOT IS REAL" below and
+the ROADMAP equipment-slot bullet.
 
 **Acquisition: autopickup is POTION-ONLY (v0.21.0).** Gliding onto a potion still banks it at the
 glide's settle — consumables are the case where stopping to think adds nothing. Everything else
@@ -839,7 +903,7 @@ startup WARNING rather than a hard failure, so a name authored into both catalog
 all *do* something (including equipment that equips), the `.tres`-only gate (M5) met. *(Stage
 progress is tracked in ROADMAP, not here.)*
 
-### 2.11 Active Abilities & Status Effects (v1 in progress — v0.20.x)
+### 2.11 Active Abilities & Status Effects (v1 in progress — v0.20.x; ability kinds + cooldowns v0.26.0–v0.27.1)
 
 **Capability track.** Class-owned ACTIVE abilities on the 1-5 hotbar, and STATUS EFFECTS imposed on
 entities (stun first). Host-authoritative and event-synced like everything else.
@@ -848,9 +912,14 @@ entities (stun first). Host-authoritative and event-synced like everything else.
 `use_ability {index}` intent; the host reads the sender's class `active_abilities[index]` server-side
 and, if a hostile is adjacent, ROOTS the caster for the ability's beat window (`windup_beats` +
 `recovery_beats`) and resolves the effect. The occupied window IS the anti-spam — there is no second
-timer bolted beside it. An `ActiveAbility` is a designer `.tres` (`damage`, `stun_beats`, the beats,
-`range_tiles`, `log_verb`, icon), resolved off the class exactly as a `PassiveAbility` is — add an
-ability by dropping a `.tres` into a class's `active_abilities`. A telegraphed ability (`windup_beats
+timer bolted beside it. An `ActiveAbility` is a designer `.tres` (`kind`, `damage`, `stun_beats`, the
+beats, `cooldown_beats`, `range_tiles`, `log_verb`, icon), resolved off the class exactly as a
+`PassiveAbility` is — add an ability by dropping a `.tres` into a class's `active_abilities`.
+**`kind`** (v0.26.0) is the ability's SHAPE — **STRIKE** (the default, and the only shape the paragraph
+above describes: a committed window, damage, stun), **BLOCK** and **BLINK** (the two instants of
+§2.11.1, which have no window and pay with `cooldown_beats` instead). **`cooldown_beats`** (v0.27.0)
+moved the cooldown out of two GameConfig dials onto every ability, instants and strikes alike — see
+§2.11.1 for why a strike carrying one is a deliberate, flagged widening of the experiment. A telegraphed ability (`windup_beats
 > 0`) resolves against the target TILE at windup end, so it is DODGEABLE (the same commit-to-ground
 model as the goblin wind-up and the smite); an instant one (0) strikes now. This is NOT an active
 DODGE/BLOCK (§2.1.3 forbids those): the SHIELD is an offensive committed BASH, never a hold-to-block.
@@ -887,8 +956,10 @@ accent now reads as "abilities and hands," grey as "carried."
 
 **Shipped so far (v0.20.x):** the stun status (icon + dizzy wobble, INTERRUPTS an in-flight attack/cast,
 `/stun` dev cmd, all validator gates); the `use_ability` pipe + `ActiveAbility` resource +
-`PlayerClass.active_abilities`; knight **Shield Bash** (2 dmg + 3-beat stun) and rogue **Kick** (1 dmg +
-3-beat stun) — both verified two-instance; the 1-5 HOTBAR HUD shows the class ability icons + keycaps, with
+`PlayerClass.active_abilities`; knight **Shield Bash** and rogue **Kick** — both verified two-instance,
+authored at v0.20.x as 2 dmg / 1 dmg with a 3-beat stun each and **RETUNED in v0.27.0 to bash 4 dmg /
+kick 0 dmg, both with a 6-beat stun and a 40-beat cooldown** (§2.11.1 has the reasoning — the kick
+became pure setup, long enough to land one sneak attack); the 1-5 HOTBAR HUD shows the class ability icons + keycaps, with
 carried items dropped to the row below (v0.20.3); the ability bar moved OUT of the bag grid to its own
 click-transparent bar on the world's bottom edge, freeing the whole grid for items (v0.21.0).
 
@@ -902,10 +973,15 @@ reads as the ability bar, and abilities compose with the build system (§2.7). *
 
 #### 2.11.1 Instant abilities (PROVISIONAL EXPERIMENT — v0.26.0, verdict pending)
 
-**Status: an experiment behind `instant_abilities_enabled`, not a decision.** Jeff's verdict pass asked for
-two abilities that the spec as written forbids. Jon's call (2026-07-25): build them behind a toggle, the way
-stamina was built, and let playtest answer. **Off = the pre-experiment game exactly** — both abilities reject,
-and nothing else anywhere behaves differently.
+**Status: an experiment behind `instant_abilities_enabled`, not a decision — and it SHIPS ON.** Jeff's
+verdict pass asked for two abilities that the spec as written forbids. Jon's call (2026-07-25): build them
+behind a toggle, the way stamina was built, and let playtest answer. The toggle **defaults to true**
+(`GameConfig.instant_abilities_enabled`, no `game_config.tres` override), which is the point — the
+experiment has to be in the shipped build for Jeff to judge it. **So the §2.1.3 and Q9 suspensions below
+are LIVE in the shipped game**, exactly as `recovery_locks_actions`, `whiff_pays_recovery` and the winded
+dials ship ON. **Off = the pre-experiment game exactly** — both abilities reject, the strike cooldowns are
+neither checked nor stamped, and nothing else anywhere behaves differently. Read "off" as the revert path,
+never as a description of the default.
 
 **What it suspends, and only inside the toggle:**
 - **§2.1.3** ("no active dodge, block, or escape input"). Shield Block *is* a defensive input, and Shadow Step
@@ -1016,11 +1092,15 @@ a club now — it drops on death like any monster weapon), Flee/Approach movemen
 `/ai` score overlay.
 
 **The Warren (v0.23.0) — the showcase encounter, room D.** A Goblin Brute (28 HP anvil) fronts two
-skirmishers; a pinned-supportive Shaman Mender posts one tile behind (heals land in 1.5s casts and its
-smite weight is authored DOWN — healer first); a pinned-aggressive Shaman Zealot holds the east flank lane.
+skirmishers; a pinned-supportive Shaman Mender posts one tile behind (its `heal_cast_beats` is **15.0** —
+a **3.75s** cast at the shipped 0.25s tactical beat; v0.23.0 authored 3 beats against the 0.50s beat of
+its day, i.e. the 1.5s cast this section used to quote, and the retunes to 10 (v0.26.0) then 15 (v0.27.0)
+made the channel the shaman's real cost — and its smite weight is authored DOWN, healer first); a
+pinned-aggressive Shaman Zealot holds the east flank lane.
 The room mouth is the tripwire: the Brute's aggro trips there and its authored rally bubble (5) pulls the
 whole pack, Zealot included. The intended arc — "focus the big one" fails visibly (heals out-pace the
-trade, verified: 5.6s unhealed vs 7.7s healed under identical focus), "kill the healer" is the real fight,
+trade, verified: 5.6s unhealed vs 7.7s healed under identical focus — **measured at the v0.23.0 tempo and
+cast length, so read them as the shape of the finding, not as current seconds**), "kill the healer" is the real fight,
 and the last shaman turns and fights. Emergent, unauthored: the Zealot heals allies while its smite is
 pending-blocked, and the pack heals its own wounded Mender. Design findings the calibration runs bought:
 one monster's `tactical_radius_tiles` feeds BOTH the pace bubble and the rally bubble (splitting them is
@@ -1072,7 +1152,8 @@ so replicating events is both cheaper and truer to the model than streaming posi
 ## Part 4 — Open Questions (for Jeff)
 
 *No decisions here — each item frames a tradeoff to discuss. Items marked **[BLOCKS
-IMPLEMENTATION]** need answers before the affected system gets built; the rest can wait.*
+IMPLEMENTATION]** need answers before the affected system gets built; the rest can wait. (No item
+currently carries that marker — the legend stands for whenever one does.)*
 
 1. **Death mid-run.** The biggest unaddressed design question. Permadeath + co-op +
    ~1-hour runs means a dead player may spectate for most of a session. Candidate
@@ -1233,16 +1314,29 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
    POSITIONAL (the whiff machinery, stepping out of a telegraphed tile) or lethal, never a free
    input-cancel. This is what M3.7 (v0.9.0) builds on: `WeaponType.recovery_beats` (né attack_beats) IS the occupied
    window (§2.3.7), dagger 1 beat vs longsword 2 beats — a weapon's whole cost is the beats it
-   locks, not a cooldown bolted beside it. Still PAIRED with the §2.2.6 AoO re-enable as the next
+   locks, not a cooldown bolted beside it. *(**Restated for v0.27.0:** `recovery_beats` is only the
+   TAIL now — every melee weapon authors a nonzero `windup_beats`, and the referee commits
+   `windup + recovery` as ONE busy record (`commit_in_place`, §2.3.7). The answer is untouched — still
+   one timeline, one window, no second timer — but the window is a SUM, and the current numbers are
+   dagger 2+4 vs longsword 3+4 beats, so the contrast lives in the telegraph rather than the tail.)*
+   Still PAIRED with the §2.2.6 AoO re-enable as the next
    feel pass: once the beat-cost contrast reads well, turn AoO back on so stepping away from a
-   committed attacker carries its intended risk (and re-test the telegraphed `windup_beats > 0`
-   heavy weapon in that configuration — the one where dodging finally costs something).
-   **Two v0.26.0 amendments, both recorded at their own sites:** (a) the recovery tail is charged
-   only when the attack CONTACTS — a whiff releases it at resolve (§2.3.9); the answer above is
-   unchanged for every landed action, and no cooldown was added. (b) The "no separate cooldowns,
-   EVER" clause is **suspended for exactly two abilities inside the `instant_abilities_enabled`
-   experiment** (§2.11.1) — an instant has no window to pay with, so it pays with a timer beside the
-   timeline. That suspension is provisional: if the experiment graduates, this answer needs
+   committed attacker carries its intended risk. *(The other half of that pairing — "re-test the
+   telegraphed `windup_beats > 0` heavy weapon in that configuration" — is HALF DONE: v0.27.0 made the
+   heavy telegraph the DEFAULT on all three melee weapons and Jeff playtested it through v0.28.0, but
+   with AoO still off. So only the AoO half is outstanding, and the telegraph has never been tested in
+   the configuration where dodging costs something.)*
+   **Two v0.26.0 amendments, both recorded at their own sites:** (a) whether a WHIFF pays its recovery
+   tail became a TOGGLE, `whiff_pays_recovery` (§2.3.9). v0.26.0 released the tail at resolve — "charged
+   only when the attack CONTACTS" — and **v0.28.0 flipped the default back to paying it in full** (Jeff:
+   a swing you committed to is a swing you are stuck in), which is this answer read literally; with the
+   flag true `busy_released` never fires. Either way the answer above is unchanged for every landed
+   action, and no cooldown was added. (b) The "no separate cooldowns,
+   EVER" clause is **suspended inside the `instant_abilities_enabled` experiment** (§2.11.1) — for the
+   two instants, which have no window to pay with, and since v0.27.0 for the two STRIKE abilities too,
+   which have one and now pay twice (flagged there as going further than the original suspension).
+   **That toggle ships ON**, so the suspension is live by default. It stays provisional: if the
+   experiment graduates, this answer needs
    REWRITING (a general home for the cooldown model), not another exception bolted on.
 
 10. **Fixed world rect — how much world a player sees must not depend on their window.

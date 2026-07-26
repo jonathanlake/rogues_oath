@@ -1,4 +1,4 @@
-# Dev slash commands (v0.10.0)
+# Dev slash commands, the debug panel + the harness knobs (current to v0.28.1)
 
 Live tuning + dev toggles typed into the in-game chat box. A leading `/` marks a dev command: the
 game log intercepts it (never sends it as chat), parses it client-side into `{cmd, args}`, and submits
@@ -20,8 +20,8 @@ restart restores every authored value (no command saves to disk).
 | `/god` | Toggle **your own** invulnerability. A hit on a godded target resolves as a visible no-op (grey `0` popup + "no effect (god)" log line), never a silent block. Cleared on disconnect / despawn / F5 respawn. |
 | `/class <name>` | Set **your own** class (sprite, passives, abilities, loadout). Equips the class's first roster weapon, and **RECONCILES the body slot to the class loadout** (v0.27.0, rewritten v0.27.1): you end up in exactly what that class wears — **including nothing, which strips you**. **The piece you were wearing is DISCARDED** (v0.28.1, Jon's ruling — it went to your bag in v0.27.1, which filled the bag on every character swap): **nothing reaches your bag**, so `/class` is the one path in the game that destroys an item, sanctioned because it is a debug-only command and the weapon half has always worked that way. Not silent — the log names it: *"Host equips the chainmail. (The leather armor is discarded.)"* (The v0.27.1 "bag full" refusal is gone with the bag traffic.) The armor step is skipped with its own distinct clause when you are **dead / stunned / busy** (matching the bag-equip gates); the weapon step still skips on busy only (Tab to recover it), and the class change itself always lands. `name` ∈ `rogue`, `knight`, `wizard`, `barbarian`, `priest`, `ranger`. Broadcasts to every peer; late joiners sync via `sync_player_field`. Reverts to the slot default on F5 respawn. |
 | `/item <name> [x,y]` | Spawn a ground item (v0.18.0). Tile = explicit `x,y`, else the sender's facing-neighbour tile (never the own tile → reject if the sender hasn't faced yet). Distinct rejects: unknown item or weapon / broken resource path (catalog drift) / not-walkable / tile already has an item. Multi-word names work (`/item health potion`). **v0.21.0: `<name>` resolves the WEAPON catalog as a fallback** (`/item longsword`), so weapons can be placed as ground items — necessary now that only potions autopickup and everything else must be taken with **G**. |
-| `/stun [me\|<monster>] [beats]` | Apply a STUN (v0.20.0). No arg / `me` / `self` stuns you; a monster display_name stuns the first live monster of that name. A numeric token = beats (default 3). Host-authoritative; the overhead icon shows on every peer. Stun blocks *starting* a new action AND — since v0.20.2 — INTERRUPTS an in-flight attack/cast (its resolve fizzles); movement is not interrupted. This is the one sanctioned exception to the Commitment Rule (DESIGN §2.11). |
-| `/config <alias>` | Apply a preset **bundle** of tunings in one command (v0.19.7). Aliases live in `GameManager.CONFIG_PRESETS`; a bad row rejects the whole `/config` naming that row. Rows come in four kinds (v0.27.0 added `ab`): `w` (weapon), `m` (monster) and `ab` (ability — no shipped preset uses it yet) run through the same allowlist + clamp path as `/w`/`/m`/`/ab`; **`g` (game-level, v0.22.1)** is allowlisted by `GameManager.DEV_GAME_FIELDS` and dispatched per-field instead — today only `tactical_beat_sec`, which is snapped/clamped to the shared tempo band and then published as a normal **`set_tactical_tempo` broadcast**, so every peer adopts it exactly as a `[`/`]` nudge does (never a direct host-side write, which would leave clients' dials stale). Currently `1` = longsword & club `windup_beats 1`/`recovery_beats 3`, goblin `bonus_windup_beats 1`, **tactical beat `0.25`s** (so the preset's 1-beat windup / 3-beat swing lands at 0.25s / 0.75s in a fight). **Note (v0.27.1 doc fix):** that beat row used to *halve* a 0.50s default, but **0.25s IS the default since v0.27.0** — so the row now just restates it, and its only remaining effect is undoing a `[`/`]` nudge. Presets **clobber live values by design** — re-applying an alias restamps every row, including a tempo someone had nudged; a re-apply is idempotent (the `g` row skips the host validator's "no change" reject so it can't fail the bundle). `2` (v0.23.2) = the heavier-telegraph loadout: longsword/club `windup 3`/`recovery 4`, dagger `windup 2`/`recovery 4`, tactical beat `0.25`s. Add a loadout by adding an alias entry — no code change (a new `g` *field*, though, needs its dispatch branch). |
+| `/stun [me\|<monster>] [beats]` | Apply a STUN (v0.20.0). No arg / `me` / `self` stuns you; a monster display_name stuns the first live monster of that name. A numeric token = beats (default 3). Host-authoritative; the overhead icon shows on every peer. Stun blocks *starting* a new action AND — since v0.20.2 — INTERRUPTS an in-flight attack/cast (its resolve fizzles); movement is not interrupted. This is the **first** of the two sanctioned exceptions to the Commitment Rule (DESIGN §2.1 / §2.11); the second is the toggled instants carve-out (§2.11.1, `instant_abilities_enabled`). |
+| `/config <alias>` | Apply a preset **bundle** of tunings in one command (v0.19.7). Aliases live in `GameManager.CONFIG_PRESETS`; a bad row rejects the whole `/config` naming that row. Rows come in four kinds (v0.27.0 added `ab`): `w` (weapon), `m` (monster) and `ab` (ability — no shipped preset uses it yet) run through the same allowlist + clamp path as `/w`/`/m`/`/ab`; **`g` (game-level, v0.22.1)** is allowlisted by `GameManager.DEV_GAME_FIELDS` and dispatched per-field instead — today only `tactical_beat_sec`, which is snapped/clamped to the shared tempo band and then published as a normal **`set_tactical_tempo` broadcast**, so every peer adopts it exactly as a `[`/`]` nudge does (never a direct host-side write, which would leave clients' dials stale). Currently `1` = longsword & club `windup_beats 1`/`recovery_beats 3`, goblin `bonus_windup_beats 1`, **tactical beat `0.25`s** (so the preset's 1-beat windup / 3-beat swing lands at 0.25s / 0.75s in a fight). **Note (v0.27.1 doc fix):** that beat row used to *halve* a 0.50s default, but **0.25s IS the default since v0.27.0** — so the row now just restates it, and its only remaining effect is undoing a `[`/`]` nudge. Presets **clobber live values by design** — re-applying an alias restamps every row, including a tempo someone had nudged; a re-apply is idempotent (the `g` row skips the host validator's "no change" reject so it can't fail the bundle). `2` (v0.23.2) = the heavier-telegraph loadout: longsword/club `windup 3`/`recovery 4`, dagger `windup 2`/`recovery 4`, tactical beat `0.25`s, **plus four STAMINA rows** — `player_regen_interval_beats 2.0`, `monster_regen_interval_beats 2.0`, `stamina_max 1`, `monster_stamina_max 1` (v0.24.8; the max-1 rows became the shipped defaults, so re-applying them is a no-op, and the preset keeps stating its own loadout explicitly. The regen-IDLE rows were REMOVED from it in v0.26.0 — a preset row would clobber the graduated armor-weight waits with an older experimental number). **Every weapon row and the tempo row of preset `2` are now the shipped defaults too (v0.27.0 promoted the whole loadout), so `/config 2` mainly serves to UNDO live nudges.** Add a loadout by adding an alias entry — no code change (a new `g` *field*, though, needs its dispatch branch). |
 | `/ai` | Toggle the **utility-AI score broadcast** (v0.22.0, host-side gate, default OFF). While on, every **committed** utility-brain decision posts an `ai_decision` event (personality, per-action scores, the action that actually committed) that ALL peers' F3 overlays render — one line per monster. Idle thinks and fully-declined walks post nothing (v0.22.1 — they drowned the traces), and `chosen` names what COMMITTED, so a higher score beside a different chosen action reads as "top pick declined" (e.g. a cornered flee) at a glance. Zero wire noise while off. The `/m` allowlist includes the 13 `utility_*`/`backup_radius_tiles` weights, so you can watch a retune move the numbers live; `ai_decision` is in the `eventlog=` allowlist for scripted runs. |
 | `/stamina` (alias `/mp`) | Toggle stamina live — since **v0.26.0 stamina is a CORE RULE** (DESIGN §2.2.10, Jeff's verdict), so this is a **dev escape hatch**, not the revert switch it was while the mechanic was provisional. OFF = byte-for-byte pre-stamina movement and AI (no pool mutation; sweat-drops clear); ON = every pool reseeds to full. Host-authoritative (all reads are host-side). See the dial table below for every `/config` field — **note that every stamina dial has been a `player_`/`monster_` PAIR since v0.25.0**; the old unsplit names (`regen_idle_beats`, `regen_interval_beats`, `exhausted_step_beats`, `stamina_refill_lockout_beats`, `regen_refills_full`, `passive_regen_beats`) no longer exist and reject as unknown fields. |
 | `/winded` | Toggle **hard-stop exhaustion** (v0.24.6, **ON by default since v0.27.0**): on = 0 stamina refuses movement outright (distinct "winded" reject; players and monsters alike); off = the v0.24.1 slow crawl (`player_/monster_exhausted_step_beats`). One convergent toggle over the two `*_exhausted_blocks_movement` fields, which `/config` can also set per side. **The sweat-drop overhead cue marks the CRAWL** (v0.27.0 inverted this — a hard-stopped body already tells you twice, via the refused-move bonk and the recovery bar, while a crawler had no other tell). **v0.27.1:** flipping the mode — by this command *or* by either `/config` field or its panel checkbox — now RE-POSTS the exhaustion cue for anyone already sitting at 0, so the drip can no longer be left showing the previous mode (the event is edge-triggered, and a live flip crosses no edge). |
@@ -55,8 +55,8 @@ from the allowlist, so it is never stale — this table is the annotated version
 | `monster_think_min_beats` / `monster_think_max_beats` | 0–30 | The visible-hesitation roll range at story-beat moments. |
 | `swing_catches_adjacent` | 0\|1 | Sticky swings (v0.24.8, **default OFF since v0.27.0**) — a sidestep that stays adjacent to the swinger is still caught at resolve; 0 (the default now) = pure ground commit. Jeff retired it: it read as "attacks landing from two tiles away", and it degenerates for a blinked victim. Set to 1 to A/B it. |
 | `instant_abilities_enabled` | 0\|1 | **Experiment master toggle** (default ON) — Shield Block + Shadow Step (v0.26.0) **and the STRIKE cooldowns on Kick / Shield Bash** (v0.27.0), DESIGN §2.11.1. OFF = the two instants reject, the strike cooldowns are neither checked nor stamped (no refusal, no timer, no `ability_used` event) whatever `cooldown_beats` is authored, and nothing else anywhere behaves differently — i.e. the pre-v0.26 game exactly. **v0.27.1 made that literally true**: v0.27.0 shipped the strike cooldown ungated, so "they all switch off together" was a promise the code did not keep. This is the dial Jeff flips to answer the verdict question. |
-| `armor_flat_reduction_light` / `_medium` / `_heavy` | 0–99 (int) | **v0.27.0** — the FLAT half of the two-term armor rule (defaults 1 / 2 / 3), keyed to the worn body item's weight band. A physical hit on a player takes the SMALLER of the percentage result and `amount - flat`; UNARMORED is flat 0 (and 0%), so no armor never mitigates. Monster defenders keep the plain percentage path. **v0.27.1: a mitigated hit is now VISIBLE** — steel-blue damage popup, and the log line names the amount ("… for 2 (13/20, armor absorbs 2)."). DESIGN §2.3.8. |
-| `banter_earshot_tiles` | 0–60 (int) | **v0.27.1** — how far a bark's REACTION travels, in Chebyshev tiles (default 12 ≈ a room and a bit). The revenge/notable-death bark needs a living packmate within earshot **of the corpse**, and `help_me` needs an engaged ally within earshot **of the screamer**. Engagement alone only answered "a fight is happening somewhere", which with packs in separate rooms produced cross-fight barks. 0 makes both reactions silent. |
+| `armor_flat_reduction_light` / `_medium` / `_heavy` | 0–99 (int) | **v0.27.0** — the FLAT half of the two-term armor rule (defaults 1 / 2 / 3), keyed to the worn body item's weight band. A physical hit on a player takes the SMALLER of the percentage result and `amount - flat`; UNARMORED is flat 0 (and 0%), so no armor never mitigates. Monster defenders keep the plain percentage path. **A mitigated hit is VISIBLE in the LOG** — the line names the amount ("… for 2 (13/20, armor absorbs 2)."), and the event carries the `armor` tag + the points `absorbed`. **v0.27.1 also tinted the popup steel-blue; v0.28.1 REMOVED that** (Jon): popup colour now carries exactly one meaning — who took the number (DESIGN §2.3.4's colour convention) — so a fifth colour answering "was it mitigated" was fighting it, and the log is the better channel anyway since it can say *how much*. DESIGN §2.3.8. |
+| `banter_earshot_tiles` | 0–60 (int) | **v0.27.1, widened v0.28.0** — one dial with **TWO consumers**, in Chebyshev tiles (default 12 ≈ a room and a bit). (1) **The REACTION gate, host-side:** the revenge/notable-death bark needs a living packmate within earshot **of the corpse**, and `help_me` needs an engaged ally within earshot **of the screamer** — engagement alone only answered "a fight is happening somewhere", which with packs in separate rooms produced cross-fight barks. (2) **The LOG gate, client-side (v0.28.0, Jon: "gate ALL barks by distance"):** every bark event ships the speaker's authoritative tile, and each peer's combat log prints the line only when its OWN player is within earshot of it (`game_log._bark_within_earshot`). So `0` does not merely silence the two reactions — it suppresses **every bark line** unless the speaker shares your tile. Three cases print past the log gate: no own player (a dead player is an earshot-less SPECTATOR and hears everything), a missing/malformed speaker tile, and a wall-sentinel tile on either side. The **overhead label is deliberately ungated** — it floats over the speaker, so distance already hides it. |
 | `whiff_pays_recovery` | 0\|1 | **v0.28.0** — does a WHIFFED attack still pay its recovery tail? **1 (the
 default) = pre-v0.26.0**: the committed window plays out, the whiff event carries the real recovery seconds,
 and every peer shows the spent tint — Jeff's third-batch ask. 0 = the v0.26.0/v0.27.x "recovery only on
@@ -78,29 +78,52 @@ CLASSES section. The old field names reject as unknown, which is correct.
 ## The backtick debug panel (v0.25.0)
 
 Press **`** (backtick) in-game to open the DEBUG TUNING PANEL — an inspector-style GUI over the
-whole command surface, on every peer. Sections: GAME/STAMINA (every split dial, players column vs
-monsters column), WEAPONS, MONSTER TYPES (shared `.tres` tuning = `/m`), LIVE INSTANCES (per-monster
-hp/stamina/stun/kill and per-instance stat forks = `/mi`). Every widget edit submits the same
+whole command surface, on every peer, and since v0.25.0 the primary tuning surface (typing is the
+fallback). **FIVE sections, in build order:** GAME/STAMINA (every split dial, players column vs
+monsters column), WEAPONS, **CLASSES** (ability `.tres` = `/ab`), MONSTER TYPES (shared `.tres` tuning
+= `/m`), LIVE INSTANCES (per-monster hp/stamina/stun/kill and per-instance stat forks = `/mi`).
+
+**Three header buttons** sit above the sections, and the first two are the panel's ONLY surface for
+commands this doc otherwise presents as typed-only: **`stamina: ?`** submits `/stamina`, **`exhaustion: ?`**
+submits `/winded`, and **`refresh`** requests a fresh `/snapshot` (the values repaint from it; the panel
+shows "press refresh / \` reopen for current values" until one arrives).
+
+Every widget edit submits the same
 server-authoritative `dev_command` intent the typed command would (debounced 0.3s); displayed values
 come only from host-authored `dev_snapshot` events, so a client's panel shows host truth, never its
-own stale config. `debugpanel=1` is the autostart knob for scripted screenshots.
+own stale config. **Caveat, honestly stated:** only the GAME rows derive their SpinBox bounds from the
+clamp spec table, so widget range == host clamp there. The WEAPONS spins are a flat 0–100 against host
+clamps of `damage_min`/`damage_max` [0, 999], `windup_beats` [0, 30] and `recovery_beats` [0.05, 30]; the
+CLASSES spins are 0–600 for `cooldown_beats` and 0–100 otherwise, against `stun_beats` [0, 60] and
+`windup`/`recovery` [0, 30]. A value the widget offers can therefore be REJECTED by the host (and a
+value the host would take can be unreachable) — the pipeline is honest, the bounds are not yet derived.
+Tracked as a ROADMAP parking-lot item. `debugpanel=1` is the autostart knob for scripted screenshots.
 
 **v0.26.0 rows.** The four REGEN-IDLE dials moved OUT of the paired players|monsters block into shared
 single-column rows — the player side is three ARMOR-WEIGHT bands (`LIGHT` also covers unarmored) plus
 the monsters' one, which a two-column row can't express; they stay adjacent so every idle wait reads as
 one group. The instants experiment added the `instant abilities` toggle row.
 
-**v0.27.0 rows + a new section.** A **CLASSES (ability .tres — all wielders)** section joins the five: a class
+**v0.27.0 rows + a new section.** The **CLASSES (ability .tres — all wielders)** section joined the four
+above, and sits THIRD (between WEAPONS and MONSTER TYPES): a class
 OptionButton over one 2-column grid per ability, carrying all five `/ab` fields including `cooldown_beats`. It
 is where the two instants cooldown dials went when they stopped being GameConfig fields — and it is how you
 tune Kick's 40-beat cooldown or Shield Bash's stun without a restart. The heading says "all wielders" because
 an ability `.tres` is shared, exactly like MONSTER TYPES. GAME also gained the three `armor flat` band rows.
 
+**v0.28.0 rows.** GAME gained the two toggles from Jeff's third batch: **`whiff pays recovery`**
+(`whiff_pays_recovery`, default ON = pre-v0.26.0 §2.3.9) and **`recovery locks actions`**
+(`recovery_locks_actions`, default ON — the 0-stamina ACTION lockout, a no-op while `stamina` reads off).
+
 ## Resolution notes
 
-- **Weapons** resolve `GameConfig.weapon_roster` (by `display_name`) first, then a filename load
-  `res://resources/weapons/<name>.tres` (guarded by `ResourceLoader.exists`) — so the claw (not in the
-  roster) is reachable as `/w claw ...`.
+- **Weapons** resolve `GameConfig.weapon_catalog` by `display_name` first (with `weapon_roster` as a
+  belt-and-braces fallback for a config authored without a catalog), then a filename load
+  `res://resources/weapons/<name>.tres` guarded by `ResourceLoader.exists`. The catalog holds all four
+  shipped weapons — dagger, longsword, bow, club — so `/w club windup_beats 2` works even though the
+  club is not in the 2-weapon Tab roster. **The filename fallback therefore has no shipped subject
+  today**; it exists so a brand-new `.tres` dropped into `resources/weapons/` is tunable before anyone
+  remembers to register it. *(It used to be documented via `claw.tres`, which was deleted in v0.19.0.)*
 - **Monsters** resolve only by filename: `res://resources/monsters/<name>.tres` (e.g. `/m goblin ...`).
 - **Abilities** (v0.27.0) resolve ONLY through `GameConfig.ability_catalog`, by a SLUG of `display_name`
   (lowercase, spaces→underscores). There is no filename fallback: an ability is content a class points at, so
@@ -133,6 +156,16 @@ The `cmd=` autostart knob feeds one command through the real `game_log._on_input
 point (the genuine interception path), on either role: e.g. `-- host cmd=/god`,
 `-- join cmd=/w longsword 3`, `cmd=/class knight`. `cmdwait=<sec>` overrides the fire delay.
 
+`cmd2=` / `cmd2wait=` (v0.25.0) are the exact mirror — a **second** scripted command with its own delay,
+because every two-step tuning recipe (tune, then re-tune; set a dial, then assert the other half is
+untouched) needs ordered commands in one run. Unpinned, `cmd2=` fires **2.0s after the `cmd=` anchor**, so a
+bare two-command run is ordered without either wait being stated.
+
+**Two arg-mangling traps bite `cmd=` specifically — see the `harness-verify` skill's gotchas.** A value
+beginning with `/` gets path-converted under Git Bash (`cmd=/god` → `cmd=C:/Program Files/…`), and a value
+containing SPACES is split into separate argv tokens by PowerShell's argument array (`cmd=/w longsword 3`
+arrives as three tokens, so the command silently lands truncated).
+
 `pickup=<n>` / `pickupwait=<sec>` (v0.21.0) script the G key from either role. The key's own sampling is
 focus-gated like the number keys, so an unfocused window in a two-instance run can never reach it — the knob
 bypasses the sampler and submits the **intent**, which is where the adjudication lives (the exact shape of
@@ -151,7 +184,43 @@ experiment: a COOLDOWN reject is only observable by pressing the SAME slot twice
 instance. `abilitywait=` is the first-fire delay, `abilitydelay=` the spacing between presses (default
 0.5s, tight enough to land the second press well inside any cooldown; widen it to watch one expire).
 
-`eventlog=` gained four actions in v0.26.0: **`stamina_recovery`** (the host-stamped armor-weight rest
-wait — the only way to assert 2.5 / 3.0 / 3.5 scaling in a scripted run) and the three instants
-observables **`blink`**, **`ability_used`** and **`ability_cooldown`** (`status_applied`/`status_expired`
-were already in, which is how the block's `"block"` status is asserted).
+### `eventlog=` — the assertion channel
+
+**Syntax: `eventlog=<path>`** (v0.20.0; inert without the arg, either role). It taps the broadcast
+NetEvents stream to a file once that instance's session is live, one line per event:
+`server_time  peer  action  data`. Event-trace assertions on that file are the harness's preferred
+evidence. It is an **allowlist**, so an action absent from it never reaches the file — 24 actions pass:
+
+| Group | Actions |
+|---|---|
+| Movement | `glide_to` |
+| Melee / casts | `windup`, `attack`, `heal_cast`, `smite_cast`, `heal`, `died` |
+| Status + abilities | `status_applied`, `status_expired`, `blink`, `ability_used`, `ability_cooldown` |
+| Items | `item_picked_up`, `item_pickup_full`, `item_pickup_available`, `item_used`, `equip_item` |
+| Stamina | `stamina`, `stamina_recovery`, `exhausted` |
+| AI / flavour | `ai_decision`, `thinking`, `banter` |
+| Tuning | `dev_snapshot` |
+
+`stamina_recovery` is the host-stamped armor-weight rest wait — the only way to assert the 2.5 / 3.0 / 3.5
+scaling in a scripted run; `blink` / `ability_used` / `ability_cooldown` (v0.26.0) are the instants
+experiment's only observables, and `status_applied`/`status_expired` is how the block's `"block"` status is
+asserted. `debug.gd`'s parser is the source of truth if this table ever drifts.
+
+### Harness knob reference
+
+Everything after `--` on the command line, parsed by `debug/debug.gd`. **Re-read that parser before
+composing a run** — semantics change and the parser doesn't lie. The knobs above have their own prose;
+this is the rest, grouped.
+
+| Group | Knobs |
+|---|---|
+| Session | `host` / `join` (role), `join=<addr[:port]>`, `port=<n>` (1–65535, host bind), `hostdelay=<sec>` (delay the host's scene, reproduces the join race), `maxplayers=<n>`, `name=<text>`, `fakever=<ver>` (forge the version-gate handshake) |
+| Movement | `move=<dirs>` / `movedelay=` / `movewait=` (submits intents directly — focus-immune, the host-side choice), `tap=<dirs>` / `tapsec=`, `hold=<dir>` / `holdsec=` / `holdwait=` (real input; FOCUS-gated, so only the last-launched window holds keys), `click=<tiles>` / `clickdelay=`, `shiftclick=<tiles>` (ground-fire) |
+| Combat | `shoot=<tiles>` / `shootwait=`, `ability=<i[,i…]>` / `abilitywait=` / `abilitydelay=`, `pickup=<n>` / `pickupwait=`, `use=<slot>` / `usewait=`, `equip=<slot>` / `equipwait=`, `swap=<0\|1>` / `swapwait=` (Tab weapon swap) |
+| Content | `weapon=<name>` (starting weapon), `goblin=<n>`, `goblinat=x,y`, `potion=x,y`, `hostile=<0\|1>` (all-hostile players) |
+| Tempo | `tempo=<sec>` / `tempowait=`, `tactical=<sec>` / `tacticalwait=`, `beatsec=`, `glidesec=`, `windupsec=` (stamp overrides) |
+| Commands | `cmd=` / `cmdwait=`, `cmd2=` / `cmd2wait=`, `say=<text>` |
+| Output | `eventlog=<path>`, `screenshot=<path>` (fires ~6s after `_ready`, **then quits that instance**), `overlay=<0\|1>` (F3), `rangeoverlay=<0\|1>` (F7), `debugpanel=<0\|1>` |
+
+Unpinned `*wait=` knobs share their role's anchor (host: after the scene change; client: after connect);
+the movement anchor is the default for `ability=`, `pickup=`, `hold=` and friends.

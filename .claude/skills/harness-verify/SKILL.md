@@ -24,10 +24,17 @@ a subagent's word. This skill is the repeatable recipe. Evidence order of prefer
 
 The autostart harness is `debug/debug.gd` (everything after `--` on the command line).
 **Do not trust any written knob table, including this file's examples — re-read
-debug.gd's arg parser before composing a run.** Knobs exist for movement (move=/hold=/
-tap=/click=), tempo (tempo=/tempowait=/beatsec=), world (goblin=/hostile=), timing
-overrides (glidesec=/windupsec=), identity (name=), and capture (screenshot=,
-overlay=). Their semantics change; the parser doesn't lie.
+debug.gd's arg parser before composing a run.** Knobs exist for session shape
+(port=/join=/hostdelay=/maxplayers=/name=/fakever=), movement (move=/hold=/tap=/click=/
+shiftclick=), combat + items (shoot=/ability=/pickup=/use=/equip=/swap=), tempo
+(tempo=/tactical=/beatsec=), world (goblin=/goblinat=/potion=/weapon=/hostile=), timing
+overrides (glidesec=/windupsec=), scripted commands (cmd=/cmdwait=/cmd2=/cmd2wait=), and
+capture (eventlog=/screenshot=/overlay=/rangeoverlay=/debugpanel=). The four the assertion
+patterns below actually lean on are **`eventlog=<path>`** (the trace channel — an ALLOWLIST,
+so check the action you want is in it), **`cmd=`/`cmd2=`** (a dev command through the real
+interception path, with `cmd2=` defaulting to the cmd anchor + 2.0s), **`ability=`** and
+**`pickup=`** (intent-level, so they bypass the focus-gated key sampler). Their semantics
+change; the parser doesn't lie. `docs/dev-commands.md` carries the annotated tables.
 
 ## Instance topology
 
@@ -38,8 +45,49 @@ overlay=). Their semantics change; the parser doesn't lie.
   input paths that need a real DisplayServer. Windowed stdout capture is UNRELIABLE
   (the exe forks a GUI child) — never depend on it; use the host log or a probe file.
 
+## The canonical two-instance invocation
+
+One copy-pasteable run — headless host as the truth channel, windowed client for real input.
+Adapt the knobs; keep the shape (tracked PIDs, redirected host stdout, an event trace).
+
+```powershell
+$godot = "C:\Users\Jon\Documents\Game Development\Engines\Godot 4.7.1\Godot_v4.7.1-stable_win64_console.exe"
+$proj  = "C:\Users\Jon\Documents\Game Development\Godot 4.x\rogues_oath"
+$out   = "$env:TEMP\ro"; New-Item -ItemType Directory -Force $out | Out-Null
+
+# HOST — headless truth channel: stdout redirected, every stamped event traced to a file.
+$h = Start-Process $godot -PassThru -RedirectStandardOutput "$out\host.log" -ArgumentList @(
+  "--headless", "--path", $proj, "--",
+  "host", "port=3000", "goblin=1", "goblinat=7,15", "eventlog=$out\events.log")
+
+# CLIENT — windowed (real DisplayServer for input/visuals); joins loopback, walks, screenshots.
+$c = Start-Process $godot -PassThru -ArgumentList @(
+  "--path", $proj, "--",
+  "join", "join=127.0.0.1:3000", "move=s,s,e", "movewait=3.0",
+  "screenshot=$out\client.png")
+
+Start-Sleep -Seconds 14                       # screenshot= self-quits its instance at ~6s
+Stop-Process -Id $h.Id, $c.Id -ErrorAction SilentlyContinue
+Get-Content "$out\events.log"                 # the assertion input
+```
+
+To script a dev command, add it to the HOST's array as one element (`"cmd=/god"`), then read
+`$out\host.log` to confirm it arrived intact — see the two arg-mangling traps below.
+
 ## Hard-won gotchas (validated in sessions, dated)
 
+- **`cmd=` values are mangled by BOTH shells, silently, in two different ways (2026-07-26 —
+  each cost a real run):**
+  - *Git Bash / MSYS path conversion:* any value that starts with `/` is rewritten to a Windows
+    path, so `cmd=/god` reaches the game as `cmd=C:/Program Files/Git/god` and parses as
+    nothing. Fix: `MSYS_NO_PATHCONV=1` on the command (or run it from PowerShell).
+  - *PowerShell argument-array splitting:* a value containing SPACES becomes several argv
+    tokens, so `cmd=/w longsword 3` arrives as `cmd=/w` plus two orphans and the command lands
+    TRUNCATED — no error, just a tuning that never happened. Pass it as a single quoted array
+    element and then VERIFY from that instance's stdout that the whole command was received;
+    if it still splits, use `--%` (stop-parsing) or set the value through the debug panel.
+  - Both fail silently in the same shape: the run completes, the assertion just quietly tests
+    the untuned game. Never assume a `cmd=` landed — read it back.
 - `hold=` samples real input gated on OS window FOCUS — only the last-launched
   (client) window reliably holds keys. Host-side movement: use `move=` (submits
   intents directly, focus-immune).

@@ -5,7 +5,8 @@ criterion), gets verified, and gets committed — with its checkbox updated in t
 A stale roadmap is a roadmap bug.
 
 Legend: `[x]` done · `[ ]` open · **[BLOCKED: …]** names the DESIGN.md Part 4 question that
-gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-few each).
+gates it (currently unused — no milestone is blocked on an open question) · **[size S/M/L]** is a
+rough per-milestone effort signal (session-or-few each).
 
 ---
 
@@ -84,7 +85,10 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   Numpad with dual-bound diagonals + gamepad d-pad/left-stick, via InputMap alone (action
   deadzones 0.2 → 0.35); click-to-move with client-side pathing — lazy `AStarGrid2D` over
   WorldGrid (`DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES` = the corner rule's wall half, octile
-  heuristics) feeding the SAME one-step intent pipe, so the server never sees a path or a
+  heuristics — *the mode name here is stale: `world_grid.gd` sets
+  `DIAGONAL_MODE_AT_LEAST_ONE_WALKABLE`, which is the v0.10.0-amended corner rule (round a single
+  wall corner, refuse the both-walls squeeze); `docs/research/procgen-minimap-m4.md` has it right*)
+  feeding the SAME one-step intent pipe, so the server never sees a path or a
   target (DESIGN §2.2.9). Per-step recompute detours around bodies via a transient avoid
   tile; two consecutive rejects drop the walk ("Stopped walking."); unreachable clicks get
   "Can't reach that."; commit-sent cue fires on fresh input only (one click = one cue); a
@@ -103,15 +107,19 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   **Done = verified 2026-07-18, two-instance:** bump kill (2×5 vs 10 HP), chase→wind-up→
   hit, dodge=whiff (with the goblin's free attack punishing the flee — §2.2.6 composing),
   AoO real damage, and a full party wipe (goblin killed host then client; session
-  survived). Player bump swing interval carries 0-0.25s retry jitter (~0.5-0.75s) — Jeff
-  feel-test pending; queued-attack-slot follow-up parked if it reads as lag.
+  survived). ~~Player bump swing interval carries 0-0.25s retry jitter (~0.5-0.75s) — Jeff
+  feel-test pending~~ — *stale: the jitter is GONE. The retry cadence is a deterministic
+  `MoveInput.held_retry_beats` (1.0 beat, pace-converted at use), so there is nothing left to
+  feel-test.* The queued-attack-slot follow-up is still parked (see the parking lot) if the
+  refused mid-rest attack reads as lag.
 
 - [x] **M3.5 — Tempo** *(2026-07-19)* **[size M]** *(plan: 2026-07-19 playtest feedback)*
   The beat becomes a variable (DESIGN §2.8): global `beat_sec`, all durations authored in
   beats, stamp-and-bake at verdict time; live +/- tempo knob (any peer requests, host
   clamps/broadcasts, readout + late-join sync); go-stop-go movement (1-beat glide +
   1-beat rest, all movers); windup experiment closed — instant strike + 2-beat visible
-  recovery both sides (machinery kept behind `windup_beats=0`); aggro persistence
+  recovery both sides (machinery kept behind `windup_beats=0` — *un-parked in v0.27.0: every melee
+  weapon authors a nonzero windup now*); aggro persistence
   (acquire-only range); disposable multi-room map + follow camera.
   **Done =** two-instance: client +/- changes both windows' cadence live (stamped
   in-flight commits finish at old tempo); go-stop-go hold; symmetric attack trades with
@@ -122,7 +130,9 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   Movement back to 1 beat total (`move_rest_beats` default 0.0, kept as a reversible/answered
   experiment); the visible slide authored to `slide_fraction` (0.7) of the beat so every step
   ends with an on-tile SETTLE (the go-stop-go LOOK without the dead time — the committed rest
-  read as lag). Tap/hold threshold moved to beats (`key_repeat_min_hold_beats`, 1.2) and now
+  read as lag). Tap/hold threshold moved to beats (`key_repeat_min_hold_beats`, 1.2 — *corrected to
+  **1.5** in the same release cycle: 1.2 is exactly 0.30s at the default beat, a knife-edge where a
+  "0.3s press" doubled frame-dependently; 1.5 is what shipped and what `move_input.gd` authors*) and now
   gates the settle phase too — the v0.7.1 double-step bug fix (any press >~0.18s used to commit
   two tiles). Monster busy-wake re-pointed to the settle remainder (speed parity restored).
   `glidesec=` now pins the action window; the broadcast slide is a fraction of it. Attacks
@@ -135,15 +145,20 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   `duration_sec` ≈ 0.7; mid-settle screenshot shows the avatar centered on a tile; attack trade
   / late-join snap / F5 reset unregressed.
   **Feel =** `slide_fraction` 0.7 — does the settle read as grid snap (raise toward 0.8 =
-  snappier, lower = floatier)? `key_repeat_min_hold_beats` 1.2 — any accidental doubles?
-  2-beat planted attack recovery vs 1-beat movement — deliberate weight or sticky? (→ decides
-  the attack-cooldown + AoO re-enable milestone, DESIGN Part 4 Q9).
+  snappier, lower = floatier)? ~~`key_repeat_min_hold_beats` 1.2 — any accidental doubles?~~
+  *(moot: 1.2 never shipped — the value was corrected to 1.5 precisely because it doubled; ask the
+  question of 1.5 if it ever recurs)*
+  2-beat planted attack recovery vs 1-beat movement — deliberate weight or sticky? *(ANSWERED by
+  v0.27.0: recovery is 4 beats now, with a 2-3 beat windup in front of it — Jeff asked for the
+  weight. Part 4 Q9 is likewise ANSWERED — unified occupancy, no separate cooldowns — so there is no
+  "attack-cooldown milestone"; the surviving item is the **AoO re-enable**, which lives in the
+  parking lot's rhythm-experiment bullet.)*
 
 - [x] **M3.7 — Arms & the Action Timeline** *(2026-07-20)* **[size M]** *(plan: 2026-07-20; v0.8.0 movement
   approved by Jon+Jeff)*
   Weapons become designer objects and actions become the animation system's beats (DESIGN §2.3.7).
   Part 4 Q9 answered — unified occupancy, no separate cooldowns (orb-walking is the anti-pillar).
-  New `WeaponType` resource (gameplay: `recovery_beats` — attack_beats until the v0.23.1 rename — /`damage`/`windup_beats`; animation: atlas +
+  New `WeaponType` resource (gameplay: `recovery_beats` — attack_beats until the v0.23.1 rename — /`damage`/`windup_beats`; *`damage` became the rolled band `damage_min`/`damage_max` in v0.26.1*; animation: atlas +
   style + phase fractions + tween knobs); the client-side weapon RIG plays the three phases as
   NORMALIZED fractions of the stamped window (anticipation-cap doctrine: startup ≤ ~0.15 for the
   instant strike, so a telegraphed greatsword — `windup_beats > 0` — stays a `.tres` away). Two
@@ -161,7 +176,11 @@ gates it · **[size S/M/L]** is a rough per-milestone effort signal (session-or-
   extended toward the target; cadence scales with `beatsec=`; movement/goblin/tempo/F5 unregressed.
   **Feel =** dagger-vs-longsword contrast (does 1 vs 2 beats read?); damage numbers (equal DPS vs
   chunky); per-weapon phase fractions; idle weapon pose; Tab as the swap key; then the telegraphed
-  greatsword (`windup_beats > 0`) paired with the AoO re-enable (Part 4 Q9).
+  greatsword (`windup_beats > 0`) paired with the AoO re-enable. *(v0.27.0 answered the telegraph
+  half by making it the DEFAULT on all three melee weapons — dagger 2 / longsword 3 / club 3 windup,
+  all recovery 4 — so the contrast now lives in the windup and there is no separate greatsword to
+  build. The AoO re-enable is still open; it is NOT gated on Part 4 Q9, which was answered in this
+  same milestone, and no attack-cooldown milestone exists — see the parking lot.)*
 
 - [ ] **M4a — Dungeon Generation** **[size M]**
   Room-and-corridor generation (its own design pass first, per DESIGN §2.7); a goal/stairs
@@ -254,9 +273,17 @@ Not scheduled — pulled in when their moment comes:
   FEEL item for Jon+Jeff, not a code item: do the spreads read (is the dagger's 2-6 exciting or
   frustrating), and does anything else want a band?
 - Crit system + yellow damage numbers (v0.10.2 made player→enemy numbers white and
-  deliberately reserved yellow for crits — Jon, 2026-07-21)
-- Class starting weapons (`PlayerClass.starting_weapon`; Jon deferred 2026-07-21 — Tab swap
-  covers it for now; revisit when classes grow stats)
+  deliberately reserved yellow for crits — Jon, 2026-07-21). **FORMALIZED v0.28.1:** the
+  reservation is now code and design, not just this bullet — `ui/damage_popup.gd` holds a named
+  `CRIT_COLOR` const (reserved and unused, pointing back here) and DESIGN §2.3.4 records the
+  four-colour convention it belongs to (red = a player took it, white = a monster did, green = a
+  heal, yellow = a crit; grey stays outside the convention as "no number happened"). So building
+  crits means giving `CRIT_COLOR` its first consumer, not picking a colour.
+- ~~Class starting weapons (`PlayerClass.starting_weapon`; Jon deferred 2026-07-21 — Tab swap
+  covers it for now; revisit when classes grow stats)~~ — **RESOLVED: it shipped, under a different
+  name.** There is no `starting_weapon` field; the capability is `PlayerClass.weapon_roster` (a
+  list — `ranger.tres` is longsword + bow), and `/class` equips `roster[0]`. A class with an empty
+  roster simply skips the weapon step. Nothing deferred remains here.
 - ~~Backstab vs never-moved targets (v0.11.0 design call: spawn facing = ZERO = un-backstabbable)~~ —
   **MOOT since v0.27.0**: the passive stopped reading facing at all (SNEAK ATTACK = flanked-by-ally OR
   stunned target, DESIGN §2.3.10), which is what Jeff's ruling amounted to. A default spawn FACING is still
@@ -354,21 +381,47 @@ Not scheduled — pulled in when their moment comes:
   unresolved fights). The v0.22.1 scripted room-D battle runs are the manual prototype of exactly this —
   they found three real bugs in one session; the bot is that method running unattended. Slot into
   docs/overnight-runbook.md when built.
-- **Equipment slot model** (v0.21.0 opened the door, deliberately didn't walk through it): the
-  `EQUIPMENT` item category and the HUD's 9 equipment sockets exist, but no armour/shield/boot/ring
-  resources do and nothing equips into a socket — the sockets are cosmetic. Its own milestone when
-  it comes: what a worn item does, how it stacks with the held weapon, and the `[Off]`-hand shield
-  the abilities track (§2.11) is waiting on. Coordinate with the build-system pass.
+- **Equipment slot model** (v0.21.0 opened the door; the door is now partly walked through). *The
+  original framing — "the `EQUIPMENT` category and the HUD's 9 sockets exist but nothing equips, all
+  nine are cosmetic, its own milestone when it comes" — is superseded by the two phases below.* What
+  remains open is the REST of the model: the other eight sockets, how a worn item stacks with the held
+  weapon beyond the body slot, and the `[Off]`-hand shield the abilities track (§2.11) is waiting on.
+  Coordinate with the build-system pass.
   **PHASE 1 SHIPPED v0.26.0 at CLASS level; PHASE 2 SHIPPED v0.27.0 as a REAL BODY SLOT** (DESIGN
   §2.3.8 / §2.10): armor is a worn `ItemType` now — `leather_armor.tres` + `chainmail.tres` carrying the
   weight band and the physical reduction, equipped into the HUD's **Body** socket by left-clicking the bag
   (the instant, busy-gated weapon-equip precedent), with `PlayerClass.starting_body_armor` seeding a class's
   kit and late joiners syncing worn gear. The class-level fields are gone; the numbers moved onto the items.
+  **v0.27.1 named the socket:** `ItemType.EquipSlot` (body / off-hand / head / hands / feet / ring /
+  amulet, serialized as an ordinal — append only, never reorder) is the discriminator the host routes
+  on, and it **refuses every slot but BODY** with its own reason, so the off-hand shield rejects cleanly
+  instead of silently replacing worn chainmail the way "any EQUIPMENT item is body armor" would have.
+  **v0.28.1** made `/class` DISCARD the piece it replaces (Jon's ruling — a debug swap must not fill
+  your bag; DESIGN §2.10 has the rationale and the "do not re-file this" note).
   STILL PARKED here: the OTHER EIGHT sockets (head / gloves / boots / rings / amulet, and the `[Off]`-hand
   shield §2.11 waits on), armor/shield items for them, the weight-PROMOTION rule (a worn set's heaviest
   piece setting the band — a no-op while body is the only armor slot), and the envisioned spellcasting /
   mobility penalties the heavy band should carry. Shield Block (§2.11.1) is still "the kite shield at class
   level" until a real off-hand item lands.
+- **Panel spin ranges exceed the host clamps** (v0.27.1 review finding, recorded 2026-07-26 — it fell
+  below that pass's report cap and was never written down). `docs/dev-commands.md` says every panel
+  widget submits the same intent the typed command would, which is true of the PIPE but not of the
+  BOUNDS: only the GAME rows derive their SpinBox range from `DevCommands._GAME_FIELD_SPECS`. The
+  WEAPONS spins are a flat 0–100 against host clamps of `damage_min`/`damage_max` [0, 999],
+  `windup_beats` [0, 30], `recovery_beats` [0.05, 30]; the CLASSES spins are 0–600 for
+  `cooldown_beats` and 0–100 otherwise, against `stun_beats` [0, 60] and `windup`/`recovery` [0, 30].
+  So a widget can offer a value the host rejects, and can hide one it would accept. Fix shape: derive
+  both spin ranges from `GameManager.DEV_*_CLAMPS` the way the game rows already do. Cosmetic today
+  (the reject is distinct and harmless); the doc carries the caveat until then.
+- **`ability_catalog` vs `class_roster` is a SPLIT INDEX** (v0.27.1 review finding, same pass, LATENT).
+  `/ab` resolves an ability only through `GameConfig.ability_catalog` (`dev_commands._dev_cmd_ability`),
+  while the debug panel's CLASSES section enumerates abilities from the `dev_snapshot`'s `classes`
+  dictionary, which is built off `class_roster` → each class's `active_abilities`. The two agree today
+  (all four abilities are catalogued), so nothing is broken. The trap: give a class an ability and
+  forget to register it in `ability_catalog`, and the panel renders rows for it whose every edit
+  rejects "unknown ability" — a GUI that looks tunable and isn't. Fix shape: either derive the catalog
+  from the roster, or warn at startup for any class ability missing from the catalog (the same shape as
+  the cross-catalog `display_name` collision guard below).
 - Ability-bar occlusion (v0.21.0, accepted at ship): the bottom-center bar covers ~10×2 tiles at the
   world frame's bottom edge — clicks pass through (`MOUSE_FILTER_IGNORE`), so it is occlusion only —
   and at very small window sizes it can overlap the bottom-left game-log CanvasLayer (identity-scaled
@@ -402,15 +455,25 @@ Not scheduled — pulled in when their moment comes:
   if the multiplier moves off 2.0, paths become mildly time-suboptimal — revisit A* weights
   then (M2.1)
 - Rhythm-experiment reversions (v0.6.0, all single-value edits): speed-tier variation
-  (three .tres values), diagonal multiplier off 1.0, AoO re-enable (now explicitly PAIRED
-  with the attack-cooldown milestone — DESIGN Part 4 Q9), click pathing re-enable *(NOTE
+  (three .tres values — partly started: `speed_lumbering` is authored at 1.5 glide-beats, unused
+  pending a hold-position behavior), diagonal multiplier off 1.0, **AoO re-enable** —
+  `attacks_of_opportunity_enabled = false` in game_config.tres, spec and code both standing, so it
+  is one bool. *(Its old gate reference was "PAIRED with the attack-cooldown milestone — DESIGN
+  Part 4 Q9". That gate is retired: Q9 was ANSWERED in M3.7 — unified occupancy, no separate
+  cooldowns — and no attack-cooldown milestone exists in the chain. What the pairing MEANT survives:
+  turning AoO on is what makes stepping out of a telegraph cost something, and since v0.27.0 shipped
+  the heavy telegraph on every melee weapon with AoO still off, that configuration has never been
+  played. It is a standalone Jon+Jeff feel pass now, gated on nothing.)*, click pathing re-enable *(NOTE
   v0.12.0: when re-enabling, gate MoveInput clicks on the HUD's world-frame rect — clicks
   currently pass through the opaque right column to hidden world tiles, and a pathing click
   there would commit an unseen, key-uncancelable walk; script default was flipped to false
   so the config-load fallback can't silently arm it — STILL OPEN after v0.21.0: the new bottom-center
   ability bar is deliberately `MOUSE_FILTER_IGNORE`, so it neither fixes nor worsens this; the opaque
-  right column is the remaining offender and the world-frame rect is still the gate to write)*, longer
-  windup telegraph — each waits on Jon+Jeff playtest verdicts.
+  right column is the remaining offender and the world-frame rect is still the gate to write)*, and
+  ~~longer windup telegraph~~ — **that last one is RESOLVED, not pending: v0.27.0 made the heavy
+  telegraph the DEFAULT** (longsword 3 / club 3 / dagger 2 windup beats against the promoted 0.25s
+  tactical beat), Jeff playtested it across v0.27.x–v0.28.0, and player bumps route through the same
+  wind-up machinery. The remaining reversions each still wait on Jon+Jeff playtest verdicts.
   *The go-stop-go REST is no longer a pending reversion — it was ANSWERED and retired in
   v0.8.0 (read as lag; kept behind `move_rest_beats=0`); the visible-slide `slide_fraction`
   (0.7) replaced it as the grid-tell knob.*
@@ -419,8 +482,11 @@ Not scheduled — pulled in when their moment comes:
   (instant strike + recovery, DESIGN §2.3.3); any future windup re-test should run WITH
   AoO re-enabled (the config where dodging costs). **RE-TEST SHIPPED v0.18.1** (Jon,
   2026-07-23): claw at `windup_beats = 1.0` with the raised-claw telegraph art the v0.7.0
-  attempts lacked — Jeff feel verdict pending (pair with the AoO re-enable per the note
-  above; `/w claw windup_beats` live-tunes). Client "left."-spam + death-"left."
+  attempts lacked. **ANSWERED YES and GRADUATED v0.27.0** — the telegraph became the default on
+  every melee weapon at 2-3 beats and Jeff kept it through two verdict rounds, so this thread is
+  closed; `claw.tres` was deleted in v0.19.0, so its live-tune recipe names a resource that no longer
+  exists (use `/w club windup_beats`, or the panel's WEAPONS section). The one thing still untested is
+  the telegraph WITH AoO on. Client "left."-spam + death-"left."
   bug: FIXED v0.6.3 (departures ride transport truth now)*
 - Dedicated audio pass: real SFX to replace the pitch-shifted placeholders, and a
   proper mix (v0.6.2 shipped the placeholder GRAMMAR: silent movement, swing-vs-impact

@@ -75,12 +75,12 @@ decision.
   plays to completion once started; no system — including UI — may cancel, interrupt-by-input,
   or redirect a committed action. Test every mechanic AND every implementation shortcut
   against: *"does this let a player back out of a decision for free?"* If yes, redesign.
-  ONE sanctioned exception: an opponent-imposed **STUN** interrupts an enemy's in-flight
-  attack/cast (crowd control, not a self-take-back — the rule guards a player's OWN
-  commitment, not an enemy's). See DESIGN §2.11. One further carve-out is **provisional and
-  toggled**: the v0.26.0 instants experiment (`instant_abilities_enabled`) suspends §2.1.3 for
-  Shield Block + Shadow Step only — DESIGN §2.11.1 is the spec and the verdict is pending; off =
-  the invariant holds everywhere. **v0.27.0 widened it once, deliberately and on Jon's approval**
+  TWO sanctioned exceptions (DESIGN §2.1's count). **First:** an opponent-imposed **STUN**
+  interrupts an enemy's in-flight attack/cast (crowd control, not a self-take-back — the rule
+  guards a player's OWN commitment, not an enemy's). See DESIGN §2.11. **Second, provisional and
+  toggled:** the v0.26.0 instants experiment (`instant_abilities_enabled`, which **ships ON**)
+  suspends §2.1.3 for Shield Block + Shadow Step only — DESIGN §2.11.1 is the spec and the verdict
+  is pending; off = the invariant holds everywhere. **v0.27.0 widened it once, deliberately and on Jon's approval**
   (Jeff's second verdict): Part 4 Q9's "no separate cooldowns" is now suspended for STRIKE abilities too
   (`ActiveAbility.cooldown_beats` — kick/shield bash 40 beats), which goes further than the original
   carve-out because a strike already pays in occupied beats. It is part of the SAME pending verdict and
@@ -136,7 +136,7 @@ Consistency, not law:
   authoritative state (HP, occupancy) lives in the referees, never on replicated nodes.
 - Naming: `snake_case.gd` scripts, `PascalCase` classes/nodes, past-tense `snake_case`
   signals (`glide_committed`), exported vars with units (`glide_beats`, `beat_sec`).
-- Script order: `extends` → signals → `@export` → `@onready` → private vars → lifecycle
+- Script order: `extends` → `const` → signals → `@export` → `@onready` → private vars → lifecycle
   (`_ready`/`_input`/`_process`) → public methods → private methods → RPCs grouped at bottom.
 - RPC shapes: client→host `@rpc("any_peer", "call_remote", "reliable")` with a
   `get_remote_sender_id()` check; host→all `@rpc("authority", "call_local", "reliable")`.
@@ -169,11 +169,15 @@ Placeholder-to-possibly-final: use it for all prototyping.
 
 ## Status
 
-- Two-instance verification: recipes, knob gotchas, and assertion patterns live in the
+- Two-instance verification: the gate recipe, knob gotchas, and assertion patterns live in the
   `harness-verify` project skill (`.claude/skills/harness-verify/`) — use it for every
-  "prove it works" gate.
-- In-game dev slash commands (`/w` `/m` `/god` `/class` `/item` `/help`) + the `cmd=` harness knob are
-  documented in **`docs/dev-commands.md`** — read it when touching live-tuning or the command framework.
+  "prove it works" gate. `debug/debug.gd`'s arg parser is the knob source of truth; the annotated
+  knob tables live in `docs/dev-commands.md`.
+- The backtick **debug tuning panel** (the primary tuning surface) and the in-game dev slash commands
+  — `/w` `/m` `/ab` `/mi` `/config` `/class` `/item` `/god` `/stun` `/ai` `/stamina` `/winded` `/snapshot`
+  `/help`, plus the `cmd=`/`eventlog=` harness knobs — are all documented in
+  **`docs/dev-commands.md`** (`/help` prints the live list). Read it when touching live-tuning, the
+  panel, or the command framework.
 - Unattended build-verify sessions follow **`docs/overnight-runbook.md`** — read it before
   running a `/goal` night or anything cron-shaped.
 - Current status + the milestone chain live in **`ROADMAP.md`** — read it at session start;

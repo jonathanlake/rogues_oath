@@ -386,8 +386,10 @@ extends Resource
 ## INSTANT ABILITIES EXPERIMENT (v0.26.0, Jon's decision 2026-07-25 — DESIGN §2.11.1). The master
 ## switch for the two INSTANT class abilities: knight **Shield Block** and rogue **Shadow Step**.
 ## An "instant" differs from every other ability in exactly two ways — it is usable MID-ACTION
-## (no busy gate), and it is gated by a per-ability COOLDOWN (the two dials below) instead of by an
-## occupied window.
+## (no busy gate), and it is gated by a per-ability COOLDOWN instead of by an occupied window.
+## (v0.28.1 comment fix: that cooldown used to be "the two dials below" — v0.27.0 deleted those two
+## GameConfig fields and moved the cooldown onto `ActiveAbility.cooldown_beats`; see the note under
+## this export. The dangling reference outlived the dials by a release.)
 ##
 ## Both of those DELIBERATELY SUSPEND standing decisions, and only inside this toggle, pending a
 ## Jon+Jeff verdict:

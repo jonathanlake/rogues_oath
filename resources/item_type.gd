@@ -57,8 +57,12 @@ enum EquipSlot { BODY, OFF_HAND, HEAD, HANDS, FEET, RING, AMULET }
 ## with no authoring surface. This makes it explicit and designer-editable: an enum-typed @export renders as
 ## an inspector dropdown, so a non-coder picks the category from a list (no magic ints in a .tres).
 ##   POTION    — auto-picked-up by walking over it (the only autopickup category, v0.21.0).
-##   EQUIPMENT — armour / rings / boots: wired but EMPTY today (no such .tres exists yet; the HUD's equipment
-##               sockets are cosmetic and the equip-slot model is a separate milestone). Manual pickup (G) only.
+##   EQUIPMENT — armour / rings / boots. Manual pickup (G) only. Two real items ship since v0.27.0
+##               (leather_armor, chainmail) and the BODY socket equips them, routed by `equip_slot`
+##               below; the other EIGHT HUD sockets are still cosmetic and the rest of the slot model
+##               is still future work (DESIGN §2.10). (v0.28.1 comment fix: this said "wired but EMPTY
+##               today — no such .tres exists yet, the sockets are cosmetic, the equip-slot model is a
+##               separate milestone" — true at v0.21.0, superseded by equipment phase 2.)
 ##   WEAPON    — for completeness of the taxonomy. A WeaponType is NOT an ItemType and is never authored here:
 ##               a weapon answers WEAPON by virtue of living in GameConfig.weapon_catalog (see
 ##               GameConfig.category_of). This value exists so the enum is total, not because it is authored.
