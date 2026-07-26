@@ -9,6 +9,40 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.26.1 (2026-07-26) — WEAPON DAMAGE BANDS: "attack range" answered.** The one line held back
+  from v0.26.0 lands. Jeff's playtest verdict had listed an **"attack range"** per weapon —
+  longsword 3-5, dagger 2-6, club 1-4 — and because the phrase had three possible readings (one of
+  which would have overturned a settled decision), nothing was built until he confirmed which he
+  meant. He confirmed **damage ranges**, so: **every hit that lands now rolls a number inside the
+  weapon's band.** The longsword hits for 3, 4 or 5; the club for anything from 1 to 4; the **dagger
+  is deliberately the wild one at 2-6** — it can chip for 2 or bite for 6, which is the price of
+  being the fast weapon. The bow, which Jeff didn't band, is authored 4-4 and so behaves exactly as
+  before.
+  **What did NOT change: you still can't miss.** This is a damage roll, not a to-hit roll. Anything
+  your swing reaches, it hits — the old parked list of miss / crit / block / dodge / resist rolls
+  stays parked. Position still decides *whether* you get hit; the band only decides *how hard*
+  (DESIGN §2.3.1, amended rather than overturned). Fists stay a fixed number too — they're the
+  bare-handed fallback, not a weapon, so nothing about them was banded.
+  Everything layers on the roll in the same order as before: rolled damage → wielder bonus →
+  passives (a backstab multiplies the number actually rolled) → armor (a knight's 25% shaves the
+  number actually earned). Rolling happens **on the host only**, so both players always see the same
+  number — the roll rides the existing hit event and no client ever guesses.
+  **Tuning:** `/w club damage_min 2` sets one edge; `/w club 3` (or `/club 3`) sets **both** edges at
+  once, which collapses the band to flat 3 damage — handy for feeling one number in isolation, and
+  it's how the automated tests pin a predictable result. Both edges show up as spin boxes in the
+  backtick panel (the WEAPONS rows now stack two per weapon so they still fit the dock), and a
+  weapon whose band is typed in backwards in its `.tres` says so out loud at startup instead of
+  quietly rolling the wrong range.
+  Also fixed in passing: **arrows were skipping the wielder's damage bonus**, which the spec had
+  always said applied to every attack. No live effect today (nothing that shoots has a bonus), but
+  the hole is closed before the first archer or strength stat inherits it.
+  **Feel questions for the next session:** does the dagger's 2-6 read as exciting or as
+  frustrating, do the spreads want widening/narrowing, and does anything else deserve a band?
+  *(Resolves DESIGN Part 4 Q11 and the ROADMAP "attack range" bullet. Verified two-instance with
+  event traces: 14 club hits all inside 1-4 across four distinct values; a collapsed band producing
+  seven identical hits; a knight taking 4 from a flat-5 club with the `armor` tag; an inverted band
+  still rolling legally; a bow arrow landing 4; whiff/contact windows unregressed.)*
+
 - **v0.26.0 (2026-07-26) — THE JEFF VERDICT: stamina graduates, class armor, recovery only on
   contact, and an instants experiment.** Driven end-to-end by **Jeff's overnight v0.25.0 playtest
   verdict (2026-07-26)** — he tuned the backtick panel all night and sent back a design ruling.

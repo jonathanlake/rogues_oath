@@ -231,10 +231,13 @@ Not scheduled — pulled in when their moment comes:
   general home; no ⇒ the toggle goes off and the code comes out — nothing is built on top until
   then); whether a shield should stop a magical smite (flagged for Jeff); whether Shadow Step
   belongs on the rogue at all (Jon's assignment, Jeff left it unassigned).
-- **Weapon "attack range" (Jeff's v0.25.0 verdict: longsword 3-5, dagger 2-6, club 1-4)** —
-  deliberately NOT implemented (DESIGN Part 4 Q11). The likeliest reading is DAMAGE ranges, which
-  would overturn §2.3.1's deterministic combat; Jon asks Jeff what he meant before anything is
-  built.
+- ~~**Weapon "attack range"** (Jeff's v0.25.0 verdict: longsword 3-5, dagger 2-6, club 1-4)~~ —
+  **RESOLVED v0.26.1**: Q11 ANSWERED (Jeff via Jon, 2026-07-26) as reading (a), DAMAGE ranges.
+  Shipped as `WeaponType.damage_min`/`damage_max` rolled per landed hit — longsword 3-5, dagger 2-6,
+  club 1-4, bow 4-4. Deterministic TO-HIT stands (DESIGN §2.3.1 amended, not overturned) and the
+  parked miss/crit/block/dodge/resist list stays parked for the build-system pass. Remaining as a
+  FEEL item for Jon+Jeff, not a code item: do the spreads read (is the dagger's 2-6 exciting or
+  frustrating), and does anything else want a band?
 - Crit system + yellow damage numbers (v0.10.2 made player→enemy numbers white and
   deliberately reserved yellow for crits — Jon, 2026-07-21)
 - Class starting weapons (`PlayerClass.starting_weapon`; Jon deferred 2026-07-21 — Tab swap

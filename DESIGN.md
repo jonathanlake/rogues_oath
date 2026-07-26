@@ -179,12 +179,23 @@ revert switch it was while this was provisional.
 
 ### 2.3 Combat Resolution
 
-1. **Deterministic combat (decided 2026-07-18, Jeff via Discord + Jon — Rogue Fable III
-   baseline, which has no to-hit rolls):** every attack that resolves against a body lands
-   for its fixed damage. The original accuracy/evasion two-step roll and the roll-type list
-   (miss, crit, block, passive dodge, spell resist) are **PARKED** for the future
-   build-system pass — if rolls ever return, they return through that design, not by
-   default. Outcome variety comes from POSITION, not dice (see item 3).
+1. **Deterministic TO-HIT (decided 2026-07-18, Jeff via Discord + Jon — Rogue Fable III
+   baseline, which has no to-hit rolls):** every attack that resolves against a body **lands**.
+   The original accuracy/evasion two-step roll and the roll-type list (miss, crit, block,
+   passive dodge, spell resist) are **PARKED** for the future build-system pass — if those
+   rolls ever return, they return through that design, not by default. Whether you get hit
+   at all is decided by POSITION, not dice (see item 3).
+   **AMENDED v0.26.1 (Jeff, 2026-07-26 — the Q11 answer): the DAMAGE NUMBER is rolled.**
+   Each landed hit rolls uniformly in the weapon's authored band
+   (`WeaponType.damage_min`..`damage_max`, §2.3.7) — longsword 3-5, dagger 2-6, club 1-4,
+   bow 4-4. This is deliberately the *narrow* half of the original roll list: **position
+   decides IF you are hit, the band decides how hard.** There is still no miss, no crit, no
+   dodge and no block roll — a swing that reaches a body always connects, so the parked list
+   above stays parked and the §2.1 "decisions carry risk" reading is unchanged (the risk was
+   never "did I connect"). The roll is HOST-side at one seam per attack kind and rides the
+   existing attack event; a collapsed band (min == max) is exactly fixed damage, which is what
+   the `/w <weapon> <n>` shorthand authors. Applies to weapon damage only — fists, kicks,
+   heals, smites and ability damage stay fixed numbers.
 2. All combat stats are passive, build-derived numbers (v1: placeholder stat blocks scaled
    from RF3, tuned live in the editor — player tuning lives in player.tscn's exports,
    monster tuning in the MonsterType `.tres` under resources/monsters/; the values are
@@ -241,32 +252,46 @@ revert switch it was while this was provisional.
    rejection — see 2.2.8.)*
 5. Combat presentation stays abstracted (targeted commands, no implied precise physical
    contact). Do not show pre-commit hit percentages.
-6. RNG budget (stands even under deterministic damage, for any future roll): keep output
-   randomness low-magnitude. Replayability comes from input randomness — dungeon gen,
-   loot, encounters — not from swingy rolls. A bad outcome should always leave the player
-   a real next decision, never just erase a correct one.
+6. RNG budget: keep output randomness low-magnitude. Replayability comes from input
+   randomness — dungeon gen, loot, encounters — not from swingy rolls. A bad outcome should
+   always leave the player a real next decision, never just erase a correct one.
+   **The damage band IS this rule's instrument (v0.26.1).** Now that a hit rolls (item 1),
+   the *spread* is the dial: it is authored PER WEAPON, so a weapon's swinginess is part of
+   its identity rather than a global noise level. Dagger 2-6 is the deliberately swingy pick
+   (its low end is a real cost for its 1-beat tempo); longsword 3-5 is the dependable one;
+   bow 4-4 is flat. Budget check for any future band: the worst roll must still be a hit
+   worth having, so the low end stays meaningful — a band whose floor makes a correct
+   engagement feel erased is over budget, and the fix is a narrower band, not a re-roll.
 7. **§2.3.7 — Weapons as objects; actions as beats (v0.9.0, M3.7).** A player's weapon is a
    designer resource (`WeaponType`, `resources/weapons/*.tres`) — add a weapon by dropping a
    `.tres`, never by touching code (the §2.5 designer rule). Two field groups:
    - **Gameplay** (read HOST-side by the combat referee; never the wire): `recovery_beats` (renamed from `attack_beats` v0.23.1 — the
      BEATS this attack OCCUPIES on the attacker's one timeline — the whole action window, no
-     separate cooldown, per Part 4 Q9), `damage` (deterministic), and `windup_beats` (0 = the
+     separate cooldown, per Part 4 Q9), **`damage_min` / `damage_max`** (the rolled band, v0.26.1 —
+     replacing the single deterministic `damage`; see item 1), and `windup_beats` (0 = the
      instant strike at commit — today's default for both weapons; > 0 = the preserved
      telegraph/whiff machinery for a future heavy weapon). HONEST STATUS (v0.9.0): the
-     referee reads the equipped weapon's `damage` and `recovery_beats` when it stamps a bump;
+     referee reads the equipped weapon's damage band and `recovery_beats` when it stamps a bump;
      `windup_beats` is AUTHORED-BUT-NOT-YET-WIRED for players — the player-side referee hookup
      (bump-with-windup through the proven monster machinery) ships with the first windup
      weapon, a deliberate M3.7 scope cut. The legacy player exports
      (`melee_damage`/`attack_recovery_beats`) are the no-weapon fallback only.
-   - **Base + wielder modifier (v0.19.0).** A weapon's `damage`/`windup_beats`/`recovery_beats`
+   - **Base + wielder modifier (v0.19.0).** A weapon's damage band /`windup_beats`/`recovery_beats`
      are the BASE; the wielder adds a SIGNED modifier on top, floored at 0 by the referee —
      `MonsterType.bonus_damage`/`bonus_windup_beats`/`bonus_recovery_beats` and `Player.bonus_damage`
      (the future strength-stat hook). This is how the SAME weapon is slower in a monster's hands than
      a player's: the goblin's **club** has base `windup_beats` 0 (instant as a player bump) and the
      goblin adds **+1 windup** to telegraph it (§2.1) plus **+1 recovery** so its attack rate sits
      below the player's. The beat-bonuses are **melee-only** (a ranged weapon's `windup_beats` is its
-     draw — a wielder bonus must never retune the bow); `bonus_damage` applies to all. The passive
-     `modify_damage` chain layers on top of the flat bonus (weapon base → wielder bonus → passives).
+     draw — a wielder bonus must never retune the bow); `bonus_damage` applies to all.
+     **LAYER ORDER, restated for the band (v0.26.1): rolled weapon damage → flat wielder
+     `bonus_damage` → passive `modify_damage` chain → armor mitigation (§2.3.8) → HP.** The roll is
+     the base the rest of the stack operates on, so a backstab multiplies the number that was
+     actually rolled and armor shaves the number that was actually earned. **Arrow fix, same
+     release:** ranged shots used to skip the wielder bonus entirely — a drift from this section's
+     own "`bonus_damage` applies to all" — and the ranged roll site now adds it, so the code matches
+     the spec. Zero live change today (there are no monster archers and `Player.bonus_damage` is 0);
+     it is closed so the first strength stat or archer doesn't inherit the hole.
      This split IS the loot spine: enemies drop their equipped weapon on death (v0.19.x) and the player
      equips the very same object, resolving its stats through their own (0-today) modifiers.
    - **Animation** (presentation-only; gameplay NEVER reads these): `atlas_coords` into
@@ -283,8 +308,8 @@ revert switch it was while this was provisional.
    kept ≤ ~0.15 of the window (the strike lands within the causality-perception threshold). A
    readable pre-hit windup is exactly what `windup_beats > 0` is for, where the damage genuinely
    lands later and a long startup is honest. The first two authored weapons — dagger (1 beat,
-   quick, `damage` 2) and longsword (2 beats, today's feel, `damage` 5) — carry equal-ish DPS
-   with a chunk/quick contrast, all Feel=-tunable in the `.tres`.
+   quick, band **2-6** since v0.26.1) and longsword (2 beats, today's feel, band **3-5**) — carry
+   equal-ish DPS with a chunk/quick contrast, all Feel=-tunable in the `.tres`.
    **Weapon swap** is a dev-era control this milestone (the tempo-keys spirit): refused while
    busy (the Commitment Rule — no swapping out of a committed action), otherwise instant,
    host-validated, broadcast, over a hardwired 2-weapon roster (`GameConfig.weapon_roster`). The
@@ -1057,7 +1082,17 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
     future server-side vision system trims visibility inside the rect, at which point this
     cap becomes pure presentation and data-level fairness takes over.
 
-11. **What did "attack range" mean? [BLOCKS IMPLEMENTATION of that line item]** Jeff's v0.25.0
+11. **What did "attack range" mean? ANSWERED (Jeff via Jon, 2026-07-26): reading (a) — DAMAGE
+    ranges. Implemented v0.26.1.** Each landed hit rolls in the weapon's authored band, exactly as
+    Jeff listed them: longsword 3-5, dagger 2-6, club 1-4 (bow, which he did not band, is authored
+    4-4 — no behavior change). The fields are `WeaponType.damage_min` / `damage_max`, designer-
+    editable per the §2.5 rule and live-tunable via `/w`. It amends **§2.3.1 rather than overturning
+    it** — the deterministic *to-hit* stands (every attack that reaches a body still lands; the
+    parked miss/crit/block/dodge/resist list STAYS parked for the build-system pass), and §2.3.6's
+    RNG budget is satisfied by making the SPREAD per-weapon identity instead of global noise. See
+    the amended §2.3.1 item 1 and the §2.3.6 note; the reading below is preserved as the framing
+    that produced the question.
+    *The original framing, preserved:* Jeff's v0.25.0
     playtest verdict (2026-07-26) listed an **"attack range" per weapon: longsword 3-5, dagger 2-6,
     club 1-4** — and the phrase has at least three readings, one of which contradicts a settled
     decision, so **nothing was built** in v0.26.0 (Jon's call, 2026-07-25). The readings:
@@ -1071,9 +1106,8 @@ IMPLEMENTATION]** need answers before the affected system gets built; the rest c
     unable to hit an adjacent body, which reads wrong for a dagger).
     (c) Something else entirely — beats, or a per-weapon damage band he wants tunable rather than
     rolled.
-    **Ask Jeff which, then design.** Related, already answered nearby: ranged reach is
-    `WeaponType.range_tiles` (§2.9) and damage is a single deterministic `damage` number (§2.3.7),
-    so whichever reading wins, the change lands in `WeaponType` and is designer-editable.
+    *(That framing predicted correctly where the change would land: it is entirely inside
+    `WeaponType`, designer-editable, and ranged reach remains the separate `range_tiles` (§2.9).)*
 
 ---
 
