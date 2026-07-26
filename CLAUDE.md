@@ -46,6 +46,18 @@ irrevocable the moment you make them. 2D top-down, Godot 4.x, GL Compatibility r
 
 ---
 
+## Effort Sizing (Jon, 2026-07-26)
+
+Before starting any task, state the expected scale up front ("quick — ~10 min" vs "full
+pipeline — 45+ min"). When both a quick path and a thorough path genuinely exist, ASK which
+Jon wants and recommend one. Calibration: a pinned-spec change on an existing seam → direct
+implementation, boot check + one targeted harness assertion. The full pipeline (Opus dispatch,
+complete two-instance matrix, GLM reviews) is reserved for changes that touch the referees'
+commitment/occupancy machinery, add networked events, or redesign across systems — and for
+anything shipping in a release build when Jon hasn't chosen otherwise.
+
+---
+
 ## Ground Rules
 
 The short list — only what protects the game's identity. Everything here traces to a DESIGN.md
