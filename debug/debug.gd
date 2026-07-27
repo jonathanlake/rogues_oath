@@ -81,6 +81,16 @@ var _has_ability: bool = false
 var _ability_wait_sec: float = -1.0
 var _ability_delay_sec: float = 0.5
 
+# abilityat=<index>@<x>,<y> (v0.34.0): submit ONE use_ability intent carrying a TARGET TILE — the TARGETED
+# ability shape (the druid's Entangling Roots), which `ability=` cannot express because a targeted press
+# arms a CLICK CURSOR rather than sending a packet. Two focus-gated input layers stand between a scripted
+# run and that cast (the number key, then the mouse click), and only ONE window can hold focus on a
+# two-instance machine — so the scripted path bypasses both and exercises the INTENT, exactly as `shoot=`
+# does for the bow. Parse shape is shoot='s tile list with an `<index>@` prefix. Fires at the ability anchor.
+var _ability_at_index: int = -1
+var _ability_at_tile: Vector2i = Vector2i.ZERO
+var _has_ability_at: bool = false
+
 # pickup=<n> (v0.21.0): submit n pickup_item intents (the G key) through the real pipe from either role, so the
 # manual-pickup flow is scriptable. Exact mirror of ability=: the G key sampling is focus-gated like the number
 # keys, so a scripted two-instance run can't reach it on the unfocused window — this bypasses the sampler and
@@ -344,6 +354,9 @@ func _ready() -> void:
 			_event_log_path = arg.trim_prefix("eventlog=")
 		elif arg.begins_with("abilitydelay="):
 			_ability_delay_sec = arg.trim_prefix("abilitydelay=").to_float()
+		# v0.34.0 — the TARGETED cast's knob (no prefix clash with `ability=`: the 8th character differs).
+		elif arg.begins_with("abilityat="):
+			_parse_ability_at(arg.trim_prefix("abilityat="))
 		elif arg.begins_with("ability="):
 			_parse_ability_list(arg.trim_prefix("ability="))
 		elif arg.begins_with("abilitywait="):
@@ -591,6 +604,10 @@ func _schedule_input_knobs(default_anchor_sec: float) -> void:
 		_schedule_moves(move_anchor)
 	if _has_ability:
 		_schedule_ability(_ability_wait_sec if _ability_wait_sec >= 0.0 else move_anchor)
+	# abilityat= shares ability='s anchor (abilitywait=) — the two are the same kind of press and a run
+	# normally uses one or the other.
+	if _has_ability_at:
+		_schedule_ability_at(_ability_wait_sec if _ability_wait_sec >= 0.0 else move_anchor)
 	# pickup= fires at its own anchor (default the move anchor) so a scripted run can walk ONTO a non-potion
 	# item and then deliberately pick it up — the two halves of the v0.21.0 potion-only autopickup split.
 	if _pickup_count > 0:
@@ -1008,6 +1025,35 @@ func _parse_ability_list(spec: String) -> void:
 			push_warning("[Debug] ability=: malformed index '%s' (skipped)" % text)
 
 
+## abilityat= (v0.34.0): fire ONE use_ability intent carrying {index, target_tile} — the TARGETED cast the
+## key+click path produces, submitted straight onto the pipe. Same one-public-entry, role-agnostic shape as
+## _schedule_ability; the host validates the sender's class ability, its range from ITS occupancy, busy and
+## cooldown, then commits the channel. A REJECT prints on THIS instance's stdout.
+func _schedule_ability_at(delay_sec: float) -> void:
+	await get_tree().create_timer(delay_sec).timeout
+	print("[Debug] abilityat: submitting use_ability index=%d target_tile=%s" % [
+		_ability_at_index, _ability_at_tile])
+	NetEvents.submit_intent("use_ability", { "index": _ability_at_index, "target_tile": _ability_at_tile })
+
+
+## Parse `<index>@<x>,<y>` (e.g. "0@12,7") into the single targeted-cast press. ONE press, not a list: a
+## targeted cast carries a tile per press, so a list would need a tile per entry and no test wants two casts
+## inside one cooldown anyway. A malformed spec warns and arms nothing (the run continues, as with every
+## other knob), rather than firing a cast at a guessed tile.
+func _parse_ability_at(spec: String) -> void:
+	var halves := spec.split("@", false)
+	if halves.size() != 2 or not halves[0].strip_edges().is_valid_int():
+		push_warning("[Debug] abilityat=: malformed spec '%s' (expected <index>@<x>,<y>; ignored)" % spec)
+		return
+	var parts := halves[1].strip_edges().split(",", false)
+	if parts.size() != 2 or not parts[0].strip_edges().is_valid_int() or not parts[1].strip_edges().is_valid_int():
+		push_warning("[Debug] abilityat=: malformed tile in '%s' (ignored)" % spec)
+		return
+	_ability_at_index = halves[0].strip_edges().to_int()
+	_ability_at_tile = Vector2i(parts[0].strip_edges().to_int(), parts[1].strip_edges().to_int())
+	_has_ability_at = true
+
+
 ## pickup= (v0.21.0): submit the scripted pickup_item intents after the anchor delay. Deliberately NO spacing
 ## between them — a count > 1 lands every intent in the SAME frame, which is the exact adversarial case for the
 ## GroundItem.on_tile is_queued_for_deletion guard (queue_free sets the flag synchronously but defers the tree
@@ -1052,7 +1098,11 @@ func _log_net_event(event: Dictionary) -> void:
 	# caused, so "it drew but loosed nothing" and "it loosed and missed" read identically. projectile_launched
 	# carries the shooter, the exact path and the recovery stamp; projectile_ended carries the outcome
 	# (hit / spent / blocked). Both are needed to assert a MONSTER archer at all.
-	if not (action in ["glide_to", "windup", "heal_cast", "smite_cast", "heal", "attack", "died",
+	# v0.34.0: root_cast joined the set — the druid's channel is the ONE observable that says the cast was
+	# accepted and committed at all (its LAND is a status_applied, its miss a whiff `attack`), so without it a
+	# refused press and a dodged cast read identically in a trace. status_applied / status_expired were
+	# already in, and they carry the condition NAME, so ROOTED needed no allowlist change of its own.
+	if not (action in ["glide_to", "windup", "heal_cast", "smite_cast", "root_cast", "heal", "attack", "died",
 			"status_applied", "status_expired",
 			"item_picked_up", "item_pickup_full", "item_pickup_available", "item_used", "equip_item",
 			"ai_decision", "stamina", "stamina_recovery", "thinking", "exhausted", "banter",

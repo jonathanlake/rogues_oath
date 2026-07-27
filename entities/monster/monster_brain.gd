@@ -425,6 +425,14 @@ func _think() -> void:
 				_reschedule()
 			return
 
+	# ROOTED (v0.34.0 conditions): the roots hold this monster in place, so every STEP below is a glide the
+	# referee will refuse — skip straight to the re-think cadence rather than spending a submit per think on
+	# a guaranteed reject. Placed HERE, below the adjacent-attack rung, because rooted only blocks MOVEMENT:
+	# a rooted goblin still swings at anything in reach, which is the whole "the condition fights back"
+	# ruling. The referee's gate is still the authority — this is spam control, not adjudication.
+	if _is_rooted():
+		_reschedule()
+		return
 	# Not adjacent: step toward the NEAREST player by path length over the walls-only grid. Body
 	# occupancy is deliberately not in that grid (bodies are volatile), so the referee's validator
 	# is the authority on whether the chosen step is actually free.
@@ -473,6 +481,10 @@ func _think() -> void:
 ## notify_busy_released still wakes us the moment the window ends. Only a REAL glide (from != to) can
 ## still pipeline, which is the only case this function was ever meant to serve.
 func _try_pipeline_next_step() -> bool:
+	# ROOTED (v0.34.0): a held body has no next step to queue — fall to the backstop, which re-decides at
+	# the window's end (by which time the root may have expired).
+	if _is_rooted():
+		return false
 	# A KITER never chases (v0.19.10), so it must never pipeline a chase step — fall to the backstop so the
 	# next boundary re-decides flee/smite/hold via _act_as_kiter.
 	if _monster_type != null and _monster_type.flees_players:
@@ -603,6 +615,11 @@ func _act_as_kiter(my_tile: Vector2i, targets: Array) -> void:
 ## is blocked — the caller then tries a smite / holds. A ZERO away vector (impossible: two bodies never share
 ## a tile) yields no candidates.
 func _flee_step(my_tile: Vector2i, nearest_tile: Vector2i) -> bool:
+	# ROOTED (v0.34.0): you cannot run from what has your ankles. Report the same "every away-step is
+	# blocked" decline a cornered kiter reports, so the caller falls through to a smite / hold — which is
+	# precisely the intended play against a rooted caster.
+	if _is_rooted():
+		return false
 	var away := (my_tile - nearest_tile).sign()
 	for dir in _flee_candidates(away):
 		var dest: Vector2i = my_tile + dir
@@ -854,6 +871,11 @@ func _execute_candidate(candidate: Dictionary, my_tile: Vector2i, targets: Array
 		# range (then this branch's in_range case casts), healed by someone else, or dead (score collapses
 		# to whatever is next). A blocked/refused step falls through to the next candidate like any decline.
 		if not bool(data.get("in_range", true)):
+			# ROOTED (v0.34.0): the approach WALK is a step submission, so a rooted healer declines it and
+			# lets the next candidate (a smite, a swing) have its turn. The CAST leg below is untouched —
+			# a rooted healer whose patient IS in range still heals.
+			if _is_rooted():
+				return false
 			var toward := _first_step_toward(my_tile, [data.get("approach_tile", Vector2i.ZERO)])
 			if toward == Vector2i.ZERO:
 				return false
@@ -908,6 +930,10 @@ func _execute_candidate(candidate: Dictionary, my_tile: Vector2i, targets: Array
 		# and reports false when every away-step is blocked (cornered) — exactly the decline this loop wants.
 		return _flee_step(my_tile, data.get("tile", Vector2i.ZERO))
 	if action == UtilityScorer.ACTION_APPROACH:
+		# ROOTED (v0.34.0): the utility chase is a step submission like every other — decline so a
+		# scoring candidate that can still act (melee, smite) gets its turn instead.
+		if _is_rooted():
+			return false
 		var dir := _first_step_toward(my_tile, targets)
 		if dir == Vector2i.ZERO:
 			return false
@@ -1177,6 +1203,20 @@ func _authoritative_tile() -> Vector2i:
 func _recovery_locks_actions() -> bool:
 	return GameManager.config.recovery_locks_actions and _referee != null \
 			and _referee.is_recovering(_entity_id)
+
+
+## ROOTED read (v0.34.0 conditions, DESIGN §2.13): are this monster's feet held? The COMBAT referee owns the
+## predicate (is_rooted) — this brain only asks. The exact MIRROR-IMAGE of _recovery_locks_actions above: that
+## one gates every ACTION site and no movement site; this one gates every MOVEMENT site (chase step, pipelined
+## step, flee step, heal-approach walk, utility approach) and no action site. A rooted monster still swings,
+## smites and heals — "the condition fights back" is Jon+Jeff's ruling, and it is what makes a root a
+## positioning tool rather than a stun.
+##
+## UNLIKE the action lockout, this is NOT the authority: MoveReferee._validate_glide refuses a rooted glide
+## regardless. The brain checks only so a held monster does not burn one refused submit per think for the
+## whole window. Null combat ref (a client's brain, which never activates) reads false.
+func _is_rooted() -> bool:
+	return _combat != null and _combat.is_rooted(_entity_id)
 
 
 ## v0.28.0: back off to the END of the recovery wait when the lockout is what stopped us, and to the normal

@@ -9,6 +9,28 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.34.0 (2026-07-27, overnight) — THE DRUID, ENTANGLING ROOTS, AND "CONDITIONS".** Second half
+  of the overnight batch — Jeff's spec, built to the answers Jon gave before bed.
+  **CONDITIONS ARE NOW A SYSTEM.** Stun pioneered the shape; there's now a general registry beside
+  it, and the first new condition is **ROOTED: you cannot move, but you can still fight** — roots
+  hold your feet, not your arms. Re-rooting refreshes the clock. Three ways out: wait it out;
+  **Shadow Step** (it ignores roots AND breaks them — teleporting isn't stepping, so the rogue has
+  a designed escape); and the new **`root breaks on damage` toggle (ships OFF** — flip it in the
+  panel to test Jon's "hitting the rooted thing frees it" variant).
+  **THE DRUID IS THE SEVENTH CLASS** — leather armor, club, and **Entangling Roots**: press 1 and
+  a green range ring appears (targeting mode — right-click or press 1 again to cancel, it costs
+  nothing until you click), click an enemy, and after a short cast whoever is on that tile is
+  rooted for 30 beats. It's dodgeable exactly like a shaman's smite — step off the tile during
+  the cast and it hits dirt. 40-beat cooldown (same experiment umbrella as kick/bash). `/root`
+  and `/ab entangling_roots` exist for tuning; smart-casting is noted as a future option.
+  **Rooted goblins keep fighting.** A rooted goblin stops chasing but still swings if you stand
+  next to it — test accordingly.
+  **Verified two-instance overnight:** a druid rooted a joined client's character (their movement
+  was refused for exactly the rooted window, then resumed — captured in the client's own event
+  log); Shadow Step broke a root 2.5s into a 7.5s window; the damage-break toggle snapped a
+  goblin's 15s root at the exact moment a dagger hit landed, and with the toggle off the same
+  root held through four hits.
+
 - **v0.33.0 (2026-07-27, overnight) — THE GOBLIN PICKS UP A BOW.** First half of the overnight
   batch Jon and Jeff spec'd before bed.
   **A REGULAR GOBLIN CAN NOW SHOOT.** Not a new "archer" archetype — the same goblin, same stats,

@@ -87,6 +87,9 @@ const _SHARED_DIALS := [
 	# shout). Sits with the other monster-AI dials rather than the stamina block: it tunes who joins a
 	# fight, not how anybody moves.
 	{ "label": "rally travel", "field": "rally_travel_tiles", "min": 0, "max": 40, "step": 1 },
+	# v0.34.0 conditions — the ROOT's break-on-damage question, shipped OFF. On = any damaging hit frees a
+	# rooted target; off = the root runs its authored beats whatever you do to it.
+	{ "label": "root breaks on damage", "field": "root_breaks_on_damage", "bool": true },
 	# v0.29.0 — the TESTING PIN, deliberately last in the group so it doesn't read as a balance dial:
 	# everyone resolves tactical while it is on, which also runs the stamina system everywhere.
 	{ "label": "force tactical", "field": "force_tactical_pace", "bool": true },
@@ -94,10 +97,12 @@ const _SHARED_DIALS := [
 
 const _WEAPON_FIELDS := ["damage_min", "damage_max", "windup_beats", "recovery_beats"]
 
-## The five tunable ABILITY fields (v0.27.0 CLASSES section) — the same list GameManager.DEV_ABILITY_FIELDS
-## enforces host-side, restated here only to fix the ROW ORDER on screen (a snapshot dictionary's key order
-## is insertion order, which is that same list — but the panel should not depend on that for its layout).
-const _ABILITY_FIELDS := ["damage", "stun_beats", "windup_beats", "recovery_beats", "cooldown_beats"]
+## The SIX tunable ABILITY fields (v0.27.0 CLASSES section; `root_beats` joined in v0.34.0) — the same list
+## GameManager.DEV_ABILITY_FIELDS enforces host-side, restated here only to fix the ROW ORDER on screen (a
+## snapshot dictionary's key order is insertion order, which is that same list — but the panel should not
+## depend on that for its layout). A field missing from this list is simply not shown; keep them in step.
+const _ABILITY_FIELDS := ["damage", "stun_beats", "windup_beats", "recovery_beats", "cooldown_beats",
+	"root_beats"]
 
 # Pending widget edits: row key -> {cmd, args}. Keyed so scrubbing a SpinBox collapses to one
 # intent per flush; flushed by _flush_timer 0.3s after the last change.
@@ -557,8 +562,16 @@ func _rebuild_class_grid() -> void:
 			var spin := SpinBox.new()
 			spin.custom_minimum_size = Vector2(80, 0)
 			spin.min_value = 0.0
-			# Cooldowns reach 600 beats (the instants band); every other ability field is well under 100.
-			spin.max_value = 600.0 if field == "cooldown_beats" else 100.0
+			# Cooldowns reach 600 beats (the instants band); root_beats reaches its own 120 host clamp
+			# (v0.34.0 — a 30-beat shipped hold has real headroom above it); every other ability field is
+			# well under 100. Still hand-written rather than derived from DEV_ABILITY_CLAMPS — the panel's
+			# known spin-bounds gap, tracked in ROADMAP's parking lot.
+			if field == "cooldown_beats":
+				spin.max_value = 600.0
+			elif field == "root_beats":
+				spin.max_value = 120.0
+			else:
+				spin.max_value = 100.0
 			spin.step = 1.0 if field == "damage" else 0.5
 			spin.set_value_no_signal(float(fields[field]))
 			var key := "ab:%s:%s" % [slug, field]

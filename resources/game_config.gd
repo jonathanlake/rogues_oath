@@ -468,6 +468,24 @@ extends Resource
 ## strike) carries its own, tuned per `.tres` via `/ab` or the panel's CLASSES section instead of
 ## through two hand-written GameConfig fields that only two abilities could ever use.)
 
+## BREAK-ON-DAMAGE for the ROOTED condition (v0.34.0 conditions framework). OFF by default, which is
+## Jon+Jeff's shipped answer: a root lasts its authored beats and hitting the rooted target does not free
+## it, so Entangling Roots is a reliable lock-down rather than a thing your own party accidentally
+## cancels. ON = any hit that deals damage > 0 to a rooted entity clears the root immediately (its normal
+## `status_expired` doubles as the "released early" cue — no second event shape).
+##
+## A TOGGLE rather than a decision because the two readings are both defensible and only a playtest can
+## separate them: OFF makes the druid a controller (the party focuses the held target freely), ON makes
+## the root a SETUP that costs you the moment you cash it in. This is the dial that answers it.
+##
+## FUTURE INTERACTION, recorded now so it is not discovered by surprise: nothing in the game deals
+## damage-over-time yet. When something does, a DOT ticking on a rooted target would break the root on
+## its first tick with this ON — i.e. the toggle would silently become "roots last one DOT tick". The
+## fix at that point is to exempt the DOT damage kind here, not to re-litigate the toggle.
+##
+## Read HOST-side at the ONE apply_damage seam (CombatReferee), live at every hit — never a client value.
+@export var root_breaks_on_damage: bool = false
+
 ## ARMOR FLAT REDUCTION per weight band (v0.27.0, Jeff's second playtest verdict). The FLAT half of the
 ## two-term armor rule: a physical hit against a PLAYER is reduced by the percentage (the worn item's
 ## `phys_damage_reduction`) OR by this flat amount, **whichever leaves the target taking LESS** —

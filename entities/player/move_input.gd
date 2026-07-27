@@ -48,6 +48,11 @@ signal path_target_cleared
 ## submits the "shoot" intent (it owns the wire, exactly as it does move_requested → glide_to). Fire-and-
 ## forget — no latch here; the host validates range/busy and rejects to sender (the bonk fires generically).
 signal shoot_requested(tile: Vector2i)
+## A left-click while TARGETING MODE is armed (v0.34.0): the clicked tile is the target for the armed
+## ability slot. The parent submits the "use_ability" intent (it owns the wire, exactly as it does
+## move_requested → glide_to and shoot_requested → shoot). Fire-and-forget — the latch clears as this is
+## emitted; the host validates range/busy/liveness and rejects to sender (the bonk fires generically).
+signal ability_target_picked(index: int, tile: Vector2i)
 
 # ── Exports ───────────────────────────────────────────────────────────────────
 
@@ -83,7 +88,14 @@ signal shoot_requested(tile: Vector2i)
 
 ## Set by the parent: true only on the local player's node. A remote/disabled MoveInput never
 ## samples (it still exists in the scene so the node graph is uniform on every peer).
-var enabled: bool = false
+##
+## SETTER (v0.34.0): flipping this OFF also drops the targeting latch, so a sampler that stops being ours
+## can never hold an armed cursor. One of the four latch rules, enforced at the one place `enabled` changes.
+var enabled: bool = false:
+	set(value):
+		enabled = value
+		if not value:
+			_targeting_index = -1
 
 ## The equipped weapon's range in tiles, pushed by the parent (Player.set_weapon) whenever the weapon
 ## changes (v0.17.0). > 0 = RANGED: a left-click SHOOTS at the clicked tile instead of stepping. 0 = melee
@@ -135,6 +147,20 @@ var _current_tile: Vector2i
 # cancelled by any key sample, dropped on arrival/unreachable/reject-cap.
 var _target_tile: Vector2i
 var _has_target: bool = false
+# TARGETING MODE latch (v0.34.0): the ability slot index whose cursor is armed, or -1 for "not targeting".
+# PURELY CLIENT-SIDE and PRE-COMMIT — nothing has been submitted while it is set, so cancelling it is not a
+# take-back and the Commitment Rule is not in play (the commitment begins at the host's verdict, §2.2.8).
+#
+# THE LATCH RULES, in one place:
+#  - MOVEMENT KEYS DO NOT TOUCH IT. You can walk while lining a cast up, exactly as you can while holding a
+#    bow ready — and it costs nothing, because the host re-validates range from your CURRENT tile at click
+#    time, so a walk that leaves the target out of reach earns an honest "Out of range." rather than a
+#    silently stale aim.
+#  - ANY ABILITY KEY CLEARS IT FIRST (in main.gd, which owns the keys). So the same key twice = arm then
+#    pure cancel, and a different key = cancel then that key's own normal behavior. One rule, no modes.
+#  - RIGHT-CLICK CANCELS (below).
+#  - It clears when `enabled` flips off, and death/respawn frees this whole node, so no latch survives a life.
+var _targeting_index: int = -1
 # The last direction submitted for the target walk — on a reject, _current_tile + _last_dir is
 # the tile the referee refused, which becomes the transient avoid tile for the next recompute.
 var _last_dir: Vector2i = Vector2i.ZERO
@@ -256,6 +282,17 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton):
 		return
 	var mouse := event as InputEventMouseButton
+	# RIGHT-CLICK CANCELS AN ARMED CURSOR (v0.34.0), checked before the left-button gate below. This is the
+	# ONLY thing the right button does in the game — the handler has always early-returned on any non-LEFT
+	# button and nothing else binds it — so claiming it costs nothing and needs no modifier. Cancelling is
+	# PRE-COMMIT: nothing was submitted, so this is not a take-back (§2.2.8 — commitment begins at the
+	# host's verdict). Silent by design; the ring vanishing is the cue.
+	# No signal on cancel, deliberately: Main re-syncs the range ring off the latch every frame (see
+	# Main._update_targeting_ring), so the ring comes down on the very next frame with nothing to wire.
+	if mouse.button_index == MOUSE_BUTTON_RIGHT and mouse.pressed and _targeting_index != -1:
+		_targeting_index = -1
+		get_viewport().set_input_as_handled()
+		return
 	if mouse.button_index != MOUSE_BUTTON_LEFT or not mouse.pressed:
 		return
 	# ANY world click means "done typing" — release a focused text control BEFORE the target
@@ -278,6 +315,19 @@ func _unhandled_input(event: InputEvent) -> void:
 	# ground to deny a lane). A PLAIN click keeps the hostile-gated routing below (shoot only if the
 	# predicate is true, else fall through to step/walk). The host still adjudicates every shot regardless —
 	# this modifier only changes the CLIENT-side routing (§2.2.9 convenience), never the server's verdict.
+	# TARGETING MODE (v0.34.0), ABOVE the ranged branch so an armed cursor wins over a bow's click-to-shoot:
+	# the cursor was armed by a deliberate ability keypress, so it owns the very next click whatever is in
+	# your hands. The tile goes out as-is and the LATCH CLEARS — one arm, one click, and the host adjudicates.
+	#
+	# CLICKING ANY TILE SUBMITS, including bare ground and out-of-range ground: a misclick is the player's
+	# commit, exactly as it is with bow aim, and the host answers with its own distinct sentence ("Out of
+	# range.", or the cast simply whiffs on empty ground). Filtering client-side would mean an ignored click
+	# that looks like a dropped input — the one thing §2.2.8 forbids.
+	if _targeting_index != -1:
+		var armed := _targeting_index
+		_targeting_index = -1
+		ability_target_picked.emit(armed, tile)
+		return
 	if weapon_range_tiles > 0:
 		if mouse.shift_pressed:
 			# Explicit ground fire: no predicate check, no fall-through — the modifier IS the intent.
@@ -340,6 +390,26 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 # ── Public methods ────────────────────────────────────────────────────────────
+
+## ARM the targeting cursor for ability slot `index` (v0.34.0), pushed down by the parent (which is pushed
+## by Main, which owns the 1-5 keys). The next left-click emits ability_target_picked and clears the latch.
+## Re-arming a different index just replaces it — the latch is one slot, never a queue.
+func arm_targeting(index: int) -> void:
+	_targeting_index = index
+
+
+## Drop an armed cursor without firing (v0.34.0) — the parent's cancel path, used when Main's ability-key
+## handler clears the latch before deciding what the press means. Emits NOTHING: Main is the caller and
+## already knows: the signal exists for the RIGHT-CLICK path, which Main cannot see. Idempotent.
+func cancel_targeting() -> void:
+	_targeting_index = -1
+
+
+## The armed ability slot, or -1 when no cursor is up (v0.34.0). Read by Main to decide whether a 1-5 press
+## is "arm", "cancel" or "submit". A plain state read — the sampler still owns the latch.
+func targeting_index() -> int:
+	return _targeting_index
+
 
 ## Called by the parent on glide_started(true) / glide_finished(false). While blocked, submitting
 ## is suppressed — the local glide plays to completion before the next step can go out.

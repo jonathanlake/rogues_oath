@@ -146,6 +146,13 @@ var _stun_fx_tween: Tween = null
 var _stun_fx_gen: int = 0
 # The dizzy SPRITE wobble while stunned (v0.20.2), on its own slot; reset by hide_stun.
 var _stun_wobble_tween: Tween = null
+# ROOTED tendrils (v0.34.0 conditions): green roots twisting around the FEET while a rooted condition holds
+# this body. Own fx slot + generation, the stun icon's shape exactly. Deliberately NOT in the overhead icon
+# band — that band already carries stun / block / cast / thinking / sweat and is the crowded one, while
+# roots at the feet read literally ("something has your ankles") at a glance and can coexist with any of them.
+var _rooted_fx: Node2D = null
+var _rooted_fx_tween: Tween = null
+var _rooted_fx_gen: int = 0
 # Overhead THINKING cue (v0.24.0 stamina experiment): a grey "…" held for the monster's rolled hesitation
 # window. Own fx slot + generation (never collides with stun/cast); self-clearing on a local timer —
 # there is deliberately no expire event (the duration rides the one `thinking` broadcast).
@@ -591,6 +598,55 @@ func hide_stun(gen: int = -1) -> void:
 	_stun_wobble_tween = null
 	if _sprite != null:
 		_sprite.rotation = 0.0
+
+
+## ROOTED tendrils (v0.34.0 conditions, §2.3.4): green roots writhing around the FEET (0, +8) held for
+## `hold_sec`, so a held body reads at a glance and is never confusable with the yellow overhead stun burst.
+## Driven per-peer from status_applied "rooted"; status_expired (hide_rooted) clears it, and a
+## generation-guarded LOCAL timer backs that up — exactly the stun icon's two-belt lifecycle, so a dropped
+## expiry event can never strand the visual on a body that is free to move.
+##
+## NO gameplay meaning whatsoever: the host's _conditions registry is the only truth about who is rooted.
+func play_rooted(hold_sec: float) -> void:
+	hide_rooted()
+	_rooted_fx_gen += 1
+	var gen := _rooted_fx_gen
+	var roots := Node2D.new()
+	roots.position = Vector2(0, 8)  # at the FEET, below the body's centre
+	add_child(roots)
+	_rooted_fx = roots
+	# Five tendrils fanned across the tile's width, each a tapering spike that curls upward — built from
+	# Polygon2Ds like every other cue (font-independent, no art dependency).
+	for i in 5:
+		var x := -10.0 + i * 5.0
+		var lean := -3.0 if i % 2 == 0 else 3.0
+		var tendril := Polygon2D.new()
+		tendril.polygon = PackedVector2Array([
+			Vector2(x - 1.8, 4), Vector2(x + 1.8, 4),
+			Vector2(x + lean * 0.5 + 1.0, -3), Vector2(x + lean, -9)])
+		# Two greens so the clump has depth rather than reading as one flat blob.
+		tendril.color = Color(0.20, 0.62, 0.20) if i % 2 == 0 else Color(0.32, 0.78, 0.28)
+		roots.add_child(tendril)
+	# Slow squeeze-and-release: the clump breathes for the whole window, which reads as "gripping".
+	_rooted_fx_tween = create_tween().set_loops()
+	_rooted_fx_tween.tween_property(roots, "scale", Vector2(1.12, 0.92), 0.45).from(Vector2(0.9, 1.05))
+	_rooted_fx_tween.tween_property(roots, "scale", Vector2(0.9, 1.05), 0.45)
+	if hold_sec > 0.0:
+		get_tree().create_timer(hold_sec).timeout.connect(hide_rooted.bind(gen))
+
+
+## Clear the rooted tendrils. No-arg (gen -1) = unconditional (status_expired / re-root pre-clear / death);
+## a bound generation (from the local backup timer) no-ops if a NEWER root is active — which is what makes a
+## REFRESH (the host's later root wins) survive the earlier root's local timer. Idempotent — safe any time.
+func hide_rooted(gen: int = -1) -> void:
+	if gen != -1 and gen != _rooted_fx_gen:
+		return
+	if _rooted_fx_tween != null and _rooted_fx_tween.is_valid():
+		_rooted_fx_tween.kill()
+	_rooted_fx_tween = null
+	if _rooted_fx != null and is_instance_valid(_rooted_fx):
+		_rooted_fx.queue_free()
+	_rooted_fx = null
 
 
 ## Overhead THINKING cue (v0.24.0 stamina experiment, §2.3.4-distinct): three grey dots that pulse over the

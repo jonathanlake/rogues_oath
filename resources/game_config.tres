@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="GameConfig" load_steps=19 format=3 uid="uid://caodi0fnqcjpi"]
+[gd_resource type="Resource" script_class="GameConfig" load_steps=21 format=3 uid="uid://caodi0fnqcjpi"]
 
 [ext_resource type="Script" uid="uid://cdrfkh1t65l16" path="res://resources/game_config.gd" id="1_config"]
 [ext_resource type="Resource" path="res://resources/weapons/dagger.tres" id="2_dagger"]
@@ -12,12 +12,14 @@
 [ext_resource type="Resource" path="res://resources/abilities/shield_bash.tres" id="16_bash"]
 [ext_resource type="Resource" path="res://resources/abilities/shield_block.tres" id="17_block"]
 [ext_resource type="Resource" path="res://resources/abilities/shadow_step.tres" id="18_step"]
+[ext_resource type="Resource" path="res://resources/abilities/entangling_roots.tres" id="19_roots"]
 [ext_resource type="Resource" path="res://resources/classes/rogue.tres" id="4_rogue"]
 [ext_resource type="Resource" path="res://resources/classes/knight.tres" id="5_knight"]
 [ext_resource type="Resource" path="res://resources/classes/wizard.tres" id="6_wizard"]
 [ext_resource type="Resource" path="res://resources/classes/barbarian.tres" id="7_barbarian"]
 [ext_resource type="Resource" path="res://resources/classes/priest.tres" id="8_priest"]
 [ext_resource type="Resource" path="res://resources/classes/ranger.tres" id="9_ranger"]
+[ext_resource type="Resource" path="res://resources/classes/druid.tres" id="20_druid"]
 
 [resource]
 script = ExtResource("1_config")
@@ -28,6 +30,6 @@ click_pathing_enabled = false
 weapon_roster = Array[Resource]([ExtResource("2_dagger"), ExtResource("3_longsword")])
 weapon_catalog = Array[Resource]([ExtResource("2_dagger"), ExtResource("3_longsword"), ExtResource("10_bow"), ExtResource("12_club")])
 item_catalog = Array[Resource]([ExtResource("11_potion"), ExtResource("13_leather"), ExtResource("14_chain")])
-ability_catalog = Array[Resource]([ExtResource("15_kick"), ExtResource("16_bash"), ExtResource("17_block"), ExtResource("18_step")])
+ability_catalog = Array[Resource]([ExtResource("15_kick"), ExtResource("16_bash"), ExtResource("17_block"), ExtResource("18_step"), ExtResource("19_roots")])
 inventory_slots = 20
-class_roster = Array[Resource]([ExtResource("4_rogue"), ExtResource("5_knight"), ExtResource("6_wizard"), ExtResource("7_barbarian"), ExtResource("8_priest"), ExtResource("9_ranger")])
+class_roster = Array[Resource]([ExtResource("4_rogue"), ExtResource("5_knight"), ExtResource("6_wizard"), ExtResource("7_barbarian"), ExtResource("8_priest"), ExtResource("9_ranger"), ExtResource("20_druid")])

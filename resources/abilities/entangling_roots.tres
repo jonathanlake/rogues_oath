@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="ActiveAbility" format=3]
+
+[ext_resource type="Script" path="res://resources/active_ability.gd" id="1_aa"]
+
+[resource]
+script = ExtResource("1_aa")
+kind = 3
+display_name = "Entangling Roots"
+atlas_coords = Vector2i(2, 10)
+log_verb = "entangles"
+damage = 0
+stun_beats = 0.0
+windup_beats = 2.0
+recovery_beats = 2.0
+range_tiles = 6
+cooldown_beats = 40.0
+root_beats = 30.0

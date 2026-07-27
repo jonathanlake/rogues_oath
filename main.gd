@@ -784,20 +784,22 @@ func _unhandled_input(event: InputEvent) -> void:
 	# REVERSES the v0.19.x "nothing auto-binds to a hotbar" note FOR ABILITIES — items moved to left-click in the
 	# backpack (§2.10 evolution). A held echo is filtered (is_action_pressed allow_echo=false); a no-ability /
 	# no-target slot rejects → the §2.2.8 bonk.
+	# v0.34.0: the five presses route through ONE handler, because a TARGETED ability (the druid's Entangling
+	# Roots) arms a click cursor instead of submitting — see _press_ability_slot.
 	elif event.is_action_pressed("use_slot_1"):
-		NetEvents.submit_intent("use_ability", { "index": 0 })
+		_press_ability_slot(0)
 		get_viewport().set_input_as_handled()
 	elif event.is_action_pressed("use_slot_2"):
-		NetEvents.submit_intent("use_ability", { "index": 1 })
+		_press_ability_slot(1)
 		get_viewport().set_input_as_handled()
 	elif event.is_action_pressed("use_slot_3"):
-		NetEvents.submit_intent("use_ability", { "index": 2 })
+		_press_ability_slot(2)
 		get_viewport().set_input_as_handled()
 	elif event.is_action_pressed("use_slot_4"):
-		NetEvents.submit_intent("use_ability", { "index": 3 })
+		_press_ability_slot(3)
 		get_viewport().set_input_as_handled()
 	elif event.is_action_pressed("use_slot_5"):
-		NetEvents.submit_intent("use_ability", { "index": 4 })
+		_press_ability_slot(4)
 		get_viewport().set_input_as_handled()
 	# MANUAL PICKUP (v0.21.0): G picks up whatever lies on our own tile. Autopickup is POTION-ONLY now, so this
 	# is the acquisition path for weapon drops and (future) equipment — without it those would be unlootable.
@@ -807,6 +809,72 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("pickup_item"):
 		NetEvents.submit_intent("pickup_item", {})
 		get_viewport().set_input_as_handled()
+
+
+## One 1-5 hotbar press (v0.34.0). Two shapes, decided by the ability's Kind:
+##  - TARGETED (Entangling Roots) — ARM a click cursor instead of submitting. Nothing crosses the wire yet;
+##    the next left-click names the tile and the Player submits it (§2.2.9's client-side convenience seam).
+##  - anything else — submit `use_ability {index}` exactly as v0.20.0 did.
+##
+## THE LATCH RULE, one line of code and one sentence: ANY ability key CLEARS an armed cursor first. So the
+## SAME key twice is a pure cancel, and a DIFFERENT key cancels and then does its own thing. There is no
+## "targeting mode" the player can get stuck in and no key that means two things depending on hidden state.
+##
+## The Kind read is CLIENT-SIDE and is pure ROUTING — it decides whether this press opens a cursor or sends
+## a packet. The host still resolves the slot against the SENDER's own class and adjudicates every gate
+## (§2.5); a client that mis-reads its class simply sends a packet the host answers on its own terms.
+func _press_ability_slot(index: int) -> void:
+	var me := _players.get_node_or_null(str(multiplayer.get_unique_id())) as Player
+	if me == null:
+		return
+	# Clear first, and remember what was armed — that is what makes same-key a cancel.
+	var was_armed := me.targeting_index()
+	if was_armed != -1:
+		me.cancel_targeting()
+		_range_overlay.clear_targeting()
+	if was_armed == index:
+		return
+	var ability := _ability_in_slot(me, index)
+	if ability != null and ability.kind == ActiveAbility.Kind.TARGETED:
+		me.arm_targeting(index)
+		_range_overlay.set_targeting(me.tile, ability.range_tiles)
+		# Feedback rule (§2.3.4): arming is a state change, so it says so — and names BOTH ways out, because
+		# a cursor with no visible exit is the thing that makes a new mode feel like a trap. The CANCEL is
+		# deliberately silent: it is pre-commit, and the ring vanishing is already the cue.
+		if is_instance_valid(_game_log):
+			_game_log.add_line("%s — click a target. Right-click to cancel." % ability.display_name)
+		return
+	NetEvents.submit_intent("use_ability", { "index": index })
+
+
+## The ActiveAbility in this player's hotbar slot, or null (v0.34.0). PRESENTATION/ROUTING read only — it
+## walks the same class resource every peer resolves from shared config, never authoritative state. Null for
+## an empty slot, a classless player, or an out-of-range index.
+func _ability_in_slot(player: Player, index: int) -> ActiveAbility:
+	if player.player_class == null:
+		return null
+	var abilities := player.player_class.active_abilities
+	if index < 0 or index >= abilities.size():
+		return null
+	return abilities[index]
+
+
+## Keep the armed targeting ring centred on the local player (v0.34.0), once per frame beside the camera
+## follow. The latch deliberately survives movement — you can walk while lining a cast up — and the host
+## measures range from your CURRENT tile at click time, so a ring frozen where you armed it would lie about
+## what the host will accept. Cheap: two reads and a push on the frames a cursor is actually up.
+## Also the ONE teardown that catches every way a cursor can stop existing (death, respawn, disconnect):
+## no local player, or no latch, means no ring.
+func _update_targeting_ring() -> void:
+	var me := _players.get_node_or_null(str(multiplayer.get_unique_id())) as Player
+	if me == null or me.targeting_index() == -1:
+		_range_overlay.clear_targeting()
+		return
+	var ability := _ability_in_slot(me, me.targeting_index())
+	if ability == null:
+		_range_overlay.clear_targeting()
+		return
+	_range_overlay.set_targeting(me.tile, ability.range_tiles)
 
 
 ## Detect and repair the ONE illegitimate window state: WINDOWED at (or beyond) the full screen size.
@@ -847,6 +915,7 @@ func _restore_windowed_rect() -> void:
 ## own avatar node (see _update_camera); nothing crosses the wire.
 func _process(_delta: float) -> void:
 	_update_camera()
+	_update_targeting_ring()
 
 
 ## All peers: play back a broadcast gameplay event. Chat + combat-LOG lines go to the game log via
@@ -926,6 +995,11 @@ func _on_net_event(event: Dictionary) -> void:
 			# A monster's telegraphed SMITE channel starting (v0.19.10, host-authored). Orange-red tell over the
 			# caster; the LAND is the later `attack` event (kind "smite"). Log line from game_log.
 			_handle_smite_cast_event(event)
+		"root_cast":
+			# A PLAYER's telegraphed CONTROL cast starting (v0.34.0 — the druid's Entangling Roots).
+			# GREEN danger tile + green channel tell; the LAND is the later `status_applied` "rooted"
+			# (or an `attack` whiff if the ground came up empty). Log line from game_log.
+			_handle_root_cast_event(event)
 		"stamina":
 			# A player's stamina pool changed (v0.24.0 experiment, renamed v0.24.1; host-authored: spend,
 			# battle-entry reset, or a rest-to-recover regen tick). Own-player HUD renders the pips.
@@ -1477,6 +1551,26 @@ func _handle_smite_cast_event(event: Dictionary) -> void:
 		caster_monster.play_spell_cast(cast_sec, Color(1.0, 0.5, 0.2))
 
 
+## All peers: play back a PLAYER's ENTANGLING-ROOTS cast telegraph (§2.3.4, v0.34.0). Same shape as the
+## smite arm — face the tile, paint the ground for the channel, float an overhead symbol — in the CONTROL
+## channel's own colour: GREEN, so it is never confusable with the shaman's orange-red damaging smite or a
+## white melee wind-up. The tile mark IS the counterplay tell: step off it before the channel ends.
+##
+## The LAND is the later `status_applied` "rooted" (or an `attack` whiff on empty ground); the log line comes
+## from game_log. Works for any caster kind — play_spell_cast lives on Entity, so a future monster druid
+## needs nothing added here.
+func _handle_root_cast_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var caster := _node_for_peer(int(data.get("caster_id", 0)))
+	if caster == null:
+		return
+	var target_tile: Vector2i = data.get("target_tile", caster.tile)
+	caster.face_toward(signi(target_tile.x - caster.tile.x))
+	var cast_sec := float(data.get("cast_sec", 0.0))
+	_fx.danger_tile(target_tile, cast_sec, Color(0.25, 0.85, 0.3, 0.45))
+	caster.play_spell_cast(cast_sec, Color(0.35, 0.9, 0.35))
+
+
 ## All peers: show the overhead STUN icon when the host applies a stun (v0.20.0). entity_id may be a player
 ## (positive) or a monster (negative) — _node_for_peer resolves either; duration_sec holds the icon the window.
 ## All peers: mirror a stamina change (v0.24.0 experiment) into the OWN-player HUD pips.
@@ -1584,6 +1678,12 @@ func _handle_status_applied_event(event: Dictionary) -> void:
 			# SHIELD BLOCK (v0.26.0 instants experiment): a raised guard has NO duration — it ends when a blow
 			# lands on it — so the icon is held open and only the paired status_expired takes it down.
 			ent.play_blocking()
+		"rooted":
+			# ROOTED (v0.34.0 conditions): green tendrils at the FEET for the host's stamped window. The
+			# local backup timer inside play_rooted is the belt; the paired status_expired is the braces —
+			# and because a RE-ROOT bumps the visual generation, a refresh's cue outlives the old timer
+			# exactly as the host's registry outlives the old expiry.
+			ent.play_rooted(float(data.get("duration_sec", 0.0)))
 
 
 ## All peers: clear an overhead status icon when the host's status ends (v0.20.0 stun; v0.26.0 block).
@@ -1597,6 +1697,11 @@ func _handle_status_expired_event(event: Dictionary) -> void:
 			ent.hide_stun()
 		"block":
 			ent.hide_blocking()
+		"rooted":
+			# v0.34.0. Reached by BOTH endings — the natural expiry and the early break (damage with the
+			# toggle on, or a Shadow Step out of the roots) — because clear_condition posts the same event.
+			# One teardown, so a broken root can never leave tendrils on a body that is already running.
+			ent.hide_rooted()
 
 
 ## All peers: play back a host-adjudicated BLINK (v0.26.0 instants experiment — Shadow Step). The body SNAPS

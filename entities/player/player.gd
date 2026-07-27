@@ -142,6 +142,11 @@ func _ready() -> void:
 		# Ranged-shot click (v0.17.0): the sampler reports a shoot target; this node owns the wire (mirror of
 		# move_requested → glide_to). Local player only — only our sampler ever emits it.
 		_move_input.shoot_requested.connect(_on_shoot_requested)
+		# TARGETED ability click (v0.34.0): the sampler reports the picked tile for the armed slot; this node
+		# owns the wire (mirror of shoot_requested → shoot). Local player only — only our sampler ever emits.
+		# There is no cancel signal: Main re-syncs its range ring off the latch every frame, so a right-click
+		# cancel needs no wiring at all.
+		_move_input.ability_target_picked.connect(_on_ability_target_picked)
 
 
 # ── Public methods ────────────────────────────────────────────────────────────
@@ -221,6 +226,24 @@ func set_shoot_target_check(cb: Callable) -> void:
 	_move_input.shoot_target_check = cb
 
 
+## ARM the local sampler's targeting cursor for ability slot `index` (v0.34.0) — the exact push-down shape
+## set_shoot_target_check uses: Main owns the 1-5 keys and the range ring, this node just forwards down to
+## its MoveInput child, and the component never reaches up. Pre-commit and freely cancelable: nothing has
+## been submitted until the click lands.
+func arm_targeting(index: int) -> void:
+	_move_input.arm_targeting(index)
+
+
+## Drop an armed cursor without firing (v0.34.0), Main's cancel path. Idempotent.
+func cancel_targeting() -> void:
+	_move_input.cancel_targeting()
+
+
+## The armed ability slot, or -1 (v0.34.0). Main reads it to decide arm vs cancel vs plain submit.
+func targeting_index() -> int:
+	return _move_input.targeting_index()
+
+
 ## Relay a reject to the local sampler WITHOUT any cue (1a, v0.10.2). Used for "occupied_hostile":
 ## the sender was mid-commitment gliding into a hostile it can't bump yet (pipelined) — the bonk's
 ## thud/flash would misread as "input didn't register" (§2.2.8), so it is suppressed, but the reject
@@ -292,6 +315,14 @@ func _on_move_requested(dir: Vector2i, _fresh: bool) -> void:
 ## commits the draw + looses the arrow; a reject bonks our own player. Vector2i survives RPC natively.
 func _on_shoot_requested(target_tile: Vector2i) -> void:
 	NetEvents.submit_intent("shoot", { "target_tile": target_tile })
+
+
+## The local sampler picked a tile for the armed ability slot (v0.34.0): submit the "use_ability" intent
+## through the one pipe (mirror of _on_shoot_requested), now carrying a target_tile beside the index. The
+## host resolves the slot against the SENDER's class server-side and adjudicates range/busy/occupancy from
+## ITS truth; a reject bonks our own player. Vector2i survives RPC natively.
+func _on_ability_target_picked(index: int, target_tile: Vector2i) -> void:
+	NetEvents.submit_intent("use_ability", { "index": index, "target_tile": target_tile })
 
 
 ## A click set/replaced the walk target: plant the marker on the tile. top_level marker →

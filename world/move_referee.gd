@@ -518,6 +518,17 @@ func teleport_entity(entity_id: int, to: Vector2i) -> bool:
 	_erase_by_value(_reserved, entity_id)
 	_occupied[to] = entity_id
 	note_activity(entity_id)
+	# FORCED MOVEMENT FREES YOUR FEET (v0.34.0 conditions): a body that just got MOVED is, by definition, no
+	# longer held by whatever was holding it — so a teleport BREAKS the root. Written as the general door
+	# rather than a Shadow-Step special case: any future knockback / pull / swap routes through this same
+	# function and inherits the rule for free.
+	#
+	# Jon's ruling on the pair: rooted does NOT block Shadow Step (the blink is not a glide and never meets
+	# the validator's gate), AND the blink clears the root. The ability's whole promise is "you get out
+	# clean"; landing one tile away still stuck would make it a trap. clear_condition is a no-op for an
+	# unrooted mover, which is the overwhelmingly common case.
+	if _combat != null:
+		_combat.clear_condition(entity_id, "rooted")
 	return true
 
 
@@ -742,6 +753,17 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# "stunned" reason → the §2.2.8 bonk for a player; a monster's brain also self-skips while stunned.
 	if _combat != null and _combat.is_stunned(sender_peer_id):
 		return { "ok": false, "reason": "stunned" }
+	# ROOTED (v0.34.0 conditions, DESIGN §2.13): can't START a glide while the roots hold you. Byte-parallel
+	# to the stun gate directly above — same position (before the already-moving/pipeline gate), same
+	# no-touch contract (an in-flight glide and an already-committed pending step still play out, §2.1),
+	# same coverage (players AND monsters ride this validator). Distinct "rooted" reason → the §2.2.8 bonk
+	# plus its own game_log sentence; a rooted monster's brain also self-skips its step submissions.
+	#
+	# THIS IS THE ONLY GATE ROOTED ADDS, deliberately (Jon+Jeff): it is not on _validate_use_ability, not on
+	# _validate_shoot, not on use_item, and NOT on the instants dispatch — so a rooted player still fights
+	# back, and Shadow Step still blinks free (and BREAKS the root, see teleport_entity).
+	if _combat != null and _combat.is_rooted(sender_peer_id):
+		return { "ok": false, "reason": "rooted" }
 
 	# The Commitment Rule backstop and the pipeline gate. A mover already gliding may commit ONE
 	# next step into the pending slot (§2.2.5 amendment) — but only under the conga toggle, and

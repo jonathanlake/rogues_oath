@@ -1000,10 +1000,29 @@ became pure setup, long enough to land one sneak attack); the 1-5 HOTBAR HUD sho
 carried items dropped to the row below (v0.20.3); the ability bar moved OUT of the bag grid to its own
 click-transparent bar on the world's bottom edge, freeing the whole grid for items (v0.21.0).
 
+**v0.34.0 — CONDITIONS + THE FIRST TARGETED SPELL (Jeff's overnight spec).** A generic CONDITIONS
+registry now lives beside the stun machinery (same stamp-and-bake + generation-guard shape; stun
+itself is NOT migrated yet — future work). First tenant: **ROOTED** — cannot MOVE for the
+condition's beats, CAN still attack/cast/drink ("roots hold your feet, not your arms"). Applied
+tile-keyed like a smite; re-application refreshes the clock. Three designed outs: natural expiry;
+**Shadow Step both ignores the rooted gate AND breaks the root** (teleporting is not stepping, and
+forced movement frees your feet — the rogue's designed escape, cleared in `teleport_entity` so any
+future knockback frees roots too); and the **`root_breaks_on_damage` toggle (ships OFF — Jon:
+"a toggle for us to test")** — ON, any damage snaps the root (future DOT effects must revisit).
+Rooted monsters keep fighting (their step submissions are skipped, their attack/cast rungs run).
+The carrier: **`Kind.TARGETED` abilities** — press the key → TARGETING MODE (green range ring;
+pre-commit, freely cancelable: right-click or re-press; movement doesn't disturb it) → click a
+tile → the cast commits server-side (range-gated, telegraphed `root_cast` like a smite, dodgeable
+by stepping off, interrupt-gen guarded since a PLAYER caster can be blinked mid-cast). Smart-cast
+(hover + press) is a future per-machine option. First spell: **Entangling Roots** (druid — range
+6, 2-beat cast, 2-beat recovery, 40-beat cooldown under the §2.11.1 umbrella, roots 30 beats).
+**The DRUID** is the seventh class: the 32rogues druid sprite, leather armor, club, Entangling
+Roots. Backstab treating ROOTED as a compromised state (the §2.3 note) stays FUTURE — not wired.
+
 **Still envisioned:** an equippable off-hand item (a real shield in the `[Off]` socket, not just the class
 ability — it waits on §2.10's EQUIPMENT slot model); clickable ability slots (the keys drive them today);
-telegraphed/ranged/self-buff abilities; more status effects (slow, poison, shield); abilities from equipped
-gear as well as class.
+smart-casting as a local option; more conditions (slow, poison, shield) riding the new registry; stun
+migrating onto the registry; abilities from equipped gear as well as class.
 
 **Complete when** a non-coder can author a class ability + a status effect via `.tres` alone, the hotbar
 reads as the ability bar, and abilities compose with the build system (§2.7). *(Stage in ROADMAP.)*

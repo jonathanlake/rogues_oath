@@ -30,7 +30,12 @@ const DEV_WEAPON_CLAMPS := {
 ## Clamp reasoning: damage shares the weapons' [0, 999]; stun [0, 60] beats is "up to a very long lock, not
 ## a permanent one"; windup/recovery share the weapons' [0, 30] window bounds; cooldown [0, 600] matches the
 ## band the instants experiment already used (600 beats = "once per fight and you'll remember it").
-const DEV_ABILITY_FIELDS := ["damage", "stun_beats", "windup_beats", "recovery_beats", "cooldown_beats"]
+## v0.34.0: `root_beats` joins the list (the TARGETED cast's payload — how long Entangling Roots holds its
+## victim). Clamp [0, 120] beats — twice the stun's ceiling, because a root is a movement lock rather than a
+## total lock and is meant to be authored an order of magnitude longer (30 beats shipped vs the kick's 6),
+## while 120 still refuses "permanent" outright.
+const DEV_ABILITY_FIELDS := ["damage", "stun_beats", "windup_beats", "recovery_beats", "cooldown_beats",
+	"root_beats"]
 const DEV_ABILITY_INT_FIELDS := ["damage"]
 const DEV_ABILITY_CLAMPS := {
 	"damage": [0, 999],
@@ -38,6 +43,7 @@ const DEV_ABILITY_CLAMPS := {
 	"windup_beats": [0.0, 30.0],
 	"recovery_beats": [0.0, 30.0],
 	"cooldown_beats": [0.0, 600.0],
+	"root_beats": [0.0, 120.0],
 }
 
 const DEV_MONSTER_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles",
@@ -137,6 +143,10 @@ const DEV_GAME_FIELDS := ["tactical_beat_sec",
 		# which is gone — a stale `/config whiff_pays_recovery` now rejects, which is correct): -1 = pay the
 		# whole tail (§2.3.9, the default), 0 = pay none, N = pay N beats capped at the full tail.
 		"whiff_recovery_beats", "recovery_locks_actions",
+		# v0.34.0 conditions: does damage BREAK a root? Ships OFF (a root runs its authored beats). Plain
+		# host-side config write, read live at the one apply_damage seam, so a _GAME_FIELD_SPECS row is all
+		# it needs.
+		"root_breaks_on_damage",
 		# v0.29.0 — a DEV PIN rather than a balance dial: everyone resolves TACTICAL while it is on, which
 		# also switches the stamina system on everywhere (stamina gates on is_tactical). Host-side only and
 		# read live by PaceReferee at each resolve, so a plain _GAME_FIELD_SPECS row is all it needs.

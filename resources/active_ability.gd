@@ -22,10 +22,21 @@ extends Resource
 ##    stun; gated by `cooldown_beats` below, charged on CONSUMPTION (holding a guard is free).
 ##  - BLINK  — INSTANT. Teleports the user one tile OPPOSITE its facing, interrupting its own committed action;
 ##    gated by `cooldown_beats`, charged on a SUCCESSFUL teleport only.
-## (v0.27.0: both used to read a per-ability GameConfig dial; the cooldown is a field on this resource now,
-## and STRIKES carry one too — see cooldown_beats.)
-## Both instant kinds are inert unless `GameConfig.instant_abilities_enabled` is on (they reject otherwise).
-enum Kind { STRIKE, BLOCK, BLINK }
+##  - TARGETED — v0.34.0, the druid's Entangling Roots. A COMMITTED cast at a TILE up to `range_tiles` away
+##    (the client arms a cursor and the click names the tile; the host adjudicates from ITS occupancy):
+##    windup_beats channels, recovery_beats is the spent tail, and whoever hostile occupies the tile at the
+##    END of the channel is ROOTED for `root_beats` — no damage, no stun. Tile-keyed like a monster's smite,
+##    so stepping off the tile dodges it. NOT an instant: it opens a real occupied window and respects every
+##    Commitment-Rule gate a STRIKE does. (Its `cooldown_beats` rides the SAME §2.11.1 experiment umbrella as
+##    kick / shield bash — see cooldown_beats — and reverts with the same one dial.)
+## (v0.27.0: both instants used to read a per-ability GameConfig dial; the cooldown is a field on this resource
+## now, and STRIKES carry one too — see cooldown_beats.)
+## Both instant kinds are inert unless `GameConfig.instant_abilities_enabled` is on (they reject otherwise);
+## TARGETED is NOT gated on that toggle (only its cooldown is), because a committed cast is not an instant.
+##
+## ORDINALS ARE SERIALIZED: `kind` is stored in each `.tres` as a plain int, so this enum is APPEND-ONLY —
+## never reorder or insert, or every authored ability silently changes shape.
+enum Kind { STRIKE, BLOCK, BLINK, TARGETED }
 
 ## This ability's shape (see Kind). Defaults to STRIKE, so every pre-v0.26.0 `.tres` keeps its exact behavior.
 @export var kind: Kind = Kind.STRIKE
@@ -55,7 +66,19 @@ enum Kind { STRIKE, BLOCK, BLINK }
 @export var recovery_beats: float = 0.0
 
 ## Reach in tiles for the target search (1 = 8-adjacent, the v1 default — a point-blank strike). Read HOST-side.
+## v0.34.0: a TARGETED ability finally READS this — the host gates the clicked tile on Chebyshev distance
+## ≤ this number from the caster's authoritative tile (the shoot pipe's range gate, same shape), and the
+## client's targeting cursor draws a ring of exactly this radius. A STRIKE still only uses it as its
+## adjacent-hostile search reach.
 @export var range_tiles: int = 1
+
+## ROOT duration in BEATS applied to the hostile occupying the target tile when a TARGETED cast lands
+## (v0.34.0, DESIGN §2.13 conditions). 0 (the default) = no root, which is why `is_valid_ability` REFUSES a
+## TARGETED ability authored at 0 — a targeted cast that roots nothing has no effect at all. Ignored by every
+## other Kind. Stamped at the TARGET's resolved pace (stamp-and-bake, §2.8.2), so it scales with tempo the
+## way `stun_beats` does. ROOTED = cannot MOVE; attacks and casts stay available (the condition fights back).
+## Tunable live through `/ab <ability> root_beats <n>` and the debug panel's CLASSES section.
+@export var root_beats: float = 0.0
 
 ## COOLDOWN in BEATS before this ability may be used again (v0.27.0). 0 (default) = NO cooldown, which is
 ## byte-for-byte the pre-v0.27.0 behavior for any ability that leaves it unset.
@@ -87,7 +110,15 @@ enum Kind { STRIKE, BLOCK, BLINK }
 ## An INSTANT (BLOCK / BLINK) is valid BY CONSTRUCTION (v0.26.0): its whole point is to carry no damage, no
 ## stun and no occupied window — its cost is a cooldown dial, not authored beats — so the STRIKE test below
 ## would reject every correctly-authored instant. The STRIKE branch is byte-identical to the pre-v0.26.0 rule.
+##
+## TARGETED gets an EXPLICIT arm of its own (v0.34.0) rather than riding the instants' free pass: a targeted
+## cast has three things it genuinely cannot work without — a reach to aim inside (`range_tiles`), an effect
+## to land (`root_beats`) and an occupied window to pay with (windup + recovery) — so a misauthored one must
+## be as unusable as a misauthored strike. Written as its OWN branch ABOVE the `!= STRIKE` early-return
+## precisely so adding a Kind never silently grants it validity again.
 func is_valid_ability() -> bool:
+	if kind == Kind.TARGETED:
+		return range_tiles > 0 and root_beats > 0.0 and (windup_beats + recovery_beats) > 0.0
 	if kind != Kind.STRIKE:
 		return true
 	return (damage > 0 or stun_beats > 0.0) and (windup_beats + recovery_beats) > 0.0

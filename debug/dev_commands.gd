@@ -82,6 +82,10 @@ const _GAME_FIELD_SPECS := {
 	# connected region" in practice while still refusing an absurd typo. Plain host-side write, read
 	# live at each organic aggro latch.
 	"rally_travel_tiles": { "min": 0, "max": 40, "int": true },
+	# v0.34.0 conditions — does damage BREAK the ROOTED condition? Ships OFF: a root runs its authored beats
+	# and your own party focusing the held target does not free it. ON turns the root into a setup you spend.
+	# The A/B switch for that feel question; read live at the apply_damage seam.
+	"root_breaks_on_damage": { "bool": true },
 }
 
 # The Players container + combat/move referees, handed in by Main via activate() on the HOST only.
@@ -152,6 +156,8 @@ func validate(sender_peer_id: int, data: Dictionary) -> Dictionary:
 			return _dev_cmd_config(args, by)
 		"stun":
 			return _dev_cmd_stun(sender_peer_id, args, by)
+		"root":
+			return _dev_cmd_root(sender_peer_id, args, by)
 		"ai":
 			return _dev_cmd_ai(by)
 		"stamina", "mp":
@@ -881,6 +887,36 @@ func _dev_cmd_stun(sender_peer_id: int, args: Array[String], by: String) -> Dict
 		target_name = name_arg
 	_combat.apply_stun(target_id, beats)
 	return { "ok": true, "data": { "line": "%s stunned %s for %.0f beats." % [by, target_name, beats] } }
+
+
+## /root [me|<monster>] [beats] — apply the ROOTED condition (v0.34.0 conditions framework). The exact
+## sibling of /stun above, argument for argument: no arg / "me" / "self" roots the SENDER (test the movement
+## bonk + the tendril cue + that you can still SWING while held); a monster display_name roots the first LIVE
+## monster of that name (test a goblin that stops chasing but keeps attacking). A numeric token = beats
+## (default 30 — the shipped Entangling Roots duration, so the dev poke feels like the real ability rather
+## than a 3-beat blip). Host-adjudicated + broadcast, so the cue and the log line land on every peer.
+##
+## WHY IT EXISTS beside the druid ability: it exercises the CONDITION half alone, with no cast, no range, no
+## targeting cursor and no class in the way — which is what makes a rooted-lifecycle assertion a one-line
+## scripted run, and what will test the next condition (slow, poison) the day it lands.
+func _dev_cmd_root(sender_peer_id: int, args: Array[String], by: String) -> Dictionary:
+	var beats := 30.0
+	var name_arg := ""
+	for a in args:
+		if a.is_valid_float():
+			beats = a.to_float()
+		elif not (a in ["me", "self"]):
+			name_arg = a
+	var target_id := sender_peer_id
+	var target_name := by
+	if name_arg != "":
+		var mid: int = _combat.find_monster_by_name(name_arg)
+		if mid == 0:
+			return { "ok": false, "reason": "no live monster named '%s'" % name_arg }
+		target_id = mid
+		target_name = name_arg
+	_combat.apply_condition(target_id, "rooted", beats)
+	return { "ok": true, "data": { "line": "%s rooted %s for %.0f beats." % [by, target_name, beats] } }
 
 
 ## The human label for a `/config` preset ROW KIND, used only in the unknown-resource reject (v0.27.0 — the

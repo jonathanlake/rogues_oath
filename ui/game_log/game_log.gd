@@ -170,6 +170,7 @@ func _render_help() -> void:
 	add_line("  /config <%s>  — apply a preset test loadout" % "|".join(PackedStringArray(GameManager.CONFIG_PRESETS.keys())))
 	add_line("  /ab <ability> <field> <value|reset>  — tune an ability .tres (v0.27.0; slug names: shield_bash)")
 	add_line("  /stun [me|<monster>] [beats]  — apply a stun (default 3 beats)")
+	add_line("  /root [me|<monster>] [beats]  — apply the ROOTED condition: no movement, attacks still work (default 30)")
 	add_line("  /ai  — toggle utility-AI score debug in the F3 overlay")
 	add_line("  /stamina  — toggle the stamina experiment (v0.24.1; /mp still works)")
 	add_line("  /winded  — toggle 0-stamina hard stop vs slow crawl (both sides, v0.24.6)")
@@ -411,6 +412,11 @@ func _on_event_received(event: Dictionary) -> void:
 					add_line("%s is stunned!" % str(data.get("name", "Someone")))
 				"block":
 					add_line("%s raises a guard." % str(data.get("name", "Someone")))
+				"rooted":
+					# v0.34.0 conditions. Its own sentence, party-wide: a hard 30-beat movement lock is
+					# exactly as legible-worthy as a stun, and the overhead tendrils alone would leave a
+					# player wondering why the goblin stopped chasing.
+					add_line("%s is rooted!" % str(data.get("name", "Someone")))
 		"smite_cast":
 			# A monster's SMITE channel starting (§2.3.4, v0.19.10 — the offensive twin of the heal channel). The
 			# RED danger tile is the real telegraph; this line names whoever's standing on it at cast start (empty
@@ -420,6 +426,28 @@ func _on_event_received(event: Dictionary) -> void:
 				add_line("%s begins to smite %s..." % [str(data.get("caster_name", "Someone")), smite_victim])
 			else:
 				add_line("%s begins channeling a smite..." % str(data.get("caster_name", "Someone")))
+		"status_expired":
+			# NEW ARM (v0.34.0). status_expired has broadcast since v0.20.0 with no log voice at all,
+			# deliberately: a stun's end and a spent guard are ICON-ONLY endings — the icon vanishing IS the
+			# tell, and a line per expiry would swell the log during a fight. That stays true; only ROOTED
+			# speaks, because its end is a TACTICAL fact the party plans around ("the thing we locked down is
+			# loose"), and because a root can end EARLY (break-on-damage, a blink out) in a way a watching
+			# player would otherwise have to infer from the enemy simply starting to move again. Every other
+			# status falls through to nothing, exactly as before.
+			match str(data.get("status", "")):
+				"rooted":
+					add_line("The roots release %s." % str(data.get("name", "Someone")))
+		"root_cast":
+			# A player's ENTANGLING-ROOTS channel starting (§2.3.4, v0.34.0 — the control twin of the smite
+			# channel, phrased so it can never be read as damage). The GREEN ground tile is the real
+			# telegraph; this line names whoever stands on it at cast start (empty = bare ground, which is a
+			# legal and sometimes deliberate cast — you can root the tile someone is fleeing toward). The
+			# LAND is the "X is rooted!" line; a dodge is the generic whiff line.
+			var root_victim := str(data.get("target_name", ""))
+			if root_victim != "":
+				add_line("%s begins entangling %s..." % [str(data.get("caster_name", "Someone")), root_victim])
+			else:
+				add_line("%s calls the roots — the ground writhes..." % str(data.get("caster_name", "Someone")))
 
 
 ## Compose the combat-log line for one `attack` event, one distinct phrasing per outcome (§2.3.4):
@@ -587,6 +615,12 @@ func _log_glide_reject(reason: String) -> void:
 			# "you cannot MOVE", this is "you cannot ACT", and the two dials are independent (§2.3.4: one
 			# sentence per outcome). Names the recovery BAR, which is the thing on screen you are waiting on.
 			add_line("Still recovering — wait for the bar.")
+		"rooted":
+			# v0.34.0 conditions: the roots hold your feet. A WORLD refusal, so it speaks (unlike "busy" /
+			# "already moving", which are your own commitment talking) — and it names the ONE thing that is
+			# blocked, because everything else still works: you can still swing, shoot, cast and drink while
+			# rooted, and a player who reads this as "I can't act" would stand there doing nothing.
+			add_line("Rooted — you can't move!")
 		"winded":
 			# Hard-stop mode only (v0.24.6, /winded toggle): out of stamina AND movement is blocked.
 			# Distinct from the crawl (which accepts the step slowly and never rejects) — §2.3.4.

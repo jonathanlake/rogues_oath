@@ -56,6 +56,35 @@ var _stunned: Dictionary = {}
 # icon window) is not cut short by the earlier stun's timer. Same idiom as the round/cast generation tokens.
 var _stun_gen: Dictionary = {}
 
+# ── CONDITIONS (v0.34.0) — the GENERIC status registry, with ROOTED as its first tenant ─────────────
+#
+# entity id -> { condition name -> the generation that armed it }. Presence of a name IS the condition;
+# the stored generation is what the expiry timer proves itself against. Host-only authority, exactly like
+# _stunned above (this referee is inert on clients, and only apply_condition / clear_condition write here).
+#
+# WHY A REGISTRY AND NOT A SECOND BESPOKE PAIR OF DICTS: the stun's shape — latch, generation, stamped
+# broadcast, generation-guarded expiry — is provably right, but it is hand-written per status. ROOTED is
+# the second status, slow / poison / shield are the envisioned rest (DESIGN §2.11), and three more copies
+# of that shape is three more places to get the generation guard subtly wrong. So the shape is written
+# ONCE, keyed by name.
+#
+# STUN IS DELIBERATELY NOT MIGRATED. It works, it is load-bearing in every validator and both brains, and
+# its INTERRUPT half (the sanctioned §2.1 exception) has no analogue here — a rooted entity's in-flight
+# action plays out untouched. Migrating it is future work with its own verification, not a free rider on
+# this one. Until then the two systems coexist: `is_stunned` reads _stunned, `is_rooted` reads _conditions,
+# and both post the SAME status_applied / status_expired event names so every peer's cue plumbing is shared.
+var _conditions: Dictionary = {}
+# entity id -> { condition name -> MONOTONIC counter }. Bumped on every apply_condition and — unlike
+# _conditions — NEVER erased, not on expiry, not on clear, not at death/teardown.
+#
+# THAT IS THE POINT, and it is where this differs from _stun_gen. A generation only guards a timer if a
+# LATER apply cannot reuse an EARLIER apply's number. _stun_gen is erased at expiry and at teardown, so a
+# re-stun after an expiry (or on a respawned peer id) starts from 1 again — and a still-pending timer from
+# the previous stun would then match and clear the new one early. Stun gets away with it because nothing
+# clears a stun early. A condition CAN be cleared early (break-on-damage, Shadow Step), so the counter has
+# to outlive its entry. Cost: one small int per (entity, condition) ever applied, for the session.
+var _condition_gen: Dictionary = {}
+
 # PENDING SMITES (v0.22.0, weighted utility AI): the set of GROUND TILES with a smite already committed and
 # still in flight (tile -> true). Set at smite_cast, erased at the TOP of _resolve_smite (before every early
 # return, so a caster killed or stunned mid-cast still releases its tile) and cleared by reset_round().
@@ -250,6 +279,80 @@ func apply_stun(target_id: int, stun_beats: float) -> void:
 	get_tree().create_timer(stun_sec).timeout.connect(_expire_stun.bind(target_id, gen))
 
 
+# ── Conditions (v0.34.0, the generic status registry — see _conditions) ───────────────────────────────
+
+## Apply a named CONDITION to a target for `beats`, host-authoritative. Mirrors apply_stun step for step —
+## alive gate, non-positive-beats gate, seconds stamped at the TARGET's resolved pace (stamp-and-bake §2.8.2,
+## so it scales with tempo and a later tempo change never re-derives a window already running), latch,
+## generation bump, a `status_applied` broadcast carrying the window, and a generation-guarded expiry timer.
+##
+## RE-APPLICATION IS A REFRESH, not a stack and not a no-op: the generation bump invalidates the previous
+## timer and the NEW duration wins outright. Two druids rooting one goblin therefore means the LATER root's
+## clock, which is the stun's exact behavior and the only one that can't be gamed (stacking would let two
+## casters chain a permanent lock; ignoring the second would make the second cast a wasted commitment).
+##
+## Does NOT interrupt anything. The target's in-flight committed action plays out (§2.1); a condition only
+## gates what its OWN validators gate — rooted blocks starting a GLIDE and nothing else.
+## A 0/negative `beats` and a dead/untracked target are both no-ops.
+func apply_condition(target_id: int, name: String, beats: float) -> void:
+	if not is_alive(target_id):
+		return
+	if beats <= 0.0:
+		return
+	var duration_sec := beats * PaceReferee.beat_or_explore(_pace, target_id)
+	var gens: Dictionary = _condition_gen.get(target_id, {})
+	var gen: int = int(gens.get(name, 0)) + 1
+	gens[name] = gen
+	_condition_gen[target_id] = gens
+	var active: Dictionary = _conditions.get(target_id, {})
+	active[name] = gen
+	_conditions[target_id] = active
+	# Same event NAME and same field shape the stun broadcasts (host-authored, peer 0 — an outcome, like
+	# `died`): `name` is the ENTITY's display name for the log line, `status` is the condition. duration_sec
+	# holds every peer's overhead cue for exactly the window the host stamped.
+	NetEvents.post_event("status_applied", {
+		"entity_id": target_id,
+		"name": _name_of(_node_of_id(target_id)),
+		"status": name,
+		"duration_sec": duration_sec,
+	})
+	get_tree().create_timer(duration_sec).timeout.connect(_expire_condition.bind(target_id, name, gen))
+
+
+## Does this entity currently carry `name`? The one presence predicate; an untracked id reads false.
+## Host-only truth, never trusted from the wire.
+func has_condition(entity_id: int, name: String) -> bool:
+	return (_conditions.get(entity_id, {}) as Dictionary).has(name)
+
+
+## Is this entity ROOTED (v0.34.0)? The NAMED predicate every validator and brain reads, so the string
+## "rooted" appears in adjudication code exactly once — here. Rooted = cannot START a glide; attacks, casts,
+## abilities and item use are all untouched (the condition fights back, Jon+Jeff's ruling).
+func is_rooted(entity_id: int) -> bool:
+	return has_condition(entity_id, "rooted")
+
+
+## END a condition EARLY (host-only) — the break path, used by break-on-damage and by forced movement.
+## Posts the same `status_expired` a natural expiry does, so every peer's cue teardown is one code path and
+## "released early" needs no event of its own. Absent condition = a clean no-op (idempotent by design: the
+## callers are damage and teleport, both of which fire constantly on un-conditioned entities).
+##
+## Does NOT bump the generation, deliberately: the pending expiry timer already fails its lookup once the
+## entry is gone, and the monotonic counter (see _condition_gen) guarantees a fresh apply outranks it anyway.
+func clear_condition(entity_id: int, name: String) -> void:
+	var active: Dictionary = _conditions.get(entity_id, {})
+	if not active.has(name):
+		return
+	active.erase(name)
+	if active.is_empty():
+		_conditions.erase(entity_id)
+	NetEvents.post_event("status_expired", {
+		"entity_id": entity_id,
+		"name": _name_of(_node_of_id(entity_id)),
+		"status": name,
+	})
+
+
 ## Resolve the FIRST live monster whose display_name matches `name` (case-insensitive) → its entity id, or 0 if
 ## none (v0.20.0, for the /stun dev command). Host-only, scans the Monsters container. Targets a LIVE instance by
 ## name (unlike /m, which tunes the shared MonsterType).
@@ -435,6 +538,16 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 	if died:
 		_kill_entity(target_id, target_name)
 		return true
+	# BREAK-ON-DAMAGE (v0.34.0 conditions, GameConfig.root_breaks_on_damage — ships OFF). A hit that actually
+	# dealt damage frees a rooted SURVIVOR. Placed HERE, on the survivor path, for two reasons: a lethal blow
+	# already tore the whole condition map down in _kill_entity (a status_expired for a corpse is noise), and
+	# sitting AFTER the `attack` post means the release lands immediately behind the hit that caused it in the
+	# one ordered stream — which is exactly how it reads on screen and how a trace asserts it.
+	# clear_condition's own status_expired IS the "released early" cue; there is no second event shape.
+	# The `amount > 0` term is what makes a 0-damage landed hit (a kick, a fully-absorbed swing) leave the
+	# root standing — the dial says damage breaks it, not contact.
+	if GameManager.config.root_breaks_on_damage and amount > 0:
+		clear_condition(target_id, "rooted")
 	# Damage is an AGGRO SOURCE (v0.17.2 review fix): a SURVIVING Monster that just took a hit wakes its
 	# brain, so a ranged arrow from beyond aggro_range_tiles aggros it (no free sniping). Placed AFTER the
 	# lethal path above so a KILLING blow never notifies (dead monsters don't aggro), and after the godded
@@ -842,6 +955,28 @@ func _expire_stun(entity_id: int, gen: int) -> void:
 	NetEvents.post_event("status_expired", { "entity_id": entity_id, "status": "stun" })
 
 
+## Clear a CONDITION at its window's end (host-only, from the expiry timer), GENERATION-guarded (v0.34.0):
+## only the timer whose captured generation still matches the live entry clears it, so a REFRESH (which
+## bumped the generation and re-armed) is never cut short by the earlier application's timer. An entry
+## already gone — expired, cleared early, or torn down with the entity — fails the lookup and no-ops.
+##
+## The `name` field on the broadcast is the ENTITY's display name, present so the game log can compose a
+## release sentence ("The roots release Goblin.") without a lookup. The STUN's expiry deliberately stays
+## two-field: it has no log line at all, and widening it would be churn for nothing.
+func _expire_condition(entity_id: int, name: String, gen: int) -> void:
+	var active: Dictionary = _conditions.get(entity_id, {})
+	if int(active.get(name, -1)) != gen:
+		return
+	active.erase(name)
+	if active.is_empty():
+		_conditions.erase(entity_id)
+	NetEvents.post_event("status_expired", {
+		"entity_id": entity_id,
+		"name": _name_of(_node_of_id(entity_id)),
+		"status": name,
+	})
+
+
 func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int, recovery_sec: float) -> void:
 	# Release the doomed tile FIRST, above every early return (v0.22.0): a cast that fizzles because its
 	# caster died or was stunned mid-channel must still free the ground, or the tile would stay permanently
@@ -933,6 +1068,12 @@ func _validate_use_ability(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	var ability := _ability_of(caster, int(data.get("index", -1)))
 	if ability == null or not ability.is_valid_ability():
 		return { "ok": false, "reason": "no such ability" }
+	# TARGETED DISPATCH (v0.34.0, the druid's Entangling Roots), ABOVE the instants block on purpose: a
+	# targeted cast is NOT an instant and must never be gated on `instant_abilities_enabled` (only its
+	# cooldown is, inside _charge_strike_cooldown). It is a committed cast with a real occupied window, so
+	# its handler re-runs the SAME remaining ladder a STRIKE does — cooldown, then busy — before it commits.
+	if ability.kind == ActiveAbility.Kind.TARGETED:
+		return _use_targeted(sender_peer_id, ability, data)
 	# INSTANT DISPATCH (v0.26.0), ahead of the busy gate. Both handlers are fully SYNCHRONOUS — they validate
 	# and execute inside this one callback with no timer and no fire delay — so neither needs an interrupt_gen
 	# capture of its own: on the single-threaded host nothing can move the actor between the check and the
@@ -1013,6 +1154,12 @@ func _validate_use_ability(sender_peer_id: int, data: Dictionary) -> Dictionary:
 ## Charge a STRIKE ability's cooldown at ACCEPT and tell the user's HUD (v0.27.0). Called from BOTH accept
 ## branches — instant and telegraphed — immediately after the commit succeeds, i.e. at the moment the
 ## decision becomes irrevocable.
+##
+## v0.34.0: the TARGETED cast (Entangling Roots) calls this too, unchanged. The name stays "strike" rather
+## than being widened to "_charge_ability_cooldown" because every word of the contract below — spent at
+## commit, gated on the experiment toggle, part of the SAME pending §2.11.1 verdict — is the STRIKE
+## cooldown's contract, and a rename would cost churn across the changelog and DESIGN for no new meaning.
+## Read it as "the committed-ability cooldown"; a 30-beat hard CC needs one for exactly the reason a kick does.
 ##
 ## SPENT AT COMMIT, NOT AT CONTACT, deliberately (matching the instants): a strike that whiffs, or one
 ## whose resolve is FIZZLED by a blink or a stun, still burns the cooldown. You spent the ability the
@@ -1104,6 +1251,136 @@ func _resolve_ability(attacker_id: int, target_tile: Vector2i, damage: int, stun
 		return
 	if not _move_referee.release_busy_after(attacker_id, paid_sec):
 		push_warning("[CombatReferee] ability whiff for %d posted a partial duration_sec but no in-place record was scheduled for release — client/server recovery tell may disagree" % attacker_id)
+
+
+# ── Targeted casts (v0.34.0 — the druid's Entangling Roots; DESIGN §2.13 conditions) ─────────
+
+## Adjudicate a TARGETED ability at a clicked TILE (host-only, from _validate_use_ability). The alive /
+## stunned / recovering gates already ran in the caller; this owns the rest of the ladder in the STRIKE's
+## order — cooldown, busy — then the aim checks, then the commit.
+##
+## TILE-KEYED, not entity-keyed, and that is the whole design (the smite's model, DESIGN §2.3.3): the cast
+## commits to a SQUARE, and whoever hostile is standing on it when the channel ENDS is what gets rooted. A
+## target that steps off in time dodges; a different enemy that steps on eats it. The client's cursor
+## requires a hostile under it before it will fire, but that is CONVENIENCE (§2.2.9) — the wire carries a
+## tile and the host adjudicates a tile, so a client that lies about what is there gains nothing.
+##
+## Reject reasons are player-facing SENTENCES for the aim faults ("Out of range.") and bare state tokens for
+## the rest, exactly as the shoot pipe does — game_log's ability arm surfaces the sentences verbatim, which
+## is what makes learning the cursor read cleanly instead of as a generic refusal.
+func _use_targeted(user_id: int, ability: ActiveAbility, data: Dictionary) -> Dictionary:
+	# COOLDOWN — same position, same gate, same wording as the STRIKE path above (and gated on the same
+	# experiment toggle, so `instant_abilities_enabled 0` reverts this ability to "no cooldown" too). A
+	# 30-beat hard CC is exactly the case Jeff's cooldown verdict was about. Pure: no state is touched.
+	if GameManager.config.instant_abilities_enabled:
+		var remaining := _cooldown_remaining_sec(user_id, ability)
+		if remaining > 0.0:
+			return { "ok": false, "reason": "on cooldown (%.1fs)" % remaining }
+	# BUSY — the Commitment Rule backstop every committed action shares (is_entity_moving covers a glide AND
+	# an in-place record), so a cast can never overlap or interrupt something already committed.
+	if _move_referee.is_entity_moving(user_id):
+		return { "ok": false, "reason": "busy" }
+	# Never trust the wire: the target tile must be a real Vector2i.
+	var tt = data.get("target_tile")
+	if typeof(tt) != TYPE_VECTOR2I:
+		return { "ok": false, "reason": "bad target" }
+	var target_tile: Vector2i = tt
+	# Origin from referee truth, never a node position.
+	var my_tile: Vector2i = _move_referee.tile_of_entity(user_id)
+	if target_tile == my_tile:
+		return { "ok": false, "reason": "Can't target your own tile." }
+	# RANGE: Chebyshev to the clicked tile ≤ the ability's authored reach, read server-side from the shared
+	# resource (never a client value). The shoot pipe's gate, same metric, same sentence.
+	var cheb := maxi(absi(target_tile.x - my_tile.x), absi(target_tile.y - my_tile.y))
+	if cheb > ability.range_tiles:
+		return { "ok": false, "reason": "Out of range." }
+	# ── Accept ──
+	# Forcing window (§2.8.7): a hostile cast keeps the caster tactical, like every other offensive action.
+	if _pace != null:
+		_pace.report_hostile_action(user_id)
+	var beat := PaceReferee.beat_or_explore(_pace, user_id)
+	var cast_sec := maxf(0.0, ability.windup_beats) * beat
+	var recovery_sec := maxf(0.0, ability.recovery_beats) * beat
+	# ONE busy record covering channel + spent tail (the heal/smite cast shape) — the caster is rooted in
+	# place for the whole thing and no input path may shorten it.
+	if not _move_referee.commit_in_place(user_id, cast_sec + recovery_sec):
+		return { "ok": false, "reason": "busy" }
+	_move_referee.set_facing(user_id, (target_tile - my_tile).sign())
+	_charge_strike_cooldown(user_id, ability)
+	var caster := _node_of_id(user_id)
+	# Name the CURRENT occupant, best-effort, for the telegraph line only — the real resolve re-reads the
+	# tile at cast end, so a dodge turns this into a fizzle. An empty tile still telegraphs.
+	var occ_id: int = _move_referee.entity_at(target_tile)
+	var occ_name := _name_of(_node_of_id(occ_id)) if occ_id != _NO_ENTITY else ""
+	# The telegraph on its OWN event (smite_cast's field shape) — a distinct channel per §2.3.4, so the
+	# green control-cast can never be confused with the red smite or a white melee wind-up.
+	NetEvents.post_event("root_cast", {
+		"caster_id": user_id,
+		"caster_name": _name_of(caster),
+		"target_tile": target_tile,
+		"target_name": occ_name,
+		"cast_sec": cast_sec,
+	}, user_id)
+	# interrupt_gen BOUND AT COMMIT and re-checked at fire. The smite skips this because only players blink
+	# and only monsters smite; a PLAYER caster closes that documented gap — a druid shadow-stepped (or, in
+	# future, knocked) out of its own channel is no longer standing where it cast from, so the roots fizzle.
+	get_tree().create_timer(cast_sec).timeout.connect(
+			_resolve_targeted.bind(user_id, target_tile, ability.root_beats, recovery_sec,
+					_move_referee.interrupt_gen_of(user_id)))
+	return { "ok": true, "deferred": true }
+
+
+## Resolve a committed TARGETED cast at channel END against its TILE (host-only, from the cast timer).
+## Fizzle conditions, all silent (the visible outcome already happened, or the caster is gone):
+##  - caster dead — killed mid-cast, the rush-it counterplay (the smite/windup rule).
+##  - FORCED MOVEMENT — the caster was teleported after committing (v0.26.0's interrupt generation).
+##  - caster STUNNED — the sanctioned §2.1 interrupt, stun-parity with the smite and the windup ability.
+## Otherwise whoever HOSTILE and LIVING occupies the tile NOW is ROOTED for `root_beats`. NO DAMAGE: the
+## root IS the payload, and mixing a damage event in would make the log read as a hit.
+func _resolve_targeted(caster_id: int, target_tile: Vector2i, root_beats: float, recovery_sec: float,
+		interrupt_gen: int) -> void:
+	if not is_alive(caster_id):
+		return
+	if _move_referee.interrupt_gen_of(caster_id) != interrupt_gen:
+		return
+	if is_stunned(caster_id):
+		return
+	var caster := _node_of_id(caster_id)
+	var occ_id: int = _move_referee.entity_at(target_tile)
+	if occ_id != _NO_ENTITY:
+		var occ := _node_of_id(occ_id)
+		if occ != null and is_alive(occ_id) and caster != null and caster.is_hostile_to(occ):
+			apply_condition(occ_id, "rooted", root_beats)
+			return
+	# WHIFF — the target stepped off, died, or the ground was bare. A distinct §2.3.4 outcome on the same
+	# `attack` event every other whiff uses (kind "ability"), so no new client plumbing is needed.
+	# WHIFF RECOVERY IS A DIAL (v0.32.0, whiff_recovery_beats): the miss pays whatever _whiff_tail_sec says
+	# it owes and duration_sec quotes exactly that, so the spent tell matches the window the host holds.
+	var paid_sec := _whiff_tail_sec(caster, recovery_sec)
+	NetEvents.post_event("attack", {
+		"attacker_id": caster_id,
+		"attacker_name": _name_of(caster),
+		"target_id": _NO_ENTITY,
+		"target_name": "",
+		"target_tile": target_tile,
+		"damage": 0,
+		"hp_after": -1,
+		"target_max": 0,
+		"kind": "ability",
+		"whiff": true,
+		"duration_sec": paid_sec,
+	}, caster_id)
+	# LAST, after the fizzle event is on the wire (the ordering rule every whiff release shares). The three
+	# regimes of `whiff_recovery_beats`: FULL (the default) leaves the window untouched; NONE releases now;
+	# PARTIAL releases at the PAID boundary the event just quoted.
+	if paid_sec >= recovery_sec:
+		return
+	if paid_sec <= 0.0:
+		if not _move_referee.finish_busy_early(caster_id):
+			push_warning("[CombatReferee] targeted whiff for %d posted duration_sec 0 but no in-place record was released — client/server recovery tell may disagree" % caster_id)
+		return
+	if not _move_referee.release_busy_after(caster_id, paid_sec):
+		push_warning("[CombatReferee] targeted whiff for %d posted a partial duration_sec but no in-place record was scheduled for release — client/server recovery tell may disagree" % caster_id)
 
 
 # ── Instant abilities (v0.26.0 EXPERIMENT — Shield Block + Shadow Step; DESIGN §2.11.1) ──────
@@ -2089,6 +2366,11 @@ func _kill_entity(entity_id: int, ent_name: String) -> void:
 	# id — and the node frees, taking its shield icon), and cooldowns reset so a fresh life starts ready.
 	_blocking.erase(entity_id)
 	_ability_ready_at_msec.erase(entity_id)
+	# Conditions (v0.34.0): a corpse carries nothing, so a same-id respawn is born unrooted. No
+	# status_expired is posted — the node frees, taking its cue with it (the stun erases above do the same).
+	# _condition_gen is deliberately NOT erased here: it is the monotonic guard that stops a previous life's
+	# pending expiry timer from clearing a fresh life's condition (see its declaration).
+	_conditions.erase(entity_id)
 	_move_referee.clear_entity(entity_id)
 	NetEvents.post_event("died", { "entity_id": entity_id, "name": ent_name })
 	# Goblin banter (v0.24.4): a MONSTER death makes a living packmate IN THE FIGHT bark revenge — Jon's
@@ -2206,6 +2488,10 @@ func _on_entity_exiting(node: Node) -> void:
 		# and with every instant cooldown ready. Idempotent with _kill_entity's erases above.
 		_blocking.erase(node.entity_id)
 		_ability_ready_at_msec.erase(node.entity_id)
+		# Conditions (v0.34.0), same contract as the stun/god erases above: a disconnect / despawn / F5
+		# respawn starts free of every condition. Idempotent with _kill_entity's erase. _condition_gen
+		# survives on purpose (see its declaration) — it is the anti-reuse guard, not per-life state.
+		_conditions.erase(node.entity_id)
 
 
 ## Null-safe passive accessor (v0.11.0): the ATTACKER's PassiveAbility list, or [] for anything without

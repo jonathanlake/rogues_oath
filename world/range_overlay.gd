@@ -27,6 +27,10 @@ extends Node2D
 ## the red/yellow monster fills (static authored ranges), this one IS live: it tracks the host's
 ## broadcast pace_changed events, so the ring shows only while that player is actually in the fight.
 @export var player_bubble_color: Color = Color(0.2, 1.0, 0.3, 0.15)
+## Fill for the TARGETING RING (v0.34.0) — the reach of the ability whose cursor the local player has armed.
+## A deeper, more saturated green than the pace bubble and at a higher alpha: this one is an ACTIVE
+## instruction ("click inside this"), not ambient debug information, so it must read even over a bubble.
+@export var targeting_color: Color = Color(0.25, 0.9, 0.35, 0.22)
 
 # The Monsters container, handed in by Main via set_monsters on EVERY peer (component pattern — the
 # overlay never reaches up to read a sibling). Null until wired; a null ref draws nothing.
@@ -38,6 +42,21 @@ var _monsters: Node2D = null
 # until wired; a null container draws no player rings.
 var _players: Node2D = null
 var _tactical_players: Dictionary = {}
+
+# TARGETING RING (v0.34.0) — a SECOND, INDEPENDENT VISIBILITY AXIS on this node. Everything above is the F7
+# debug overlay, shown only while `visible` is true; this ring is a GAMEPLAY cue for the local player's armed
+# ability cursor and must draw whether or not F7 is on. So `visible` stays true permanently and the two axes
+# are OR'd inside _draw / _process: the F7 half draws only when `_debug_on`, this half only when `_targeting`.
+#
+# Pushed by Main (set_targeting / clear_targeting) — component pattern, the overlay never reaches up to find
+# the local player or read an ability's range itself. Main re-pushes the centre as the player walks, so the
+# ring tracks the body it belongs to rather than the tile the cursor was armed on.
+var _targeting: bool = false
+var _targeting_center: Vector2i = Vector2i.ZERO
+var _targeting_radius: int = 0
+# The F7 DEBUG half's own visibility, split out of `visible` (v0.34.0) so the targeting ring can draw while
+# the debug fills are off. Seeded from the same GameManager flag `visible` used to be.
+var _debug_on: bool = false
 
 
 ## Component wiring (v0.10.1): Main hands the overlay its Monsters container so it never reaches up to
@@ -54,29 +73,58 @@ func set_players(players: Node2D, tactical_players: Dictionary) -> void:
 	_tactical_players = tactical_players
 
 
+## ARM the targeting ring (v0.34.0): fill every tile within `radius` of `center`, drawn regardless of the F7
+## debug axis. Called by Main when the local player arms an ability cursor, and RE-CALLED as that player
+## moves so the ring stays centred on the body the host will measure range from. A radius <= 0 draws nothing
+## (the shared _draw_radius rule), which makes a misauthored range fail visibly rather than flood the room.
+func set_targeting(center: Vector2i, radius: int) -> void:
+	_targeting = true
+	_targeting_center = center
+	_targeting_radius = radius
+
+
+## Take the targeting ring down (v0.34.0) — the cursor fired, was cancelled, or its owner is gone.
+## Idempotent; Main calls it liberally.
+func clear_targeting() -> void:
+	_targeting = false
+
+
 func _ready() -> void:
 	# Layering comes from SIBLING ORDER in main.tscn — this node sits between $Room and $Players, so
 	# the fills draw over the floor and under the entities at default z_index. (A negative z_index
 	# would push the fills BELOW the opaque tilemap and hide them — the v0.10.0 first-cut bug.)
-	visible = GameManager.debug_range_overlay_start_visible
+	#
+	# v0.34.0: the node itself stays VISIBLE always; `_debug_on` is what F7 toggles now. Hiding the node
+	# would take the targeting ring — a gameplay cue, not debug info — down with the debug fills. The
+	# assignment makes that claim self-enforcing against a future .tscn visible=false (GLM r-diff #1).
+	visible = true
+	_debug_on = GameManager.debug_range_overlay_start_visible
 
 
 func _process(_delta: float) -> void:
-	# Redraw only while visible (cheap — a handful of rects, and only when toggled on). A monster's
-	# tile moves on its glide events, so a per-frame redraw keeps the fills tracking each monster.
-	if visible:
+	# Redraw only while SOMETHING would draw (cheap — a handful of rects). A monster's tile moves on its
+	# glide events, so a per-frame redraw keeps the fills tracking each monster; the targeting ring needs
+	# the same treatment because Main re-centres it as the armed player walks.
+	if _debug_on or _targeting:
 		queue_redraw()
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_range_overlay"):
-		visible = not visible
+		_debug_on = not _debug_on
 		queue_redraw()
 		# Consume so F7 is this overlay's alone (mirrors the F3 overlay's toggle).
 		get_viewport().set_input_as_handled()
 
 
 func _draw() -> void:
+	# TARGETING RING FIRST (v0.34.0), on its own axis: it draws whether or not the F7 debug half is on, and
+	# UNDER the debug fills when both are up (the debug layer is the transient one you toggled deliberately).
+	if _targeting:
+		_draw_radius(_targeting_center, _targeting_radius, targeting_color)
+	# Everything below is the F7 DEBUG half.
+	if not _debug_on:
+		return
 	# Null until Main wires it (set_monsters), or if wiring is ever skipped — draw nothing (component
 	# pattern: the overlay no longer reaches up to find its sibling itself).
 	if _monsters == null:
