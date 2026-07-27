@@ -76,6 +76,13 @@ To script a dev command, add it to the HOST's array as one element (`"cmd=/god"`
 
 ## Hard-won gotchas (validated in sessions, dated)
 
+- **PS 5.1 `Start-Process -ArgumentList` does NOT quote array elements (2026-07-26 — cost two
+  runs):** the elements are joined with spaces raw, so `"--path", $proj` with this project's
+  space-containing path splits into broken argv and Godot silently sits at the project-manager
+  banner forever — log shows ONLY the engine banner, no version print, no eventlog file ever
+  appears. Fix: embed quotes in the element itself: `"--path", "`"$proj`""`. A banner-only log
+  IS this failure — don't wait longer, re-check the argv.
+
 - **`cmd=` values are mangled by BOTH shells, silently, in two different ways (2026-07-26 —
   each cost a real run):**
   - *Git Bash / MSYS path conversion:* any value that starts with `/` is rewritten to a Windows
