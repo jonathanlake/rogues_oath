@@ -279,6 +279,28 @@ func _process(delta: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not enabled:
 		return
+	# ESCAPE ALSO CANCELS AN ARMED CURSOR (v0.36.0, Jon) — the keyboard twin of the right-click below, and
+	# checked first because everything after this point is mouse-only. Identical semantics: PRE-COMMIT, so
+	# it is not a take-back (§2.2.8 — commitment begins at the host's verdict), silent, and it touches only
+	# the latch. Main re-syncs the range ring off that latch every frame, so the ring comes down on the very
+	# next frame with nothing else to wire.
+	#
+	# `ui_cancel` (Godot's built-in) rather than a new input-map action: nothing in this game binds escape,
+	# so there is no contention to resolve.
+	#
+	# TYPING WINS, for free. A FOCUSED chat LineEdit consumes ui_cancel in its own gui_input before
+	# _unhandled_input ever sees it (documented at game_log.gd's _ready), so escape while typing ends editing
+	# and escape while playing cancels the cast — with no cross-component check between the two. The accepted
+	# consequence: arm a cast, open chat WITHOUT cancelling, and one escape closes the chat while the cast
+	# stays armed. That is the right priority (escape belongs to whatever you are typing in) and it is not
+	# silent — the green ring is still on screen saying so, and a second escape takes it down.
+	#
+	# CONSUMED ONLY WHEN A CURSOR WAS ACTUALLY ARMED, so a future pause menu still gets escape the rest of
+	# the time.
+	if event.is_action_pressed("ui_cancel") and _targeting_index != -1:
+		_targeting_index = -1
+		get_viewport().set_input_as_handled()
+		return
 	if not (event is InputEventMouseButton):
 		return
 	var mouse := event as InputEventMouseButton

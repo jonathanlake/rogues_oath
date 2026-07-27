@@ -2181,7 +2181,18 @@ func _build_attack_data(attacker: Node, attacker_id: int, target: Node, target_i
 	# field-gated) — a kick renders like a bare-handed bump, never the bow slash arc.
 	# EXCLUDE "ability" too (v0.20.0): a shield bash / kick is not a weapon swing, so it stamps no weapon field
 	# (no longsword rig arc over a bash) — the attacker's lunge in _handle_attack_event is its melee cue.
-	if attacker is Entity and attacker.equipped_weapon != null and kind != "kick" and kind != "ability":
+	# EXCLUDE "smite" (v0.36.0, Jon's playtest — this was a BUG, not a design change). A smite is a
+	# ground-target SPELL, but the shaman happens to hold a club, so every landed smite stamped "club" and
+	# every peer dutifully played a club swing (and its arc across the recovery window) for a spell — Jon
+	# reported it as "his recovery shows the club again". The rule the list above already states — stamp the
+	# kinds that SWING A WEAPON — always excluded smite; nobody added it when the shaman shipped. The cast's
+	# own cue is the overhead symbol on the separate `smite_cast` event, which is untouched by this, as is the
+	# recovery tell (gated on duration_sec, not on the weapon field).
+	#
+	# THREE EXCLUSIONS IS THE LIMIT: this list is really "kinds where the weapon is not what struck", and a
+	# fourth entry means it should be inverted into an allowlist of the kinds that DO swing.
+	if attacker is Entity and attacker.equipped_weapon != null \
+			and kind != "kick" and kind != "ability" and kind != "smite":
 		data["weapon"] = attacker.equipped_weapon.display_name
 		# DAMAGE TYPE (v0.27.0): a PRESENT-ONLY label, stamped in the same breath as the weapon identity
 		# and under exactly the same condition — a weapon is present AND this hit is that weapon's own

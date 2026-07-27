@@ -837,6 +837,19 @@ that makes the lane check pointless. Friendly fire between monsters now has its 
 (victim, then culprit a beat later), which is the feedback that makes it read as comedy rather than
 as a bug.
 
+**v0.36.0 — THE KITER'S THIRD MOVEMENT RUNG.** The v0.35.0 reposition rung fixed a blocked lane; this
+fixes the other half of the same freeze. A kiter now **APPROACHES** when its target is beyond
+`weapon.range_tiles`, one re-pathed step per think (`_first_step_toward`, the shared A* the chasers use),
+placed below smite and above hold. The archetype's movement is therefore now fully described by three
+bands and a gap: **retreat** at or inside `flee_range_tiles`, **shoot / sidestep** between, **approach**
+beyond `range_tiles`. The GAP between the flee band and the approach band is what makes the archetype
+stable — with it, an archer holds its ground and fires; without it, every think both wants to retreat and
+wants to close and the monster paces on the spot. That makes `flee_range_tiles < weapon.range_tiles` a
+real authoring INVARIANT rather than a convention, so a violation now warns by name (once per distinct
+combination, since both numbers are live-tunable). Leash is unchanged and still owned by the engagement
+gate above the ladder: past the leash the brain de-aggros and holding is correct, which is a different
+thing from the freeze this fixed.
+
 **Still envisioned:** true line-of-sight (arrows use per-tile wall clipping today; diagonal
 corner-cutting accepted for v1); more ranged weapon types (crossbow / thrown — each a `.tres`);
 ranged monsters that pick up weapons off the ground (Jeff's down-the-line note, waits on item/AI

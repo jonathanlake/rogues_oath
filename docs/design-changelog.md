@@ -9,6 +9,35 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.36.0 (2026-07-27) — THE ARCHER CLOSES THE GAP, AND THE SHAMAN STOPS SWINGING A CLUB AT YOU.**
+  First of three batches from Jon's v0.35.0 playtest (gameplay first; the debug-panel overhaul and
+  creature-targeted spells follow).
+  **THE BOW GOBLIN NOW WALKS TOWARD YOU.** v0.35.0 taught it to sidestep when a packmate blocked its
+  lane — but step ONE tile past its bow range and it froze again, for the same underlying reason: every
+  rung it has needs you somewhere specific. Fleeing needs you close, shooting and repositioning need
+  you in range, and it has no smite. So a player who simply backed off left it with nothing to do. It
+  now closes the distance, re-pathing every step (so it rounds walls instead of grinding into them) and
+  stopping exactly at the edge of its range to shoot. It still backs off if you get inside 3 tiles, and
+  there is no stutter at either boundary — the two bands can't overlap. If someone ever tunes them so
+  they DO overlap, the log now says so by name instead of the goblin silently pacing on the spot.
+  **THE SHAMAN'S SMITE NO LONGER SWINGS HIS CLUB.** Jon: *"sometimes when the shaman lands his smite,
+  his recovery shows the club again."* Real bug, and an old one. Every landed attack stamps which weapon
+  struck, so peers can play the swing — and the list of things that AREN'T a weapon swing (a kick, an
+  ability) never had "smite" added to it when the shaman shipped. So a spell landed carrying "club" and
+  every peer dutifully swung it. The shaman still *holds* his club (that's his sprite); it just no longer
+  swings it to cast. His cast symbol and recovery bar are untouched.
+  **ESCAPE CANCELS AN ARMED SPELL**, exactly like right-click. If you're typing in chat, escape still
+  belongs to the chat box — one escape closes the chat, a second cancels the cast (the green ring stays
+  up in between, so you can see it's still armed).
+  **ENEMIES ALREADY DROP THE WEAPON THEY WERE USING** — Jon asked for this and it turned out to be
+  built already: the drop reads whatever the monster actually wields, so a bow goblin drops a bow and a
+  club goblin drops a club. No change; worth knowing it works.
+  **Verified headless:** an archer 10 tiles away closed to exactly 7 and opened fire, with no
+  over-approach; a landed smite carries no weapon at all while an ordinary club swing still does; and the
+  band-overlap warning fires once, only when a live `/m` dial actually creates the overlap. One GLM
+  red-team pass — it caught that the warning's memo could go stale when those values are re-tuned
+  mid-session, which is reachable here since both are live dials; the memo now keys on the values.
+
 - **v0.35.0 (2026-07-27) — SPELLS MAKE ENEMIES ANGRY, THE BOW GETS HONEST, AND THE ARCHER STOPS
   FREEZING.** Five things Jon found playing v0.34.0, fixed same-day.
   **CASTING A SPELL ON SOMETHING NOW ANGERS IT — AND ITS FRIENDS.** Entangling Roots deals no

@@ -570,6 +570,7 @@ func _nearest_target(my_tile: Vector2i, targets: Array) -> Vector2i:
 func _act_as_kiter(my_tile: Vector2i, targets: Array) -> void:
 	var nearest := _nearest_target(my_tile, targets)
 	var nearest_dist := maxi(absi(nearest.x - my_tile.x), absi(nearest.y - my_tile.y))
+	_warn_if_bands_overlap()
 	# (1) Too close → back off. Priority over shooting/smiting so a crowded caster makes space first. If
 	# cornered (no free away-step), fall through to try a ranged attack instead of freezing.
 	if _monster_type.flee_range_tiles > 0 and nearest_dist <= _monster_type.flee_range_tiles:
@@ -637,9 +638,88 @@ func _act_as_kiter(my_tile: Vector2i, targets: Array) -> void:
 				# re-think just past it (same as heal / wind-up).
 				_reschedule_after(wait_sec + windup_rethink_epsilon_sec)
 				return
-	# (4) Nothing to do this think (no flee needed or cornered, no shot, no smite target) — hold on the
-	# cadence, or until the recovery wait ends if the lockout is what silenced the ranged attack (v0.28.0).
+	# (3.5) APPROACH (v0.36.0, Jon's playtest) — the target is BEYOND our reach, so close the gap.
+	#
+	# This is the OTHER half of the v0.35.0 freeze, and it has the same shape as the first: every rung above
+	# needs the player to be somewhere specific. Flee needs them CLOSE (inside flee_range_tiles), shoot and
+	# reposition need them IN RANGE, and the bow goblin authors no smite — so a player who simply walked one
+	# tile past range_tiles left the archer with no applicable rung at all, and it stood there re-deciding the
+	# same nothing forever. An archer that will not walk toward you is not a kiter, it is scenery.
+	#
+	# NOT GATED ON THE RECOVERY LOCKOUT, exactly like the flee step: approach is MOVEMENT, and movement is the
+	# other channel (the shoot and smite rungs above stay gated because they are actions).
+	#
+	# ONE STEP, re-decided next think — never a stored path. _first_step_toward gives us the first step of a
+	# real A* route (sibling-avoiding, with the walls-only fallback), recomputed every think, so an archer
+	# rounds a wall instead of grinding into it and a target that keeps moving is re-pathed rather than chased
+	# toward where it used to be.
+	#
+	# Leash needs nothing here: _update_engagement ran the whole aggro acquire / persist / leash gate before
+	# this ladder, so this can only fire for a target we are already legitimately engaged with. Past the leash
+	# the brain de-aggros and rung (4) holds — which is the CORRECT idle, not the bug: a monster that has lost
+	# you is supposed to stop.
+	if _monster_type.weapon != null and _monster_type.weapon.range_tiles > 0 \
+			and nearest_dist > _monster_type.weapon.range_tiles and not _is_rooted():
+		var approach := _first_step_toward(my_tile, targets)
+		# ON SUCCESS ONLY (the _step_toward_targets contract): a refused submit must leave the flag showing the
+		# CURRENT still-gliding step's shape, or the busy gate's settle backstop is computed from a step that
+		# never happened. This is the bug the v0.35.0 review caught twice; do not reintroduce it.
+		if approach != Vector2i.ZERO and _referee.submit_monster_intent(_entity_id, approach):
+			_last_step_was_diagonal = approach.x != 0 and approach.y != 0
+			return
+	# (4) Nothing to do this think (no flee needed or cornered, no shot, no smite target, nothing to walk
+	# toward) — hold on the cadence, or until the recovery wait ends if the lockout is what silenced the
+	# ranged attack (v0.28.0).
 	_reschedule_recovery_aware()
+
+
+## THE KITER BAND INVARIANT (v0.36.0), checked once per monster type and then never again.
+##
+## The kiter ladder's freedom from stutter rests entirely on a GAP between two authored numbers: the FLEE
+## rung fires at or below `flee_range_tiles` and the APPROACH rung fires above the weapon's `range_tiles`.
+## While flee_range < weapon range there is a dead band between them where the archer simply shoots, and it
+## can never step in and straight back out. Author a monster whose flee range meets or exceeds its weapon's
+## reach and that band vanishes: every think both wants to retreat AND wants to close, and the monster
+## paces on the spot forever — which looks exactly like the freeze this rung was added to fix, so it would
+## be diagnosed as a code regression rather than the `.tres` mistake it is.
+##
+## A WARNING, NOT AN ASSERT: a misauthored resource should be loud, not fatal in the middle of Jon's
+## playtest — the same call the catalog guards make (GameConfig.validate_catalogs / _warn_inverted_damage_
+## bands). LATCHED PER MONSTER TYPE in a static dict, the shape CombatReferee._warned_armor_bands uses for
+## the same reason: this is called from a think, so an unlatched warning would push once per decision and
+## drown the log it is trying to stand out in.
+##
+## THE LATCH KEY IS (identity, flee_range, weapon_range) — the VALUES, not just the type. Keying on the
+## type alone would be wrong in this codebase specifically, because both numbers are LIVE-TUNABLE: `/m
+## goblin_bow flee_range_tiles 9` and the debug panel's MONSTER TYPES section rewrite the authored fields
+## mid-session. A type-only latch would answer once at session start and then go quiet forever, so the one
+## moment the warning exists for — Jon drags a dial into the overlap and the archer starts pacing — is
+## exactly the moment it would say nothing. Including the values means each distinct COMBINATION warns once:
+## noisy never, silent never.
+##
+## Identity falls back to `display_name` when `resource_path` is empty, so a MonsterType built in code (or
+## a duplicate()d one) can't collapse every such type onto a single shared "" key and have the first one to
+## warn mute all the others.
+static var _warned_kiter_bands: Dictionary = {}
+
+func _warn_if_bands_overlap() -> void:
+	if _monster_type == null or _monster_type.weapon == null:
+		return
+	if _monster_type.weapon.range_tiles <= 0 or _monster_type.flee_range_tiles <= 0:
+		return
+	if _monster_type.flee_range_tiles < _monster_type.weapon.range_tiles:
+		return
+	var identity: String = _monster_type.resource_path
+	if identity == "":
+		identity = _monster_type.display_name
+	var key := "%s|%d|%d" % [identity, _monster_type.flee_range_tiles, _monster_type.weapon.range_tiles]
+	if _warned_kiter_bands.has(key):
+		return
+	_warned_kiter_bands[key] = true
+	push_warning(("[MonsterBrain] '%s' authors flee_range_tiles %d >= its weapon's range_tiles %d — the kiter"
+			+ " ladder has NO dead band between backing off and closing in, so this monster will pace on the"
+			+ " spot instead of fighting. Lower flee_range_tiles below the weapon's reach.") % [
+			_monster_type.display_name, _monster_type.flee_range_tiles, _monster_type.weapon.range_tiles])
 
 
 ## Submit one step DIRECTLY AWAY from `nearest_tile` for a kiter (v0.19.10). Tries the pure-away direction
