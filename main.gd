@@ -98,6 +98,13 @@ const BRUTE_TYPE_PATH := "res://resources/monsters/goblin_brute.tres"
 const SHAMAN_MENDER_TYPE_PATH := "res://resources/monsters/goblin_shaman_mender.tres"
 const SHAMAN_ZEALOT_TYPE_PATH := "res://resources/monsters/goblin_shaman_zealot.tres"
 const GOBLIN_AMBUSH_TYPE_PATH := "res://resources/monsters/goblin_ambush.tres"
+# THE BOW GOBLIN (v0.33.0) — an ORDINARY goblin that happens to carry a bow, not a new archetype: same
+# sprite, same "Goblin" nameplate, same aggro 5. What differs is authored entirely in its .tres — a ranged
+# weapon (bow.tres, range 7) plus the KITER disposition (flees_players, flee_range 3) the shamans already
+# use — so its brain runs the existing kiter ladder and its shot runs the existing player shot path. It
+# never notices you past five tiles; once it has, it backs off to three and shoots from seven. Declared with
+# the other pack type-paths because the room-B pack is where it stands.
+const GOBLIN_BOW_TYPE_PATH := "res://resources/monsters/goblin_bow.tres"
 const WARREN_SPAWNS: Array[Dictionary] = [
 	{"tile": Vector2i(7, 23), "path": BRUTE_TYPE_PATH},           # the anvil, room-D centre
 	{"tile": Vector2i(5, 23), "path": GOBLIN_AMBUSH_TYPE_PATH},   # skirmisher — west wing
@@ -112,8 +119,13 @@ const WARREN_SPAWNS: Array[Dictionary] = [
 # fails here too, but with no zealot artillery and no brute anvil to complicate the read. Every tile
 # verified '.' in WorldGrid.ROOM_LAYOUT (B = cols 32–45, rows 2–9; gate walls at (40,5)/(41,4)).
 # Declared BELOW WARREN_SPAWNS because it shares its type-path consts (no forward references).
+#
+# v0.33.0 swaps the NORTH FLANK for the BOW GOBLIN (Jon+Jeff). The composition's lesson is unchanged —
+# "kill the wall first" still fails against the mender behind it — but the wall is no longer symmetrical:
+# one flank closes and one backs away shooting, so the party has to split its attention the moment it
+# steps through the row-5 entrance. The south flank stays a plain melee goblin as the contrast.
 const EAST_PACK_SPAWNS: Array[Dictionary] = [
-	{"tile": Vector2i(36, 4), "path": GOBLIN_TYPE_PATH},          # wall — north flank
+	{"tile": Vector2i(36, 4), "path": GOBLIN_BOW_TYPE_PATH},      # wall — north flank (archer, v0.33.0)
 	{"tile": Vector2i(36, 7), "path": GOBLIN_TYPE_PATH},          # wall — south flank
 	{"tile": Vector2i(42, 6), "path": SHAMAN_MENDER_TYPE_PATH},   # sustain, deep east
 ]
@@ -640,13 +652,17 @@ func _ready() -> void:
 		# (goblin= knob); on by default for menu play (GameManager.spawn_monsters).
 		if GameManager.spawn_monsters:
 			_spawn_goblins()
-		# Debug goblinat= (v0.17.2): ADD one goblin at an EXACT tile, independent of goblin=/spawn_monsters,
-		# for combat tests needing precise range geometry (first use: the ranged-aggro verification — bow
-		# range 7 vs goblin aggro 5). Unset = the impossible sentinel; set = spawn through the SAME guarded
-		# per-tile step (walkable + tile-free, negative id, brain activated). Host-only (this branch is
+		# Debug goblinat= (v0.17.2; v0.33.0 a TYPED LIST): ADD monsters at EXACT tiles, independent of
+		# goblin=/spawn_monsters, for combat tests needing precise geometry (first use: the ranged-aggro
+		# verification — bow range 7 vs goblin aggro 5). Empty = the knob was absent; each entry carries the
+		# tile plus a resolved type_path (debug.gd resolves the optional type NAME and drops anything that
+		# does not exist), and every one goes through the SAME guarded per-tile step (path resolves + walkable
+		# + tile-free, negative id, brain activated) — so a bad row warns and skips while the rest still land.
+		# The LIST is what lets one run place two DIFFERENT monsters (an archer and the ally blocking its
+		# lane), which is the whole reason it stopped being a single tile. Host-only (this branch is
 		# is_server()); session-start only (an F5 reset does not re-apply it, mirroring debug_starting_weapon).
-		if GameManager.debug_goblin_at != GameManager.DEBUG_GOBLIN_AT_UNSET:
-			_spawn_monster_at(GameManager.debug_goblin_at, GOBLIN_TYPE_PATH)
+		for goblin_spawn in GameManager.debug_goblin_spawns:
+			_spawn_monster_at(goblin_spawn["tile"], str(goblin_spawn["type_path"]))
 		# Ground items (v0.18.0): pre-place the session-start potions AFTER players + monsters so the item-
 		# collision scan sees a fully-populated world (though items only collide with items, not entities —
 		# _spawn_item_at deliberately checks walkability + item-collision only, never entity occupancy).
@@ -654,9 +670,10 @@ func _ready() -> void:
 		# _spawn_goblins re-runs), so every fresh round gets its potions.
 		_place_starting_items()
 		# Debug potion=x,y (v0.18.0): ADD one health potion at an EXACT tile, independent of the session-start
-		# set, for pickup/inventory tests needing a potion at precise geometry (mirrors goblinat= exactly).
-		# Unset = the impossible sentinel; set = spawn through the SAME guarded _spawn_item_at. Host-only (this
-		# branch is is_server()); session-start only (an F5 reset does not re-apply it, like debug_goblin_at).
+		# set, for pickup/inventory tests needing a potion at precise geometry (the single-tile shape goblinat=
+		# had before v0.33.0 typed it). Unset = the impossible sentinel; set = spawn through the SAME guarded
+		# _spawn_item_at. Host-only (this branch is is_server()); session-start only (an F5 reset does not
+		# re-apply it, like debug_goblin_spawns).
 		if GameManager.debug_potion_at != GameManager.DEBUG_POTION_AT_UNSET:
 			_spawn_item_at(GameManager.debug_potion_at, HEALTH_POTION_TYPE_PATH)
 		NetworkManager.peer_connected.connect(_on_peer_connected)
@@ -2281,7 +2298,7 @@ func _reset_round() -> void:
 		_spawn_goblins()
 	# Re-place the session-start ground items (v0.18.0) so every fresh round has its potions — the same
 	# helper the host's _ready calls (mirror of _spawn_goblins re-running above). The potion= debug knob is
-	# NOT re-applied here (session-start only, like debug_goblin_at / debug_starting_weapon).
+	# NOT re-applied here (session-start only, like debug_goblin_spawns / debug_starting_weapon).
 	_place_starting_items()
 
 	# The reset marker is NOT posted here anymore (v0.9.4): the accepted dev_reset_round intent is the
@@ -2327,12 +2344,23 @@ func _spawn_goblins() -> void:
 
 
 ## Host-only per-tile monster spawn step (v0.17.2 extract), shared by _spawn_goblins (each map goblin +
-## the dummy) and the goblinat= debug knob. Guards the tile (walkable + occupancy-free) — a walled/occupied
-## tile is SKIPPED with a warning and returns false so the caller decides whether that consumes a cap slot.
-## On success it takes the next monotonic negative entity id and replicates the spawn config (the type PATH,
-## never a Resource over the wire) so every peer loads the same authored .tres; the spawner's host-side
-## spawn_function activates the brain for a has_brain type. Returns whether a monster was actually placed.
+## the dummy) and the goblinat= debug knob. Guards the TYPE PATH (it must resolve) and the tile (walkable +
+## occupancy-free) — a bad path or a walled/occupied tile is SKIPPED with a warning and returns false so the
+## caller decides whether that consumes a cap slot. On success it takes the next monotonic negative entity id
+## and replicates the spawn config (the type PATH, never a Resource over the wire) so every peer loads the
+## same authored .tres; the spawner's host-side spawn_function activates the brain for a has_brain type.
+## Returns whether a monster was actually placed.
 func _spawn_monster_at(tile: Vector2i, type_path: String) -> bool:
+	# TYPE-PATH guard FIRST (v0.33.0), the same one _spawn_item_at has carried since chunk A and for the same
+	# reason: a MultiplayerSpawner replicates the node to every peer the instant we call spawn(), so a
+	# mistyped path would push a nameless, weaponless, brain-less body out to the whole party — silently,
+	# because load() failing per-peer is not something the host ever hears about. It became reachable the
+	# moment goblinat= started naming a monster TYPE (a typo'd name is now ordinary user input, not a code
+	# bug). ResourceLoader.exists is the cheap pre-load existence check; the per-peer spawn_function still
+	# load()s it. Refuse here (warn + false) so nothing replicates.
+	if not ResourceLoader.exists(type_path):
+		push_warning("[Main] monster spawn type_path '%s' does not exist — skipping (no replication)" % type_path)
+		return false
 	if not WorldGrid.is_walkable(tile) or not _referee.is_tile_free(tile):
 		push_warning("[Main] monster spawn tile %s not walkable/free — skipping (map-coupled)" % tile)
 		return false

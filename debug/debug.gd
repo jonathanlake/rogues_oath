@@ -296,14 +296,15 @@ func _ready() -> void:
 	# host-only starting-weapon knob (M3.7): weapon=dagger|longsword resolves through the roster
 	# and applies to the host own player at session start (GameManager.debug_starting_weapon).
 	var starting_weapon := ""
-	# goblinat=x,y (v0.17.2): host-only exact-tile goblin placement for combat range tests. Parsed to a
-	# SINGLE tile (via the shared _parse_tile_list, first entry) and applied to GameManager.debug_goblin_at
-	# in the host branch. has_ tracks presence so an unparsed/absent arg leaves the sentinel untouched.
-	var goblin_at_tile := Vector2i.ZERO
-	var has_goblin_at := false
+	# goblinat=x,y[,<type>];… (v0.17.2; a TYPED LIST since v0.33.0): host-only exact-tile monster placement
+	# for combat geometry tests. Parsed by _parse_monster_spawn_list into { tile, type_path } entries and
+	# applied to GameManager.debug_goblin_spawns in the host branch. EMPTY = knob absent or wholly malformed,
+	# so a typo leaves the stash untouched (the parser warns per bad entry).
+	var goblin_spawns: Array[Dictionary] = []
 	# potion=x,y (v0.18.0): host-only exact-tile health-potion placement for pickup/inventory tests. Parsed
 	# to a SINGLE tile (shared _parse_tile_list, first entry) and applied to GameManager.debug_potion_at in
-	# the host branch. Exact mirror of goblinat=; has_ tracks presence so a typo leaves the sentinel untouched.
+	# the host branch. Still the SINGLE-tile shape goblinat= had before v0.33.0 grew a typed list (one item
+	# kind ships, so there is nothing to name yet); has_ tracks presence so a typo leaves the sentinel untouched.
 	var potion_at_tile := Vector2i.ZERO
 	var has_potion_at := false
 	for arg in args:
@@ -412,15 +413,13 @@ func _ready() -> void:
 		elif arg.begins_with("hostile="):
 			all_hostile = arg.trim_prefix("hostile=").to_int() != 0
 		elif arg.begins_with("goblinat="):
-			# Single-tile read: reuse the shared list parser, take the first entry. A malformed value
-			# leaves has_goblin_at false (the parser warns), so the knob stays inert on a typo.
-			var goblin_at_tiles := _parse_tile_list(arg.trim_prefix("goblinat="), "goblinat=")
-			if not goblin_at_tiles.is_empty():
-				goblin_at_tile = goblin_at_tiles[0]
-				has_goblin_at = true
+			# TYPED LIST read (v0.33.0): semicolon groups of "x,y" or "x,y,<type_name>". A malformed or
+			# unresolvable group is warned + dropped by the parser, so the surviving rows still spawn.
+			goblin_spawns = _parse_monster_spawn_list(arg.trim_prefix("goblinat="), "goblinat=")
 		elif arg.begins_with("potion="):
-			# Single-tile read (mirror of goblinat=): reuse the shared list parser, take the first entry. A
-			# malformed value leaves has_potion_at false (the parser warns), so a typo keeps the knob inert.
+			# Single-tile read: reuse the shared list parser, take the first entry. A malformed value leaves
+			# has_potion_at false (the parser warns), so a typo keeps the knob inert. (goblinat= used to read this
+			# way too; v0.33.0 gave it its own typed-list parser, so the two knobs are no longer twins.)
 			var potion_at_tiles := _parse_tile_list(arg.trim_prefix("potion="), "potion=")
 			if not potion_at_tiles.is_empty():
 				potion_at_tile = potion_at_tiles[0]
@@ -486,14 +485,14 @@ func _ready() -> void:
 		# on the client and without the arg. The swap=/swapwait= knobs fire the swap intent mid-run.
 		if not starting_weapon.is_empty():
 			GameManager.debug_starting_weapon = starting_weapon
-		# goblinat= is host-only: stash the exact goblin spawn tile so main.gd places ONE goblin there at
-		# session start (through the shared guarded spawn step), independent of goblin=. Set before
-		# host_game(); inert on the client and without the arg (the sentinel stays put).
-		if has_goblin_at:
-			GameManager.debug_goblin_at = goblin_at_tile
+		# goblinat= is host-only: stash the exact monster placements so main.gd spawns each one at session
+		# start (through the shared guarded spawn step), independent of goblin=. Set before host_game();
+		# inert on the client and without the arg (the stash stays empty).
+		if not goblin_spawns.is_empty():
+			GameManager.debug_goblin_spawns = goblin_spawns
 		# potion= is host-only: stash the exact potion tile so main.gd places ONE potion there at session start
 		# (through the shared guarded _spawn_item_at), independent of the session-start set. Set before
-		# host_game(); inert on the client and without the arg (the sentinel stays put). Mirror of goblinat=.
+		# host_game(); inert on the client and without the arg (the sentinel stays put).
 		if has_potion_at:
 			GameManager.debug_potion_at = potion_at_tile
 		# goblin= is host-only: the autostart run is monster-free unless opted in, so movement
@@ -852,6 +851,52 @@ func _parse_tile_list(spec: String, knob: String) -> Array[Vector2i]:
 	return tiles
 
 
+## goblinat='s TYPED spawn-list parser (v0.33.0): semicolon-separated groups of "x,y" or "x,y,<type_name>"
+## → Array of { "tile": Vector2i, "type_path": String }. Deliberately its OWN parser rather than a third
+## caller of _parse_tile_list: this knob names CONTENT, not just geometry, and that third field is exactly
+## what a shared tile parser must never learn about.
+##
+## WHY IT GREW (v0.33.0): the pre-list knob took a tile list but used only the first entry, so a run could
+## place exactly one plain goblin. Verifying a monster ARCHER needs two different monsters in one run — the
+## archer, and the packmate standing in its lane — which is unrepresentable in "one tile, one hardcoded type".
+##
+## BACKWARD COMPATIBLE BY CONSTRUCTION: a bare "x,y" group resolves to the plain goblin, so every existing
+## goblinat= invocation (and every doc line that shows one) means precisely what it always did.
+##
+## `<type_name>` is the .tres BASENAME under res://resources/monsters/ ("goblin_bow" → goblin_bow.tres) —
+## the whole path is never typed on a command line. Each resolved path is EXISTENCE-CHECKED here so a typo
+## is caught at parse time with a named warning instead of surfacing later as a mysteriously absent monster
+## (main.gd's _spawn_monster_at re-checks it too — that is the defense-in-depth guard, this is the message).
+## A malformed or unresolvable group is warned + SKIPPED, never fatal: one bad row shouldn't cost the run.
+func _parse_monster_spawn_list(spec: String, knob: String) -> Array[Dictionary]:
+	var spawns: Array[Dictionary] = []
+	for entry in spec.split(";", false):
+		var trimmed := entry.strip_edges()
+		if trimmed.is_empty():
+			continue
+		var parts := trimmed.split(",", false)
+		if parts.size() < 2 or parts.size() > 3 \
+				or not parts[0].strip_edges().is_valid_int() or not parts[1].strip_edges().is_valid_int():
+			push_warning("[Debug] %s malformed entry '%s' (expected x,y or x,y,<type>) — skipped" % [knob, entry])
+			continue
+		# No third field = the plain goblin, the type this knob has always spawned.
+		var type_name := "goblin" if parts.size() == 2 else parts[2].strip_edges().to_lower()
+		# Name is interpolated into a res:// path — restrict to identifier characters so a crafted
+		# value ("../..") can't wander the resource tree (GLM r-diff v0.33.0 #2; debug-only, still cheap).
+		if not type_name.is_valid_identifier():
+			push_warning("[Debug] %s invalid monster type name '%s' — skipped" % [knob, type_name])
+			continue
+		var type_path := "res://resources/monsters/%s.tres" % type_name
+		if not ResourceLoader.exists(type_path):
+			push_warning("[Debug] %s unknown monster type '%s' (%s) — skipped" % [knob, type_name, type_path])
+			continue
+		spawns.append({
+			"tile": Vector2i(parts[0].strip_edges().to_int(), parts[1].strip_edges().to_int()),
+			"type_path": type_path,
+		})
+	return spawns
+
+
 ## Fire the click list (plain click-to-move): a thin wrapper over the shared _run_clicks with shift=false.
 ## The events traverse the real input pipeline into MoveInput._unhandled_input — the genuine click-to-move
 ## path, not a shortcut around it. The window-coordinate position math lives in _run_clicks (see there).
@@ -1002,11 +1047,17 @@ func _log_net_event(event: Dictionary) -> void:
 	# scripted run if the host's stamped duration reaches this file. So did the three INSTANTS events
 	# (blink / ability_used / ability_cooldown): the teleport, the press and the stamped cooldown are the
 	# only observables the Shield Block + Shadow Step experiment has (status_applied/expired were already in).
+	# v0.33.0: the two PROJECTILE events joined the set. The arrow's whole flight was invisible to scripted
+	# assertions — a shot could only be inferred from its `windup` and, if it connected, the `attack` it
+	# caused, so "it drew but loosed nothing" and "it loosed and missed" read identically. projectile_launched
+	# carries the shooter, the exact path and the recovery stamp; projectile_ended carries the outcome
+	# (hit / spent / blocked). Both are needed to assert a MONSTER archer at all.
 	if not (action in ["glide_to", "windup", "heal_cast", "smite_cast", "heal", "attack", "died",
 			"status_applied", "status_expired",
 			"item_picked_up", "item_pickup_full", "item_pickup_available", "item_used", "equip_item",
 			"ai_decision", "stamina", "stamina_recovery", "thinking", "exhausted", "banter",
 			"blink", "ability_used", "ability_cooldown",
+			"projectile_launched", "projectile_ended",
 			"dev_snapshot"]):
 		return
 	_event_log_file.store_line("%9.2f  p%-5d  %-15s  %s" % [

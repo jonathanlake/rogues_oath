@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="MonsterType" load_steps=4 format=3]
+
+[ext_resource type="Resource" path="res://resources/speed_tiers/speed_slow.tres" id="1_dekqg"]
+[ext_resource type="Script" uid="uid://cl3pdmosdok4g" path="res://resources/monster_type.gd" id="1_type"]
+[ext_resource type="Resource" path="res://resources/weapons/bow.tres" id="2_bow"]
+
+[resource]
+script = ExtResource("1_type")
+display_name = "Goblin"
+atlas_coords = Vector2i(2, 0)
+weapon = ExtResource("2_bow")
+glide_speed = ExtResource("1_dekqg")
+aggro_range_tiles = 5
+flees_players = true
+flee_range_tiles = 3

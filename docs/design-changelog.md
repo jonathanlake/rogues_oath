@@ -9,6 +9,28 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.33.0 (2026-07-27, overnight) — THE GOBLIN PICKS UP A BOW.** First half of the overnight
+  batch Jon and Jeff spec'd before bed.
+  **A REGULAR GOBLIN CAN NOW SHOOT.** Not a new "archer" archetype — the same goblin, same stats,
+  same name, holding a bow instead of a club (Jeff's call: the goblin just knows how to use
+  different weapons, which also keeps what you have to remember small: goblin + bow, not a new
+  enemy). Under the hood the shot machinery became shooter-agnostic — the exact same referee code
+  adjudicates a player's shot and a goblin's, which was the first payment on the "unify the
+  combat scaffolding" debt.
+  **HOW IT FIGHTS:** it kites like the shamans — backs off when you get within 3 tiles, shoots
+  when you're in its bow range (7) once the fight has started (normal aggro/shout rules decide
+  THAT — it's not a sniper that opens from across the map). Its draw animation IS the telegraph,
+  same as when you use the bow: see the raised bow, get out of the lane. It won't deliberately
+  shoot through a packmate standing in front of it — but a committed arrow already in the air can
+  still hit a goblin that steps into the lane, and the overshoot past you can catch one behind
+  (friendly fire stays on; goblin bodies block goblin arrows, on-brand).
+  **WHERE:** one is swapped into the east room's pack (the north-flank spot). For testing
+  anywhere: the `goblinat=` harness knob now takes a list with types —
+  `goblinat=7,3,goblin_bow;5,3,training_dummy`.
+  **Verified two-instance overnight:** draw → loose → arrow hit on both host and a joined client
+  (client's own event capture matched the host's), kiting away from an approaching player, and a
+  zero-shots run with a dummy blocking the lane.
+
 - **v0.32.0 (2026-07-27) — NO GHOST-STEPPING, A WHIFF-RECOVERY DIAL, AND SPEECH BUBBLES.** Three
   asks from the v0.31.0 session, shipped same-day.
   **YOU CAN NO LONGER "MOVE" WHILE ROOTED IN RECOVERY.** Jon caught the bug: press a direction during

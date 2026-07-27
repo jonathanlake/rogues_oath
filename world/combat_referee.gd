@@ -1352,49 +1352,110 @@ func reset_round() -> void:
 	_pending_smites.clear()
 
 
+# ── Ranged shot — public API (v0.33.0, shooter-agnostic) ──────────────────────
+
+## A MonsterBrain requests a RANGED SHOT at a target TILE (v0.33.0, the bow goblin). Host-only, and the
+## exact monster-side twin of `wind_up`: it returns the total SECONDS the shooter stays committed (the draw
+## plus the after-loose tail) so the brain can book its own re-think just past that window, or -1.0 when
+## DECLINED (dead / stunned / recovering / already busy / nothing to draw with / self-tile / out of range)
+## so a refusal stays distinguishable from a real shot. Everything it does — the ordered gate, the stamps,
+## the loose timer, the telegraph — IS `_commit_shot`, the very same core a player's `shoot` intent runs
+## through, so a monster archer and a player archer can never drift apart (that shared core is the whole
+## point of the v0.33.0 extract; before it, the shot lived inside the intent validator).
+##
+## It deliberately does NOT run the lane check: the referee's projectile rule is "the first stoppable body
+## eats it" for EVERYONE, and a player is free to shoot down their own party's line. Refusing to fire past
+## an ally is a BRAIN policy (see `is_lane_clear`), so it lives in the caller that wants it.
+func commit_monster_shot(shooter_id: int, target_tile: Vector2i) -> float:
+	return _commit_shot(shooter_id, target_tile)
+
+
+## Would an arrow loosed at `target_tile` RIGHT NOW reach a HOSTILE body first? (v0.33.0 friendly-fire guard
+## for monster archers; host-only, read from authoritative occupancy — never a client value.)
+## `GameConfig.projectile_hits_allies` ships TRUE, so a goblin's arrow STOPS on the goblin standing in front
+## of it: an archer that fired blindly would spend its entire draw shooting its own pack in the back.
+##
+## The check walks the EXACT tiles `_loose_arrow` will fly — the same `_build_arrow_path` (extension to the
+## weapon's full range, then the wall clip) and the same `_is_stoppable` rule the flight applies — and
+## answers true only when the FIRST stoppable body along that path is hostile to the shooter. Sharing the
+## path builder is load-bearing: a check that walked its own line would eventually disagree with the arrow.
+##
+## An EMPTY lane (no stoppable body anywhere on the path — the target sits off the extended line, or a wall
+## clipped the flight short of it) answers FALSE, not true. There is nothing to hit, and a shot costs a full
+## draw + recovery of committed occupancy; "nothing to shoot at" and "my own packmate is in the way" both
+## mean "not this think", and a kiter's next step reshuffles the geometry and asks again.
+##
+## EXACT, NOT ADVISORY: the brain's think → check → commit runs as ONE synchronous host stack with no await
+## between, so the occupancy read here is the occupancy the draw commits against. It is deliberately NOT
+## re-checked at the loose — by then the world has moved, and the Commitment Rule (§2.1) says the arrow flies
+## anyway: an ally who walks INTO a committed shot eats it, exactly as they would a player's arrow.
+func is_lane_clear(shooter_id: int, target_tile: Vector2i) -> bool:
+	var shooter := _node_of_id(shooter_id)
+	# Same ranged discriminator the shot gate uses: no weapon / a melee weapon has no lane to clear.
+	var weapon: WeaponType = shooter.equipped_weapon if shooter is Entity else null
+	if weapon == null or weapon.range_tiles <= 0:
+		return false
+	var shooter_tile: Vector2i = _move_referee.tile_of_entity(shooter_id)
+	# A zero-length aim builds no path (line_tiles from == to is empty); refuse it here so the loop below
+	# can't be handed a degenerate line the commit would reject a moment later anyway.
+	if target_tile == shooter_tile:
+		return false
+	var clip := _build_arrow_path(shooter_tile, target_tile, weapon.range_tiles)
+	var path: Array[Vector2i] = clip["path"]
+	for tile in path:
+		var occ_id: int = _move_referee.entity_at(tile)
+		# Empty tiles and pass-through bodies (an ally while projectile_hits_allies is OFF) are not the
+		# first thing the arrow meets — keep walking, exactly as _arrow_step does.
+		if occ_id == _NO_ENTITY or not _is_stoppable(occ_id, shooter_id):
+			continue
+		# THE first stoppable body: the shot is worth taking only if it is an enemy.
+		return _is_hostile_pair(shooter_id, occ_id)
+	return false
+
+
 # ── Private methods ───────────────────────────────────────────────────────────
 
 
 # ── Ranged shot (v0.17.0, the bow — traveling-arrow model) ─────────────────────
 
-## The "shoot" intent validator (host-only; registered on the shared pipe in activate()). A player submits
-## shoot {target_tile}; the host adjudicates from ITS own truth (occupancy, weapon, pace), commits the
-## shooter for the FULL attack window, telegraphs the DRAW, and looses a traveling arrow when the draw ends.
-## Reject reasons are DISTINCT per §2.2.8 (reject-to-sender). Returns a DEFERRED accept on success — the
-## windup + projectile events ARE the outcome, so no generic "shoot" event is broadcast (mirror of /class).
-func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
+## The ONE reject-reason predicate for a shot (v0.33.0 extract). Returns "" when this shooter may draw at
+## this tile, or the DISTINCT reason it may not, in the ordered gate below. §2.2.8's reject-to-sender needs
+## a different sentence per cause, and the monster path needs the SAME gate without any sentence at all —
+## so the ordered predicate lives here exactly once and both callers read it. `_validate_shoot` words the
+## refusal from it; `_commit_shot` enforces it. PURE: it reads authoritative truth and changes nothing (no
+## stamp, no commit, no event), which is what makes running it twice on the player path harmless.
+##
+## The short lowercase tokens ("dead", "stunned", "recovering", "busy") are STATE names the intent pipe
+## already renders its own way; the capitalized sentences are written to be shown to the player verbatim.
+## Both shapes are preserved byte-for-byte from the pre-extract validator — the bonk text did not change.
+func _shoot_reject_reason(shooter_id: int, target_tile: Vector2i) -> String:
 	# Liveness (log-suppressed like a dead glide — the died event already told the player).
-	if not is_alive(sender_peer_id):
-		return { "ok": false, "reason": "dead" }
+	if not is_alive(shooter_id):
+		return "dead"
 	# STUNNED (v0.20.0): can't START a new action while stunned — reject BEFORE the busy check (never touches
 	# the busy record, so an in-flight action still completes; §2.1). Distinct reason → the §2.2.8 bonk.
-	if is_stunned(sender_peer_id):
-		return { "ok": false, "reason": "stunned" }
+	if is_stunned(shooter_id):
+		return "stunned"
 	# RECOVERING gate (v0.28.0, GameConfig.recovery_locks_actions — DESIGN §2.2.10): at 0 stamina in
 	# tactical pace the ACTION channel is locked, so a shot is refused with its own distinct
 	# "recovering" reason (§2.2.8 bonk + a game_log line). Mirrors the STUN gate directly above in
 	# position and shape — a gate on STARTING an action, never touching the busy record, so anything
 	# already committed still plays out (§2.1). MOVEMENT is NOT gated here: 0-stamina movement stays the
 	# winded/crawl dials' business, so the two channels toggle independently.
-	if GameManager.config.recovery_locks_actions and _move_referee.is_recovering(sender_peer_id):
-		return { "ok": false, "reason": "recovering" }
+	if GameManager.config.recovery_locks_actions and _move_referee.is_recovering(shooter_id):
+		return "recovering"
 	# BUSY — the SAME commit-window predicate melee/swap read (is_entity_moving covers a glide AND a
 	# commit_in_place record), so a shot can never interrupt or overlap a committed action (Commitment Rule).
-	if _move_referee.is_entity_moving(sender_peer_id):
-		return { "ok": false, "reason": "busy" }
-	var shooter := _node_of_id(sender_peer_id)
+	if _move_referee.is_entity_moving(shooter_id):
+		return "busy"
+	var shooter := _node_of_id(shooter_id)
 	# Ranged discriminator: range_tiles > 0. A melee (0) or bare-handed weapon has nothing to draw with.
 	var weapon: WeaponType = shooter.equipped_weapon if shooter is Entity else null
 	if weapon == null or weapon.range_tiles <= 0:
-		return { "ok": false, "reason": "Nothing to draw with." }
-	# Never trust the wire — the target tile must be a real Vector2i.
-	var tt = data.get("target_tile")
-	if typeof(tt) != TYPE_VECTOR2I:
-		return { "ok": false, "reason": "bad target" }
-	var target_tile: Vector2i = tt
-	var shooter_tile: Vector2i = _move_referee.tile_of_entity(sender_peer_id)
+		return "Nothing to draw with."
+	var shooter_tile: Vector2i = _move_referee.tile_of_entity(shooter_id)
 	if target_tile == shooter_tile:
-		return { "ok": false, "reason": "Can't shoot your own tile." }
+		return "Can't shoot your own tile."
 	# Range gate: CHEBYSHEV distance to the CLICKED tile ≤ the weapon's range_tiles (server-authoritative,
 	# read from the shared weapon resource — never a client value). The click must still be WITHIN range —
 	# what changed in v0.31.0 is only what happens AFTER: the arrow no longer STOPS on the clicked tile, it
@@ -1402,13 +1463,66 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# a direction, not a brake.
 	var cheb := maxi(absi(target_tile.x - shooter_tile.x), absi(target_tile.y - shooter_tile.y))
 	if cheb > weapon.range_tiles:
-		return { "ok": false, "reason": "Out of range." }
+		return "Out of range."
+	return ""
+
+
+## The "shoot" intent validator (host-only; registered on the shared pipe in activate()). A player submits
+## shoot {target_tile}; the host adjudicates from ITS own truth (occupancy, weapon, pace), commits the
+## shooter for the FULL attack window, telegraphs the DRAW, and looses a traveling arrow when the draw ends.
+## Reject reasons are DISTINCT per §2.2.8 (reject-to-sender). Returns a DEFERRED accept on success — the
+## windup + projectile events ARE the outcome, so no generic "shoot" event is broadcast (mirror of /class).
+##
+## v0.33.0: this is now a THIN WRAPPER. It owns exactly the two things that are about the WIRE and the
+## PLAYER — the target-tile type guard and the reject SENTENCES — and hands the adjudication to
+## `_commit_shot`, the shooter-agnostic core a monster archer commits through as well.
+func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
+	# Never trust the wire — the target tile must be a real Vector2i. FIRST now (v0.33.0): every other gate
+	# needs a real tile to reason about, so the wire-type guard has to clear before the shared reject-reason
+	# predicate can run at all. The only visible consequence is PRECEDENCE — a malformed packet from a
+	# dead/stunned/recovering/busy player now reads "bad target" instead of that state's reason. Both were
+	# true; the wire fault is the more useful one to report, and no well-formed intent changes its answer.
+	var tt = data.get("target_tile")
+	if typeof(tt) != TYPE_VECTOR2I:
+		return { "ok": false, "reason": "bad target" }
+	var target_tile: Vector2i = tt
+	var reason := _shoot_reject_reason(sender_peer_id, target_tile)
+	if not reason.is_empty():
+		return { "ok": false, "reason": reason }
+	# ── Accept ── (the core re-runs the same pure predicate as its own guard; nothing yields between, so it
+	# cannot answer differently here. A negative return can therefore only be the defensive commit miss.)
+	if _commit_shot(sender_peer_id, target_tile) < 0.0:
+		return { "ok": false, "reason": "busy" }
+	return { "ok": true, "deferred": true }
+
+
+## THE shot commit (v0.33.0 extract; host-only) — shooter-agnostic, so a PLAYER's `shoot` intent and a
+## MONSTER brain's `commit_monster_shot` adjudicate through one body of code. Runs the shared ordered gate,
+## arms the forcing window, stamps facing + the draw/recovery window, bakes the damage roll, arms the loose
+## timer, commits the occupancy and telegraphs the DRAW. Returns the total committed SECONDS (draw +
+## after-loose tail) — `wind_up`'s contract, which is what a brain schedules its next think from — or -1.0
+## when the gate refused or the (defensive) commit missed.
+##
+## The shooter id may be NEGATIVE (a monster): everything below is written to be id-sign-agnostic, and the
+## one place that is not — the forcing-window arming — is gated exactly as `wind_up` gates it (see there).
+func _commit_shot(shooter_id: int, target_tile: Vector2i) -> float:
+	# The shared gate, enforced here too — this is a PUBLIC entry for the brain, so it can never rely on a
+	# caller having checked. Pure predicate, so the player path re-running it costs only the reads.
+	if not _shoot_reject_reason(shooter_id, target_tile).is_empty():
+		return -1.0
+	var shooter := _node_of_id(shooter_id)
+	# Both proven non-null by the gate above (a null node / null / melee weapon returns a reason).
+	var weapon: WeaponType = shooter.equipped_weapon
+	var shooter_tile: Vector2i = _move_referee.tile_of_entity(shooter_id)
 
 	# ── Accept ──
 	# Forcing-window arming (§2.8.7): a shot is a hostile action, so the shooter stamps at the TACTICAL beat
 	# (no fast first draw) and stays tactical afterward. Armed BEFORE the stamps, mirroring wind_up/_begin_bump.
-	if _pace != null:
-		_pace.report_hostile_action(sender_peer_id)
+	# GATED `shooter_id > 0` (v0.33.0), the same guard wind_up carries: a MONSTER is already tactical through
+	# aggro and has no forcing window of its own, and stamping one for a negative id would write a _force_until
+	# entry keyed to an id the pace referee never cleans — a slow leak, not a behavior a monster needs.
+	if _pace != null and shooter_id > 0:
+		_pace.report_hostile_action(shooter_id)
 	# Server facing + before_attack at accept (v0.17.1 review #1), mirroring wind_up (231/235). The shooter
 	# turns to face its committed target tile so a backstab adjudicates from the TURNED facing — not the
 	# stale pre-shot direction the sprite is visibly leaving (main.gd's face_toward turns the art the same
@@ -1416,8 +1530,8 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# every other committed attack. fire_before_attack is contractually observe-only (it cannot cancel or
 	# mutate the shot). Facing set through MoveReferee (it owns _facing); a zero dir no-ops (target == shooter
 	# was rejected above). The occupant re-resolves at loose — this is best-effort observation, as in wind_up.
-	_move_referee.set_facing(sender_peer_id, (target_tile - shooter_tile).sign())
-	fire_before_attack(sender_peer_id, _move_referee.entity_at(target_tile), "shoot")
+	_move_referee.set_facing(shooter_id, (target_tile - shooter_tile).sign())
+	fire_before_attack(shooter_id, _move_referee.entity_at(target_tile), "shoot")
 	# Stamp-and-bake (§2.8): the shooter's committed occupancy is DRAW + RECOVERY, ADDITIVE (v0.23.1 —
 	# ranged now composes exactly like melee: windup_beats is the draw before the loose, recovery_beats the
 	# after-loose tail; pre-rename, ranged attack_beats CONTAINED the draw and needed a misconfiguration
@@ -1451,31 +1565,40 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# the moment you commit to the draw and a mid-draw `/w bow` retune cannot change it in flight. Same
 	# mini/maxi inversion guard as the melee site. `+ _bonus_damage_of(shooter)`, floored at 0, CLOSES a
 	# documented §2.3.7 drift (the spec has always said `bonus_damage` applies to all attacks; arrows
-	# alone skipped it) — zero live impact today (no monster archers, Player.bonus_damage defaults 0).
+	# alone skipped it) — and as of v0.33.0 it is LIVE: the bow goblin is the first monster archer, so
+	# MonsterType.bonus_damage now reaches an arrow (it authors 0, but a designer's +N would land).
 	var shot_damage := maxi(0, randi_range(mini(weapon.damage_min, weapon.damage_max),
 			maxi(weapon.damage_min, weapon.damage_max)) + _bonus_damage_of(shooter))
 	# weapon.range_tiles rides the bind too (v0.31.0 full-range flight): the flight path is built at LOOSE,
 	# so the range must be baked HERE with the damage and the flight speed — a mid-draw `/w bow range` retune
 	# can no more lengthen an arrow already committed to than it can change its damage (stamp-and-bake).
 	get_tree().create_timer(windup_sec).timeout.connect(_loose_arrow.bind(
-			_round_gen, sender_peer_id, shooter_tile, target_tile, shot_damage,
+			_round_gen, shooter_id, shooter_tile, target_tile, shot_damage,
 			weapon.display_name, weapon.projectile_tiles_per_beat,
-			_move_referee.interrupt_gen_of(sender_peer_id), weapon.range_tiles, recovery_sec))
+			_move_referee.interrupt_gen_of(shooter_id), weapon.range_tiles, recovery_sec))
 	# Commit the FULL window in place (from==to — the shooter is rooted while drawing AND recovering; no
-	# occupancy move). A miss means it went busy between the checks and now (host single-threaded; defensive).
-	if not _move_referee.commit_in_place(sender_peer_id, busy_sec):
-		return { "ok": false, "reason": "busy" }
+	# occupancy move). UNREACHABLE-in-practice failure (GLM r-diff v0.33.0 #1): _shoot_reject_reason's
+	# is_entity_moving gate ran in THIS same synchronous stack, so the record cannot have appeared between
+	# the check and here — but the loose timer above is already armed, so if this ever DOES fail (a future
+	# yield slipped in between), a stray uncommitted arrow would loose. Warn loudly instead of failing silent.
+	if not _move_referee.commit_in_place(shooter_id, busy_sec):
+		push_warning("[CombatReferee] _commit_shot %d: commit_in_place failed AFTER the busy check — stray loose timer armed; investigate ordering" % shooter_id)
+		return -1.0
 	# Telegraph the draw on the EXISTING `windup` event shape (+ the weapon name). A player-posted windup is
 	# a harmless no-op in playback (the handler narrow-casts to Monster) until chunk 2's draw rig; the event
-	# still broadcasts so headless assertions see it. as_peer = shooter (mirrors wind_up).
+	# still broadcasts so headless assertions see it. as_peer = shooter (mirrors wind_up). A MONSTER shooter
+	# (v0.33.0) rides this same event: the playback handler already narrow-casts to Monster and dispatches the
+	# DRAW animation off `attack_style == "draw"` via the weapon-name catalog lookup, negative ids included —
+	# which is exactly why the bow goblin needed no new presentation event.
 	NetEvents.post_event("windup", {
-		"entity_id": sender_peer_id,
+		"entity_id": shooter_id,
 		"name": _name_of(shooter),
 		"target_tile": target_tile,
 		"windup_sec": windup_sec,
 		"weapon": weapon.display_name,
-	}, sender_peer_id)
-	return { "ok": true, "deferred": true }
+	}, shooter_id)
+	# The committed window, in wind_up's contract: what a brain waits out before its next think.
+	return busy_sec
 
 
 ## Loose the arrow at the end of the draw (host-only, from the commit timer). Builds the flight path NOW,
@@ -1516,23 +1639,9 @@ func _loose_arrow(round_gen: int, shooter_id: int, shooter_tile: Vector2i, targe
 	# teardown (clear_entity) already erased its commit record. This mirrors _resolve_windup's is-alive guard.
 	if not is_alive(shooter_id):
 		return
-	# EXTEND THE AIM TO FULL RANGE (v0.31.0). Push the endpoint out along the SAME slope until the shot is
-	# `range_tiles` long in Chebyshev terms. Scale the REAL delta, never `.sign()` — snapping to sign would
-	# flatten every knight-ish aim onto the eight cardinals and send the arrow somewhere the player never
-	# pointed. cheb >= 1 is guaranteed (validate rejects the shooter's own tile), and the dominant axis
-	# scales to exactly ±range_tiles, so the extended length is exactly range_tiles — no overshoot past the
-	# gate the click had to pass. cheb == range_tiles (a max-range click) leaves the endpoint untouched.
-	var flight_target := target_tile
-	var delta := target_tile - shooter_tile
-	var cheb := maxi(absi(delta.x), absi(delta.y))
-	if cheb > 0 and range_tiles > cheb:
-		flight_target = shooter_tile + Vector2i(
-				roundi(float(delta.x) * float(range_tiles) / float(cheb)),
-				roundi(float(delta.y) * float(range_tiles) / float(cheb)))
-	# Path = the 8-way line shooter→endpoint, CLIPPED to end at the last OPEN tile before the first wall (an
-	# arrow can't fly through a wall). `clipped` records whether a wall cut it short (→ "blocked") vs it
-	# reaching the extended end tile (→ "spent"). Walls remain the ONLY thing that shortens the flight.
-	var clip := _clip_line_at_walls(WorldGrid.line_tiles(shooter_tile, flight_target))
+	# The flight path: aim extended to full range, then clipped at the first wall (v0.33.0 moved the two
+	# steps into _build_arrow_path so the brain's lane check can walk the IDENTICAL tiles — see there).
+	var clip := _build_arrow_path(shooter_tile, target_tile, range_tiles)
 	var path: Array[Vector2i] = clip["path"]
 	var clipped: bool = clip["clipped"]
 	var proj_id := _next_projectile_id
@@ -1610,6 +1719,33 @@ func _end_projectile(proj_id: int, tile: Vector2i, outcome: String, target_name:
 	if not target_name.is_empty():
 		data["target_name"] = target_name
 	NetEvents.post_event("projectile_ended", data)
+
+
+## THE flight path an arrow loosed from `shooter_tile` at `target_tile` will fly (v0.33.0 extract from
+## _loose_arrow). Returns _clip_line_at_walls' { path, clipped }. TWO callers, and that is the entire reason
+## it exists: `_loose_arrow` builds the real flight from it, and `is_lane_clear` walks it to decide whether a
+## monster archer's shot would hit its own pack. A lane check that re-derived the geometry would drift from
+## the arrow the first time either half was retuned; sharing one builder makes the guard EXACT by construction.
+##
+## EXTEND THE AIM TO FULL RANGE (v0.31.0). Push the endpoint out along the SAME slope until the shot is
+## `range_tiles` long in Chebyshev terms. Scale the REAL delta, never `.sign()` — snapping to sign would
+## flatten every knight-ish aim onto the eight cardinals and send the arrow somewhere the player never
+## pointed. cheb >= 1 is guaranteed by both callers (each rejects the shooter's own tile first), and the
+## dominant axis scales to exactly ±range_tiles, so the extended length is exactly range_tiles — no overshoot
+## past the gate the click had to pass. cheb == range_tiles (a max-range click) leaves the endpoint untouched.
+##
+## Then the path is the 8-way line shooter→endpoint, CLIPPED to end at the last OPEN tile before the first
+## wall (an arrow can't fly through a wall). `clipped` records whether a wall cut it short (→ "blocked") vs it
+## reaching the extended end tile (→ "spent"). Walls remain the ONLY thing that shortens the flight.
+func _build_arrow_path(shooter_tile: Vector2i, target_tile: Vector2i, range_tiles: int) -> Dictionary:
+	var flight_target := target_tile
+	var delta := target_tile - shooter_tile
+	var cheb := maxi(absi(delta.x), absi(delta.y))
+	if cheb > 0 and range_tiles > cheb:
+		flight_target = shooter_tile + Vector2i(
+				roundi(float(delta.x) * float(range_tiles) / float(cheb)),
+				roundi(float(delta.y) * float(range_tiles) / float(cheb)))
+	return _clip_line_at_walls(WorldGrid.line_tiles(shooter_tile, flight_target))
 
 
 ## Clip an 8-way line to the tiles an arrow can actually reach: every OPEN tile up to (but not including)

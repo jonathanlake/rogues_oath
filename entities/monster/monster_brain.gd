@@ -532,19 +532,52 @@ func _nearest_target(my_tile: Vector2i, targets: Array) -> Vector2i:
 	return best
 
 
-## KITER action (v0.19.10, the goblin shaman): heal was already checked in _think. Now, in priority order —
-## (1) if the nearest player is within flee_range_tiles, step AWAY (avoid being cornered); (2) else smite a
-## RANDOM player within smite_range_tiles; (3) else hold on the re-think cadence. A kiter NEVER chases or melees.
-## Called from _think only for a flees_players monster. Submits at most one action (a flee glide OR a smite cast).
+## KITER action (v0.19.10, the goblin shaman; v0.33.0, the bow goblin): heal was already checked in _think.
+## Now, in priority order — (1) if the nearest player is within flee_range_tiles, step AWAY (avoid being
+## cornered); (2) else SHOOT the nearest player inside the equipped ranged weapon's range; (3) else smite a
+## RANDOM player within smite_range_tiles; (4) else hold on the re-think cadence. A kiter NEVER chases or melees.
+## Called from _think only for a flees_players monster. Submits at most one action (a flee glide OR a shot OR
+## a smite cast).
+##
+## ENGAGED ONLY: _think runs the whole engagement gate (_update_engagement — aggro acquire / persist / leash,
+## plus the thinking hold and last-stand beat) BEFORE it reaches this ladder, so nothing here needs an aggro
+## check of its own. That is what lets the bow goblin author aggro 5 and carry a range-7 bow without becoming
+## a sniper: it will not shoot at all until something walked inside FIVE tiles and woke it, and only then does
+## its seven tiles of reach start to matter (and keep mattering, since aggro_persists holds the latch).
 func _act_as_kiter(my_tile: Vector2i, targets: Array) -> void:
 	var nearest := _nearest_target(my_tile, targets)
 	var nearest_dist := maxi(absi(nearest.x - my_tile.x), absi(nearest.y - my_tile.y))
-	# (1) Too close → back off. Priority over smiting so a crowded caster makes space first. If cornered
-	# (no free away-step), fall through to try a smite instead of freezing.
+	# (1) Too close → back off. Priority over shooting/smiting so a crowded caster makes space first. If
+	# cornered (no free away-step), fall through to try a ranged attack instead of freezing.
 	if _monster_type.flee_range_tiles > 0 and nearest_dist <= _monster_type.flee_range_tiles:
 		if _flee_step(my_tile, nearest):
 			return
-	# (2) Smite the GROUND at a random in-range player's tile (host picks it; the player can dodge off it).
+	# (2) SHOOT (v0.33.0, the bow goblin): a kiter holding a RANGED weapon looses at the nearest player inside
+	# its reach. Gated three ways before anything is committed:
+	#   - the authored weapon is ranged (range_tiles > 0) — a club-wielding kiter (every shaman) skips the
+	#     whole rung, so the legacy ladder is byte-identical for them and the smite keeps its old priority;
+	#   - the RECOVERY LOCKOUT (v0.28.0) — a draw is an ACTION, so a recovering archer skips it and holds,
+	#     exactly as the smite rung below does. The flee step above stays ungated: that is the movement channel;
+	#   - the target is within range_tiles (Chebyshev, the referee's own metric) AND the LANE IS CLEAR.
+	# THE LANE CHECK is the friendly-fire guard: projectile_hits_allies ships TRUE, so an arrow STOPS on the
+	# first living body — including a packmate. CombatReferee.is_lane_clear walks the EXACT tiles the arrow
+	# would fly and answers true only when the first stoppable body on them is hostile. Think → check → commit
+	# is one synchronous host stack, so that read is the same occupancy the draw commits against. An ally in
+	# front (or no body on the lane at all) → skip the rung and hold: kiting reshuffles the geometry and the
+	# next think asks again. An ally BEHIND the target can still eat the overshoot — accepted (Jon: friendly
+	# fire is on-brand); the guard is about not shooting your own front line in the back, not about safety.
+	# Range read off the authored MonsterType.weapon (the same resource seeded onto equipped_weapon at spawn,
+	# which is what the referee re-reads host-side to adjudicate) — the brain only decides, never adjudicates.
+	if _monster_type.weapon != null and _monster_type.weapon.range_tiles > 0 and not _recovery_locks_actions():
+		if nearest_dist <= _monster_type.weapon.range_tiles and _combat.is_lane_clear(_entity_id, nearest):
+			var shot_wait: float = _combat.commit_monster_shot(_entity_id, nearest)
+			if shot_wait >= 0.0:
+				# The draw + recovery is a commit_in_place record: it ends WITHOUT waking us (no glide), so
+				# book our own re-think just past it — the smite rung's exact shape, and the wind-up's.
+				_reschedule_after(shot_wait + windup_rethink_epsilon_sec)
+				return
+			# Declined (went busy / stunned between the gate and here) — fall through to smite / hold.
+	# (3) Smite the GROUND at a random in-range player's tile (host picks it; the player can dodge off it).
 	# RECOVERY LOCKOUT (v0.28.0): a smite is a CAST, so a recovering kiter skips it and holds — note that
 	# the FLEE step above is NOT gated, because backing off is movement and movement is the other channel.
 	if _monster_type.has_smite_ability() and not _recovery_locks_actions():
@@ -558,8 +591,8 @@ func _act_as_kiter(my_tile: Vector2i, targets: Array) -> void:
 				# re-think just past it (same as heal / wind-up).
 				_reschedule_after(wait_sec + windup_rethink_epsilon_sec)
 				return
-	# (3) Nothing to do this think (no flee needed or cornered, no smite target) — hold on the cadence,
-	# or until the recovery wait ends if the lockout is what silenced the smite (v0.28.0).
+	# (4) Nothing to do this think (no flee needed or cornered, no shot, no smite target) — hold on the
+	# cadence, or until the recovery wait ends if the lockout is what silenced the ranged attack (v0.28.0).
 	_reschedule_recovery_aware()
 
 

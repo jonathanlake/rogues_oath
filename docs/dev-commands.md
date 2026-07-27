@@ -233,12 +233,13 @@ instance. `abilitywait=` is the first-fire delay, `abilitydelay=` the spacing be
 **Syntax: `eventlog=<path>`** (v0.20.0; inert without the arg, either role). It taps the broadcast
 NetEvents stream to a file once that instance's session is live, one line per event:
 `server_time  peer  action  data`. Event-trace assertions on that file are the harness's preferred
-evidence. It is an **allowlist**, so an action absent from it never reaches the file — 24 actions pass:
+evidence. It is an **allowlist**, so an action absent from it never reaches the file — 26 actions pass:
 
 | Group | Actions |
 |---|---|
 | Movement | `glide_to` |
 | Melee / casts | `windup`, `attack`, `heal_cast`, `smite_cast`, `heal`, `died` |
+| Ranged | `projectile_launched`, `projectile_ended` |
 | Status + abilities | `status_applied`, `status_expired`, `blink`, `ability_used`, `ability_cooldown` |
 | Items | `item_picked_up`, `item_pickup_full`, `item_pickup_available`, `item_used`, `equip_item` |
 | Stamina | `stamina`, `stamina_recovery`, `exhausted` |
@@ -248,7 +249,11 @@ evidence. It is an **allowlist**, so an action absent from it never reaches the 
 `stamina_recovery` is the host-stamped armor-weight rest wait — the only way to assert the 2.5 / 3.0 / 3.5
 scaling in a scripted run; `blink` / `ability_used` / `ability_cooldown` (v0.26.0) are the instants
 experiment's only observables, and `status_applied`/`status_expired` is how the block's `"block"` status is
-asserted. `debug.gd`'s parser is the source of truth if this table ever drifts.
+asserted. The two PROJECTILE actions joined in v0.33.0 (the monster archer): `projectile_launched` carries
+`shooter_id` (negative for a monster), the exact flight `path` and the shooter's `recovery_sec`;
+`projectile_ended` carries the outcome (`hit` / `spent` / `blocked`). Without them a shot could only be
+inferred from its `windup` plus the `attack` it caused, so "drew but loosed nothing" and "loosed and missed"
+were indistinguishable. `debug.gd`'s parser is the source of truth if this table ever drifts.
 
 ### Harness knob reference
 
@@ -261,10 +266,28 @@ this is the rest, grouped.
 | Session | `host` / `join` (role), `join=<addr[:port]>`, `port=<n>` (1–65535, host bind), `hostdelay=<sec>` (delay the host's scene, reproduces the join race), `maxplayers=<n>`, `name=<text>`, `fakever=<ver>` (forge the version-gate handshake) |
 | Movement | `move=<dirs>` / `movedelay=` / `movewait=` (submits intents directly — focus-immune, the host-side choice), `tap=<dirs>` / `tapsec=`, `hold=<dir>` / `holdsec=` / `holdwait=` (real input; FOCUS-gated, so only the last-launched window holds keys), `click=<tiles>` / `clickdelay=`, `shiftclick=<tiles>` (ground-fire) |
 | Combat | `shoot=<tiles>` / `shootwait=`, `ability=<i[,i…]>` / `abilitywait=` / `abilitydelay=`, `pickup=<n>` / `pickupwait=`, `use=<slot>` / `usewait=`, `equip=<slot>` / `equipwait=`, `swap=<0\|1>` / `swapwait=` (Tab weapon swap) |
-| Content | `weapon=<name>` (starting weapon), `goblin=<n>`, `goblinat=x,y`, `potion=x,y`, `hostile=<0\|1>` (all-hostile players) |
+| Content | `weapon=<name>` (starting weapon), `goblin=<n>`, `goblinat=x,y[,<type>];…` (see below), `potion=x,y`, `hostile=<0\|1>` (all-hostile players) |
 | Tempo | `tempo=<sec>` / `tempowait=`, `tactical=<sec>` / `tacticalwait=`, `beatsec=`, `glidesec=`, `windupsec=` (stamp overrides) |
 | Commands | `cmd=` / `cmdwait=`, `cmd2=` / `cmd2wait=`, `say=<text>` |
 | Output | `eventlog=<path>`, `screenshot=<path>` (fires ~6s after `_ready`, **then quits that instance**), `overlay=<0\|1>` (F3), `rangeoverlay=<0\|1>` (F7), `debugpanel=<0\|1>` |
 
 Unpinned `*wait=` knobs share their role's anchor (host: after the scene change; client: after connect);
 the movement anchor is the default for `ability=`, `pickup=`, `hold=` and friends.
+
+### `goblinat=` — exact-tile monster placement (typed list since v0.33.0)
+
+Host-only, session-start only (an F5 reset does not re-apply it), and independent of `goblin=` — it only
+ADDS bodies. Semicolon-separated groups, each `x,y` or `x,y,<type>`:
+
+```
+goblinat=7,3                     one plain goblin at (7,3)          — the pre-v0.33.0 meaning, unchanged
+goblinat=7,3;9,5                 two plain goblins
+goblinat=7,3,goblin_bow          one BOW goblin at (7,3)
+goblinat=10,3,goblin_bow;7,3     the archer at (10,3), a plain goblin at (7,3) blocking its lane
+```
+
+`<type>` is the `.tres` BASENAME under `resources/monsters/` — `goblin_bow` → `goblin_bow.tres`. Omit it
+and you get `goblin`. Case-insensitive. A malformed group or an unknown type is **warned and skipped**, the
+rest of the list still spawns; the spawn step then re-checks the path, walkability and occupancy per tile,
+so a walled or taken tile warns and skips too. Watch the host's stderr for `[Debug] goblinat=` /
+`[Main] monster spawn` warnings when a body you expected isn't there.

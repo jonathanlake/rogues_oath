@@ -341,29 +341,32 @@ var debug_range_overlay_start_visible: bool = false
 ## gameplay code.
 var debug_starting_weapon: String = ""
 
-## The "unset" sentinel for debug_goblin_at — an impossible tile no real map is anywhere near, so ANY real
-## tile (including (0,0)) is a valid placement. Mirrors debug_starting_weapon's empty-string-as-unset idiom.
-const DEBUG_GOBLIN_AT_UNSET := Vector2i(-1000, -1000)
-
-## DEBUG ONLY. When set (not the impossible sentinel above), the host spawns ONE extra goblin at EXACTLY
-## this tile at session start — set host-side via debug.gd's `goblinat=x,y` arg. Exists so combat tests can
-## place a monster at precise range geometry (first use: the ranged-aggro verification — bow range 7 vs
-## goblin aggro 5). Works INDEPENDENTLY of goblin=/spawn_monsters: it only ADDS a goblin through the shared
-## guarded spawn step, never touching the training dummy or the map goblins. Read ONCE at the host's
-## session-start spawn (an F5 reset does NOT re-apply it, mirroring debug_starting_weapon); inert on a
-## client and without the arg. Never touched by gameplay code.
-var debug_goblin_at: Vector2i = DEBUG_GOBLIN_AT_UNSET
+## DEBUG ONLY. Exact-tile monster placements for the host's session-start spawn — set host-side via
+## debug.gd's `goblinat=x,y[,<type>];…` arg. Each entry is { "tile": Vector2i, "type_path": String }, with
+## the type_path ALREADY RESOLVED and existence-checked by the parser (a bare `x,y` resolves to the plain
+## goblin, so every pre-v0.33.0 invocation means exactly what it always did). Exists so combat tests can
+## place monsters at precise geometry (first use: the ranged-aggro verification — bow range 7 vs goblin
+## aggro 5; v0.33.0's reason for the list + types: placing an ARCHER and the ally standing in its lane in
+## one run). Works INDEPENDENTLY of goblin=/spawn_monsters: it only ADDS bodies through the shared guarded
+## spawn step, never touching the training dummy or the map goblins.
+##
+## EMPTY = the knob was absent — the same "unset" idiom debug_starting_weapon's empty string uses, and the
+## reason the old impossible-tile sentinel (DEBUG_GOBLIN_AT_UNSET, retired in v0.33.0) is gone: a list has
+## a natural empty state, so no value has to be stolen from the tile space to mean "no knob". Read ONCE at
+## the host's session-start spawn (an F5 reset does NOT re-apply it, mirroring debug_starting_weapon);
+## inert on a client and without the arg. Never touched by gameplay code.
+var debug_goblin_spawns: Array[Dictionary] = []
 
 ## The "unset" sentinel for debug_potion_at (v0.18.0) — an impossible tile no real map is anywhere near, so
-## ANY real tile is a valid placement. Mirrors DEBUG_GOBLIN_AT_UNSET exactly.
+## ANY real tile (including (0,0)) is a valid placement. The single-tile twin of the empty-list idiom above.
 const DEBUG_POTION_AT_UNSET := Vector2i(-1000, -1000)
 
 ## DEBUG ONLY. When set (not the impossible sentinel above), the host spawns ONE extra health potion at
 ## EXACTLY this tile at session start — set host-side via debug.gd's `potion=x,y` arg. Exists so pickup /
 ## inventory tests can place an item at precise geometry. Works INDEPENDENTLY of the session-start item set:
 ## it only ADDS a potion through the shared guarded _spawn_item_at. Read ONCE at the host's session-start
-## placement (an F5 reset does NOT re-apply it, mirroring debug_goblin_at); inert on a client and without the
-## arg. Never touched by gameplay code.
+## placement (an F5 reset does NOT re-apply it, mirroring debug_goblin_spawns); inert on a client and without
+## the arg. Never touched by gameplay code.
 var debug_potion_at: Vector2i = DEBUG_POTION_AT_UNSET
 
 ## DEBUG ONLY. When non-empty, overrides the version string this CLIENT sends in peer_ready — set

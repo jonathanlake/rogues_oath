@@ -790,11 +790,23 @@ post-loose recovery tail shows the green recovery bar (`recovery_sec` stamped on
 the telegraph); bow retuned to windup 3 / recovery 4 beats (the longsword's numbers — Jon's
 balance call, "for now").
 
-**Still envisioned:** monster ranged attackers (the model already allows a non-player shooter);
-true line-of-sight (arrows use per-tile wall clipping today; diagonal corner-cutting accepted for
-v1); more ranged weapon types (crossbow / thrown — each a `.tres`); gamepad aiming; ranged backstab
-/ facing (the normalized-delta note in combat_referee); kick knockback (Q6 option D — re-open the
-shooting range; needs a server-authoritative defender-move system vs the Commitment Rule).
+**v0.33.0 — MONSTER RANGED ATTACKERS SHIPPED (v1):** the shot commit is shooter-agnostic
+(`commit_monster_shot`, the same referee core the player intent wraps), and the REGULAR goblin can
+carry a bow (`goblin_bow.tres` — same stats, same name, different weapon; Jeff's "the goblin just
+knows to use different weapons"). The bow goblin runs the KITER disposition (backs off inside 3
+tiles, shoots inside bow range once engaged — the aggro/shout machinery gates engagement exactly
+as for melee) and carries a LANE CHECK: it will not loose down a lane whose first body is a
+packmate (friendly fire stays ON — a committed arrow can still catch an ally who steps in
+mid-flight, and the overshoot past the target can too; that's the on-brand body-blocking). Its
+telegraph is the bow DRAW itself (no coil flash — same read as a player archer). One swapped into
+the room-B east pack's north flank.
+
+**Still envisioned:** true line-of-sight (arrows use per-tile wall clipping today; diagonal
+corner-cutting accepted for v1); more ranged weapon types (crossbow / thrown — each a `.tres`);
+ranged monsters that pick up weapons off the ground (Jeff's down-the-line note, waits on item/AI
+work); gamepad aiming; ranged backstab / facing (the normalized-delta note in combat_referee);
+kick knockback (Q6 option D — re-open the shooting range; needs a server-authoritative
+defender-move system vs the Commitment Rule).
 
 **Complete when** ranged is a first-class build: multiple weapons, enemies that shoot back,
 LoS-correct, feel-locked. *(Stage-by-stage progress is tracked in ROADMAP's parking lot, not here —
