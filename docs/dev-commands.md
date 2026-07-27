@@ -57,12 +57,18 @@ from the allowlist, so it is never stale — this table is the annotated version
 | `instant_abilities_enabled` | 0\|1 | **Experiment master toggle** (default ON) — Shield Block + Shadow Step (v0.26.0) **and the STRIKE cooldowns on Kick / Shield Bash** (v0.27.0), DESIGN §2.11.1. OFF = the two instants reject, the strike cooldowns are neither checked nor stamped (no refusal, no timer, no `ability_used` event) whatever `cooldown_beats` is authored, and nothing else anywhere behaves differently — i.e. the pre-v0.26 game exactly. **v0.27.1 made that literally true**: v0.27.0 shipped the strike cooldown ungated, so "they all switch off together" was a promise the code did not keep. This is the dial Jeff flips to answer the verdict question. |
 | `armor_flat_reduction_light` / `_medium` / `_heavy` | 0–99 (int) | **v0.27.0** — the FLAT half of the two-term armor rule (defaults 1 / 2 / 3), keyed to the worn body item's weight band. A physical hit on a player takes the SMALLER of the percentage result and `amount - flat`; UNARMORED is flat 0 (and 0%), so no armor never mitigates. Monster defenders keep the plain percentage path. **A mitigated hit is VISIBLE in the LOG** — the line names the amount ("… for 2 (13/20, armor absorbs 2)."), and the event carries the `armor` tag + the points `absorbed`. **v0.27.1 also tinted the popup steel-blue; v0.28.1 REMOVED that** (Jon): popup colour now carries exactly one meaning — who took the number (DESIGN §2.3.4's colour convention) — so a fifth colour answering "was it mitigated" was fighting it, and the log is the better channel anyway since it can say *how much*. DESIGN §2.3.8. |
 | `banter_earshot_tiles` | 0–60 (int) | **v0.27.1, widened v0.28.0** — one dial with **TWO consumers**, in Chebyshev tiles (default 12 ≈ a room and a bit). (1) **The REACTION gate, host-side:** the revenge/notable-death bark needs a living packmate within earshot **of the corpse**, and `help_me` needs an engaged ally within earshot **of the screamer** — engagement alone only answered "a fight is happening somewhere", which with packs in separate rooms produced cross-fight barks. (2) **The LOG gate, client-side (v0.28.0, Jon: "gate ALL barks by distance"):** every bark event ships the speaker's authoritative tile, and each peer's combat log prints the line only when its OWN player is within earshot of it (`game_log._bark_within_earshot`). So `0` does not merely silence the two reactions — it suppresses **every bark line** unless the speaker shares your tile. Three cases print past the log gate: no own player (a dead player is an earshot-less SPECTATOR and hears everything), a missing/malformed speaker tile, and a wall-sentinel tile on either side. The **overhead label is deliberately ungated** — it floats over the speaker, so distance already hides it. |
-| `whiff_pays_recovery` | 0\|1 | **v0.28.0** — does a WHIFFED attack still pay its recovery tail? **1 (the
-default) = pre-v0.26.0**: the committed window plays out, the whiff event carries the real recovery seconds,
-and every peer shows the spent tint — Jeff's third-batch ask. 0 = the v0.26.0/v0.27.x "recovery only on
-contact" experiment: the tail is released at resolve, the event stamps `duration_sec` 0.0, and a whiffing
-goblin wakes in the same frame. Read host-side at each whiff, so a flip lands on the very next miss.
-DESIGN §2.3.9. |
+| `whiff_recovery_beats` | -1–30 | **v0.32.0 — a DIAL, replacing v0.28.0's `whiff_pays_recovery` toggle**
+(that field name now rejects as unknown, which is correct). How much of its committed recovery tail a
+WHIFFED attack actually pays — swing, ability, or smite. **`-1` (the default) = pay it ALL**, the
+pre-v0.26.0 §2.3.9 behavior and Jeff's third-batch ask: the committed window plays out untouched, the whiff
+event carries the real recovery seconds, and every peer shows the spent tint + green bar. **`0` = pay
+none**, the v0.26.0/v0.27.x "recovery only on contact" experiment: the tail is released at resolve, the
+event stamps `duration_sec` 0.0, and a whiffing goblin wakes in the same frame. **`N > 0` = pay N BEATS
+of it** and hand the remainder back — the partial middle Jon asked for, stamped at the ATTACKER's resolved
+beat (so the number means the same at either pace) and **capped at the full tail**, so a value past a
+weapon's own `recovery_beats` simply reads as "full". The whiff event quotes the PAID number, so the tint,
+the bar and the host's busy record always agree. Read host-side at each whiff, so a change lands on the
+very next miss. Bow shots have no whiff and are untouched. DESIGN §2.3.9. |
 | `recovery_locks_actions` | 0\|1 | **v0.28.0** — the 0-stamina **ACTION** lockout (default ON, Jeff's
 third-batch ask). While an entity sits at 0 stamina in tactical pace, every NON-MOVEMENT action is refused
 with the distinct `recovering` reject (bump attack, ability — STRIKE *and* instant — shot, drink, equip,
@@ -138,9 +144,12 @@ is where the two instants cooldown dials went when they stopped being GameConfig
 tune Kick's 40-beat cooldown or Shield Bash's stun without a restart. The heading says "all wielders" because
 an ability `.tres` is shared, exactly like MONSTER TYPES. GAME also gained the three `armor flat` band rows.
 
-**v0.28.0 rows.** GAME gained the two toggles from Jeff's third batch: **`whiff pays recovery`**
-(`whiff_pays_recovery`, default ON = pre-v0.26.0 §2.3.9) and **`recovery locks actions`**
-(`recovery_locks_actions`, default ON — the 0-stamina ACTION lockout, a no-op while `stamina` reads off).
+**v0.28.0 rows.** GAME gained the two toggles from Jeff's third batch: **`whiff pays recovery`** and
+**`recovery locks actions`** (`recovery_locks_actions`, default ON — the 0-stamina ACTION lockout, a no-op
+while `stamina` reads off). **v0.32.0 replaced the first of the two** with the spin row **`whiff recovery
+beats`** (`whiff_recovery_beats`, default **-1** = pay the whole tail = the old ON; 0 = pay none = the old
+off; N = pay N beats, capped at the full tail). It is the leftmost-negative row in the panel — the -1 is a
+sentinel, not a quantity.
 
 **v0.29.0 row.** GAME gained **`force tactical`** (`force_tactical_pace`, ships OFF) — the testing pin that
 resolves everyone to tactical pace, and therefore runs the stamina system everywhere. It sits last in the

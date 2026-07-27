@@ -146,6 +146,14 @@ const WALL_ATLAS := Vector2i(0, 1)   # tiles.txt row 2a — "rough stone wall (t
 const PEER_READY_RETRY_INTERVAL_SEC := 0.5
 const PEER_READY_MAX_ATTEMPTS := 10   # 10 × 0.5s = 5s, mirrors the menu's JOIN_TIMEOUT_SEC
 
+# The overhead CHAT BUBBLE (v0.32.0) — presentation-only constants, so they live here rather than on
+# GameConfig: nothing about them is adjudicated and no peer needs to agree with another about them.
+# The truncation length is bounded by the bubble's own geometry (Entity.play_banter: an UNWRAPPED
+# 140-unit box at font size 9), NOT by chat_max_chars, which is the wire clamp and stays 200 — the
+# full text always lands in the game_log line. See _handle_chat_event.
+const _CHAT_BUBBLE_MAX_CHARS := 48
+const _CHAT_BUBBLE_HOLD_SEC := 3.0
+
 ## Server-side clamp on chat body length (chars). The referee never trusts the wire; the
 ## client's LineEdit does no length limiting, so the host is the only guard.
 @export var chat_max_chars: int = 200
@@ -922,6 +930,11 @@ func _on_net_event(event: Dictionary) -> void:
 			# A goblin one-liner (v0.24.4, host-picked so every peer reads the same line). Overhead
 			# speech label on the speaker; the log line comes from game_log's own handler.
 			_handle_banter_event(event)
+		"chat":
+			# A player's chat message (v0.32.0). The LOG line is game_log's, unchanged and complete; this
+			# arm adds the overhead bubble over the speaker's head, so you can see WHO is talking without
+			# reading the corner of the screen.
+			_handle_chat_event(event)
 		"status_applied":
 			# A host-applied status effect started (v0.20.0 — stun; v0.26.0 — block). Every peer shows the
 			# overhead icon on the affected entity (player or monster).
@@ -1108,8 +1121,11 @@ func _handle_attack_event(event: Dictionary) -> void:
 		# after a strike — "when can this thing swing again?" — on players AND monsters, off this one
 		# event every peer already receives (no new sync). It rides EXACTLY where play_recovery rides:
 		# same handler, same stamped duration, so hits and whiffs both get it and a 0-duration event gets
-		# nothing — an AoO free attack (always 0) and a whiff under `whiff_pays_recovery` off (0 by the
-		# host's own stamp) correctly show no bar, because no recovery is owed. The grey tint and the rig
+		# nothing — an AoO free attack (always 0) and a whiff at `whiff_recovery_beats` 0 (0 by the host's
+		# own stamp) correctly show no bar, because no recovery is owed. v0.32.0 made that dial a FLOAT, so
+		# a whiff can now stamp a PARTIAL duration too (N beats of its tail); nothing here needs to know —
+		# the tint and the bar simply ride whatever duration_sec says, which is by construction the exact
+		# window the host is holding the attacker for. The grey tint and the rig
 		# swing are untouched and play alongside; the bar is the only cue that says HOW LONG is left.
 		# Source-tagged "attack": if this entity is mid-EXHAUSTION-rest the call no-ops (Entity's
 		# stamina-priority arbitration) rather than shortening the rarer, host-owned bar.
@@ -1473,6 +1489,31 @@ func _handle_banter_event(event: Dictionary) -> void:
 	var ent := _node_for_peer(int(data.get("entity_id", 0))) as Entity
 	if ent != null:
 		ent.play_banter(str(data.get("text", "")))
+
+
+## All peers: float a PLAYER's chat line over their head (v0.32.0) — the same overhead bubble a goblin's
+## banter uses, on the same Entity surface, driven off the chat event every peer already receives. The
+## log line is unchanged and stays the complete record; this is the "who is talking" cue.
+##
+## NO EARSHOT GATE, deliberately: `banter_earshot_tiles` gates the goblin BARK because that is world
+## noise a distant player should not overhear. Chat is out-of-world party talk with a global log line —
+## gating the bubble but not the line would be the confusing half-measure. This matches the overhead
+## label's own ungated precedent (a bubble floats over the speaker, so distance already hides it).
+##
+## TRUNCATED to _CHAT_BUBBLE_MAX_CHARS: `chat_max_chars` is 200, and the bubble is an UNWRAPPED 140-unit
+## box at font size 9 — a long message overflows it centred, spilling across the map in both directions.
+## The bubble is a glance cue, so it takes the first few words and an ellipsis; the FULL text is in the
+## game_log line, untouched, which is where a long message is meant to be read. Held 3.0s rather than
+## banter's 1.8 — a written sentence takes longer to read than a three-word goblin bark.
+func _handle_chat_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var speaker := _node_for_peer(int(data.get("entity_id", 0))) as Entity
+	if speaker == null:
+		return
+	var text := str(data.get("text", ""))
+	if text.length() > _CHAT_BUBBLE_MAX_CHARS:
+		text = text.substr(0, _CHAT_BUBBLE_MAX_CHARS) + "…"
+	speaker.play_banter(text, _CHAT_BUBBLE_HOLD_SEC)
 
 
 ## All peers: an entity at 0 stamina is resting it off (v0.26.0) — show the spent body + the side
@@ -2477,7 +2518,13 @@ func _validate_chat(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	var player_node := _players.get_node_or_null(str(sender_peer_id))
 	if player_node == null:
 		return { "ok": false, "reason": "not in session" }
-	return { "ok": true, "data": { "text": text, "name": player_node.player_name } }
+	# `entity_id` (v0.32.0): the SPEAKER, so every peer can float the line over their head as well as
+	# printing it in the log (main._handle_chat_event). Stamped HOST-side from the admission check that
+	# just resolved the node — never a wire field — so the bubble can only ever appear over the player who
+	# actually said it. It is the same id the rest of the event stream uses for a player (the peer id), so
+	# _node_for_peer resolves it with no new plumbing. game_log ignores the extra field.
+	return { "ok": true, "data": {
+		"text": text, "name": player_node.player_name, "entity_id": sender_peer_id } }
 
 
 ## Host-only tempo referee (DESIGN §2.8.3), registered with NetEvents in _ready. The intent carries an

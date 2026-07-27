@@ -62,12 +62,17 @@ const _GAME_FIELD_SPECS := {
 	# v0.27.1 banter EARSHOT in TILES — how far a bark's reaction travels (0 = both reactions silent).
 	# Capped at 60, comfortably past the map's diagonal, so a large value means "unlimited" in practice.
 	"banter_earshot_tiles": { "min": 0, "max": 60, "int": true },
-	# v0.28.0 (Jeff's third batch), both plain host-side writes read live at their seams:
-	#  whiff_pays_recovery   — true (default) = a whiffed swing still pays its recovery tail (pre-v0.26.0);
-	#                          false = v0.26.0 "recovery only on contact". Read at each whiff resolve.
-	#  recovery_locks_actions — 0-stamina tactical entities cannot ACT (movement stays the winded dials');
-	#                          a no-op while stamina_enabled is off. Read at each action validator.
-	"whiff_pays_recovery": { "bool": true },
+	# Both plain host-side writes, read live at their seams:
+	#  whiff_recovery_beats   — v0.32.0, the FLOAT dial that replaced v0.28.0's `whiff_pays_recovery` bool:
+	#                           -1 (default) = the whiff pays its FULL committed tail (pre-v0.26.0 §2.3.9),
+	#                           0 = pays none (v0.26.0 "recovery only on contact"), N > 0 = pays N beats,
+	#                           capped at the full tail. Min -1 because that ONE negative value is the
+	#                           sentinel; max 30 matches the weapon `recovery_beats` clamp it carves up.
+	#                           Read at each whiff resolve.
+	#  recovery_locks_actions — v0.28.0 (Jeff's third batch): 0-stamina tactical entities cannot ACT
+	#                           (movement stays the winded dials'); a no-op while stamina_enabled is off.
+	#                           Read at each action validator.
+	"whiff_recovery_beats": { "min": -1, "max": 30 },
 	"recovery_locks_actions": { "bool": true },
 	# v0.29.0 DEV PIN: everyone (players AND monsters) resolves TACTICAL while on — and stamina therefore
 	# runs everywhere, since it gates on is_tactical. Host-side write, read live at each PaceReferee resolve.

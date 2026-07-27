@@ -833,7 +833,15 @@ func play_whiff(dir: Vector2i) -> void:
 ## Overhead BANTER (v0.24.4): show one short spoken line — small but readable (outlined, so it
 ## survives any floor color), popped in, held, faded out. Presentation only; the host picked the
 ## text. A new bark replaces the previous one (one mouth per goblin).
-func play_banter(text: String) -> void:
+##
+## v0.32.0: also the PLAYER CHAT BUBBLE (main._handle_chat_event) — the same mouth, now used by both
+## kinds of speech, which is why it lives on Entity rather than Monster. `hold_sec` is how long the
+## line sits fully opaque before its fade, and it defaults to the 1.8 this function hardcoded until
+## now, so every pre-existing bark call site is behavior-identical. Chat passes a longer hold: a
+## written sentence takes longer to read than a three-word goblin bark. The pop-in and fade-out are
+## deliberately NOT parameterized — those are the cue's identity, and both kinds of speech should
+## appear and leave the same way.
+func play_banter(text: String, hold_sec: float = 1.8) -> void:
 	hide_banter()
 	var label := Label.new()
 	label.text = text
@@ -852,7 +860,7 @@ func play_banter(text: String) -> void:
 	_banter_tween = create_tween()
 	_banter_tween.tween_property(label, "scale", Vector2.ONE, 0.12)\
 			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	_banter_tween.tween_interval(1.8)
+	_banter_tween.tween_interval(hold_sec)
 	_banter_tween.tween_property(label, "modulate:a", 0.0, 0.4)
 	_banter_tween.tween_callback(hide_banter)
 

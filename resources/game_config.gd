@@ -183,18 +183,33 @@ extends Resource
 ## still be caught. `/config swing_catches_adjacent 0` restores pure ground commitment live.
 @export var swing_catches_adjacent: bool = true
 
-## WHIFF PAYS RECOVERY (v0.28.0, Jeff's third batch) — DESIGN §2.3.9, now a toggle.
-## TRUE (the default, and the PRE-v0.26.0 behavior Jeff asked to have back): a whiffed swing / ability /
-## smite still pays its full recovery tail — the committed window plays out, the whiff event carries the
-## real `recovery_sec` in `duration_sec`, and every peer shows the spent-recovery tint for it.
-## FALSE: v0.26.0/v0.27.x "recovery only on contact" — the tail is RELEASED at resolve
-## (MoveReferee.finish_busy_early), the whiff event stamps duration_sec 0.0, and `busy_released` wakes a
-## whiffing monster in the same frame.
+## WHIFF RECOVERY BEATS (v0.32.0) — DESIGN §2.3.9, now a DIAL rather than a toggle. How much of its
+## committed recovery tail a WHIFFED swing / ability / smite actually pays. Replaces v0.28.0's
+## `whiff_pays_recovery` bool, whose two settings are still reachable as the two endpoints:
 ##
-## Positive polarity on purpose (it matches stamina_enabled / recovery_locks_actions): these get flipped
-## live mid-playtest, and an inverted flag is a footgun. Read HOST-side at each whiff resolve, so
-## `/config whiff_pays_recovery 0` changes the very next miss with no restart.
-@export var whiff_pays_recovery: bool = true
+##   -1.0  (THE DEFAULT) — the whiff pays its FULL committed tail. The old TRUE, and the pre-v0.26.0
+##                         behavior Jeff asked to have back: the window plays out untouched, the whiff
+##                         event carries the real `recovery_sec` in `duration_sec`, and every peer shows
+##                         the spent-recovery tint + green bar for it. The busy record is not touched.
+##    0.0                — released at resolve. The old FALSE (v0.26.0/v0.27.x "recovery only on
+##                         contact"): MoveReferee.finish_busy_early runs now, the event stamps
+##                         `duration_sec` 0.0, and `busy_released` wakes a whiffing monster in the frame.
+##    N > 0              — the PARTIAL tail Jon asked for: the whiff pays `min(N × the attacker's
+##                         RESOLVED beat, recovery_sec)` and the REMAINDER is released early (via
+##                         MoveReferee.release_busy_after). Capped at the full tail on purpose — a dial
+##                         can lengthen nothing; a value past the weapon's own recovery is just "full".
+##                         In BEATS, not seconds, so the number means the same at either pace: it is
+##                         stamped through the attacker's own resolved beat (§2.8.7), exactly as
+##                         `recovery_beats` is.
+##
+## -1 as the "full" sentinel rather than a second bool: it keeps the whole answer in ONE dial (a bool
+## plus a number would let the two disagree, and the panel would show a live number that does nothing),
+## and it makes the ONLY negative value mean the ONLY qualitatively different rule. Read HOST-side at
+## each whiff resolve, so `/config whiff_recovery_beats 2` changes the very next miss with no restart.
+##
+## Bow shots have NO whiff concept and are untouched by this dial (a loosed arrow's tail never releases
+## early — see CombatReferee's note at the shoot commit).
+@export var whiff_recovery_beats: float = -1.0
 
 ## HARD-STOP mode (v0.24.6, the `/winded` dev command; split v0.25.0): when true, 0 stamina on
 ## that side means NO moving at all (distinct "winded" reject) instead of the crawl. `/winded`

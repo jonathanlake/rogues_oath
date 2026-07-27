@@ -132,9 +132,11 @@ const DEV_GAME_FIELDS := ["tactical_beat_sec",
 		# distance, and answering it by restarting for each number is exactly what these dials exist to avoid.
 		"banter_earshot_tiles",
 		# v0.28.0, Jeff's third batch — both plain host-side config writes read live at their seams, so a
-		# _GAME_FIELD_SPECS row is all either needs. whiff_pays_recovery flips §2.3.9 back to pre-v0.26.0
-		# (default) vs recovery-only-on-contact; recovery_locks_actions is the 0-stamina ACTION lockout.
-		"whiff_pays_recovery", "recovery_locks_actions",
+		# _GAME_FIELD_SPECS row is all either needs. recovery_locks_actions is the 0-stamina ACTION lockout.
+		# whiff_recovery_beats became a FLOAT DIAL in v0.32.0 (it replaced the `whiff_pays_recovery` bool,
+		# which is gone — a stale `/config whiff_pays_recovery` now rejects, which is correct): -1 = pay the
+		# whole tail (§2.3.9, the default), 0 = pay none, N = pay N beats capped at the full tail.
+		"whiff_recovery_beats", "recovery_locks_actions",
 		# v0.29.0 — a DEV PIN rather than a balance dial: everyone resolves TACTICAL while it is on, which
 		# also switches the stamina system on everywhere (stamina gates on is_tactical). Host-side only and
 		# read live by PaceReferee at each resolve, so a plain _GAME_FIELD_SPECS row is all it needs.

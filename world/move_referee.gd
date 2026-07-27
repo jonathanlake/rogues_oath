@@ -407,6 +407,13 @@ func commit_in_place(entity_id: int, duration_sec: float) -> bool:
 ## PROMOTING a pipelined pending step (intended: a whiff means the held next move starts sooner). The
 ## original create_timer callback still fires later and no-ops on the token / missing-record stale-guard,
 ## so nothing ever double-finishes.
+##
+## v0.32.0: that PROMOTE-PENDING path is now UNREACHABLE from here. _validate_glide refuses every intent
+## submitted against an in-place record ("a committed in-place window accepts NO movement, queued or
+## otherwise"), so a from==to record can never hold a pending slot — and this function only accepts
+## from==to records. The promotion code in _finish_glide is left exactly as it is: it is the REAL glide
+## path's machinery, and reaching it through here is now simply impossible rather than wrong. Harmless
+## defense, deliberately not deleted.
 func finish_busy_early(entity_id: int) -> bool:
 	var rec = _gliding.get(entity_id)
 	if rec == null:
@@ -419,6 +426,41 @@ func finish_busy_early(entity_id: int) -> bool:
 	# step is already broadcast and the listener reads a settled record (is_entity_moving is true in
 	# that case, which is exactly the "don't re-think, you're moving" answer the brain wants).
 	busy_released.emit(entity_id)
+	return true
+
+
+## Host-only (v0.32.0, the `whiff_recovery_beats` PARTIAL tail): release an in-place BUSY record after
+## `delay_sec`, ahead of its own (longer) completion timer. The SCHEDULED twin of finish_busy_early —
+## same guard, same finish path, same signal, only later — and it exists for exactly one setting:
+## `GameConfig.whiff_recovery_beats > 0`, where a whiffed swing pays N beats of its tail and hands back
+## the remainder. The only callers are CombatReferee's three whiff resolves (melee windup, ability,
+## smite), which compute the paid tail with `_whiff_tail_sec` and stamp the SAME number into the whiff
+## event's `duration_sec` — so what every peer renders and what the host actually holds agree.
+##
+## Commitment Rule standing (§2.1): identical to finish_busy_early's, which see. This REDEFINES the
+## committed duration at the server's own resolve; it does not cancel a commitment. The windup was paid
+## unconditionally, only the RECOVERY portion is conditional on contact, and no input path reaches here —
+## a player cannot shorten their own window by pressing anything.
+##
+## Guard + staleness, both borrowed wholesale so there is one story:
+##  - the record must exist AND be a from==to in-place commit (a real glide is NEVER released early —
+##    that would jump an arrival forward, which IS a redirect). Returns false, mutating nothing, if not.
+##  - the CURRENT record's token is captured NOW and re-checked at fire, through the same token-guarded
+##    _finish_glide the immediate path uses. If the record was superseded, torn down (a killed attacker),
+##    or already finished in between, the timer no-ops. The ORIGINAL full-window timer then no-ops on the
+##    same guard when it fires later, so nothing ever double-finishes.
+##
+## `delay_sec <= 0` is not special-cased into a synchronous release: create_timer with 0 fires on the
+## next frame, which is still strictly inside the window and keeps ONE code path. Callers that want NOW
+## call finish_busy_early instead (that is what `whiff_recovery_beats == 0` does).
+func release_busy_after(entity_id: int, delay_sec: float) -> bool:
+	var rec = _gliding.get(entity_id)
+	if rec == null:
+		return false
+	if rec["from"] != rec["to"]:
+		return false
+	get_tree().create_timer(delay_sec).timeout.connect(
+			_release_busy_now.bind(entity_id, int(rec["token"])))
 	return true
 
 
@@ -533,7 +575,7 @@ func stamina_of(entity_id: int) -> Dictionary:
 ## gates read (bump, ability, shot, drink, equip, pickup, and the monster brain's attack/cast
 ## candidates), so every one of them asks the same question of the same authority.
 ##
-## NOT the same "recovery" as an attack's recovery BEATS (§2.3.9 / whiff_pays_recovery), which is a
+## NOT the same "recovery" as an attack's recovery BEATS (§2.3.9 / whiff_recovery_beats), which is a
 ## committed-action window. This one is the stamina POOL at 0. Attacks never spend stamina, so the two
 ## cannot fall out of sync; Jeff's envisioned future (the bar replacing recovery frames for all actions)
 ## is where they merge, and that is not this version.
@@ -709,6 +751,25 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# step's origin, so walkable/corner/dest-free/duration all adjudicate against the right tile.
 	var is_pipelined := false
 	if _gliding.has(sender_peer_id):
+		# IN-PLACE COMMITMENTS ACCEPT NO MOVEMENT AT ALL (v0.32.0, Jon's ruling) — checked FIRST, above the
+		# pipeline admission. A from==to record is an attack windup+recovery, a bump recovery, a cast, a drink,
+		# or a bow draw+tail: the body is ROOTED for the whole window, so there is nothing for a "next step" to
+		# be queued behind. The pre-fix code admitted the one pipelined step for ANY `_gliding` record, and the
+		# pipelined accept below swaps `_occupied` immediately with NO broadcast — so a rooted attacker's
+		# occupancy GHOST-STEPPED onto the neighbouring tile while its body stayed put. Everything that reads
+		# occupancy (an enemy's target scan, the reach test, a bump) then aimed at the empty tile and missed the
+		# body, or stepped onto the tile the body was still visibly standing on. Refuse with "busy" instead: the
+		# window plays out, the player hears the §2.2.8 bonk, and held input re-lands the moment it ends.
+		#
+		# The `from == to` predicate is the SAME one used by settled_entity_at, finish_busy_early and
+		# _finish_glide's walk-over guard — one meaning of "in-place", four sites. PIPELINING DURING A REAL
+		# GLIDE (from != to) IS UNTOUCHED: that is the sanctioned Q7 movement mechanism (§2.2.5 amendment) and
+		# the whole conga/held-key cadence rides it. Monsters ride this validator too, so a monster brain's
+		# _try_pipeline_next_step submit is refused here during its own windup — it falls through to its
+		# backstop and `notify_busy_released` still wakes it at the window's end.
+		var busy_rec: Dictionary = _gliding[sender_peer_id]
+		if busy_rec["from"] == busy_rec["to"]:
+			return { "ok": false, "reason": "busy" }
 		# A mover already gliding may commit ONE next step into the pending slot — but only under the
 		# conga toggle, and only if the slot is free; a third intent (one gliding + one held) is the
 		# same "already moving" bonk as before. Players pipeline to hide client RTT; MONSTERS pipeline
@@ -1074,6 +1135,20 @@ func _trigger_attacks_of_opportunity(from: Vector2i, mover_peer_id: int, mover) 
 		if mover_died:
 			return true
 	return false
+
+
+## The armed half of release_busy_after (v0.32.0) — the partial-tail timer's callback. Stale-guard FIRST,
+## with the token captured when the timer was armed: a record that was superseded, torn down (a killed
+## attacker) or already finished no-ops here, and no `busy_released` is emitted for a window that is not
+## ours to end. Past the guard the body is byte-for-byte finish_busy_early's: run _finish_glide with the
+## record's own token (its NORMAL completion), THEN emit — the same order, for the same reason (a listener
+## must read a settled record). The original full-window timer fires later and no-ops on the same guard.
+func _release_busy_now(entity_id: int, token: int) -> void:
+	var rec = _gliding.get(entity_id)
+	if rec == null or int(rec.get("token", -1)) != token:
+		return
+	_finish_glide(entity_id, token)
+	busy_released.emit(entity_id)
 
 
 ## Completion timer callback. Stale-guard: only finalize if the peer's current glide is still the

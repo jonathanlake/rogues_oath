@@ -76,10 +76,12 @@ const _SHARED_DIALS := [
 	{ "label": "armor flat LIGHT", "field": "armor_flat_reduction_light", "min": 0, "max": 99, "step": 1 },
 	{ "label": "armor flat MEDIUM", "field": "armor_flat_reduction_medium", "min": 0, "max": 99, "step": 1 },
 	{ "label": "armor flat HEAVY", "field": "armor_flat_reduction_heavy", "min": 0, "max": 99, "step": 1 },
-	# v0.28.0, Jeff's third batch — the two toggles he flips to answer his own questions. "whiff pays
-	# recovery" ON is pre-v0.26.0 §2.3.9; "recovery locks actions" is the 0-stamina ACTION lockout (a
-	# no-op while the stamina button above reads off).
-	{ "label": "whiff pays recovery", "field": "whiff_pays_recovery", "bool": true },
+	# v0.32.0 — the whiff tail is a DIAL now, not the v0.28.0 toggle: -1 (the default, and the leftmost
+	# value the spin offers) = pay the WHOLE committed tail (pre-v0.26.0 §2.3.9), 0 = pay none (v0.26.0
+	# recovery-on-contact), N = pay N beats capped at the full tail. Step 0.5 like the other beat dials.
+	# "recovery locks actions" is still the v0.28.0 0-stamina ACTION lockout (a no-op while the stamina
+	# button above reads off).
+	{ "label": "whiff recovery beats", "field": "whiff_recovery_beats", "min": -1, "max": 30, "step": 0.5 },
 	{ "label": "recovery locks actions", "field": "recovery_locks_actions", "bool": true },
 	# v0.30.0 — the pack-rally SHOUT's reach in TRAVEL tiles through open floor (walls bound it; 0 = no
 	# shout). Sits with the other monster-AI dials rather than the stamina block: it tunes who joins a

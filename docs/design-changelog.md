@@ -9,6 +9,28 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.32.0 (2026-07-27) — NO GHOST-STEPPING, A WHIFF-RECOVERY DIAL, AND SPEECH BUBBLES.** Three
+  asks from the v0.31.0 session, shipped same-day.
+  **YOU CAN NO LONGER "MOVE" WHILE ROOTED IN RECOVERY.** Jon caught the bug: press a direction during
+  a bow shot's recovery and your body stays put, but the game had already moved you — enemies missed
+  where you looked and walked onto "your" tile. Cause: the one-step movement pipeline (meant for
+  queuing your next step mid-glide) also accepted steps during attack/cast/drink windows, and it
+  claims the new tile the moment it's accepted, silently. Now any in-place committed window — swing,
+  recovery, cast, drink, bow draw — rejects movement outright (you'll feel the bonk; the mute
+  applies). Goblins ride the same rule, which should also end the "its weapon is still out but it's
+  moving / it hit me from two tiles away" reads — a goblin's game-position could ghost-step ahead of
+  its body exactly the same way. **Design note for Jeff:** this supersedes the Q6 line that said a
+  mid-draw move request pipelines — Jon's ruling, DESIGN §2.2.5/Q6 updated.
+  **WHIFF RECOVERY IS NOW A DIAL, NOT A SWITCH: `whiff recovery beats`** (debug panel /
+  `/config whiff_recovery_beats`). **-1** (the default) = a miss pays its full normal weapon
+  recovery, exactly as before. **0** = the old "no recovery on a whiff" experiment. **Any number in
+  between** = the miss pays that many beats (capped at the weapon's full tail), then frees up — so
+  Jon's "at least 1 beat on a whiff" idea is `/config whiff_recovery_beats 1`, live, no restart. The
+  grey tint and green bar show exactly whatever is paid.
+  **CHAT NOW FLOATS OVER YOUR HEAD.** Type in the chat box and your words appear above your
+  character in a speech bubble (same bubble the goblins use for banter, held a bit longer), on every
+  player's screen — long messages are trimmed in the bubble, with the full text still in the log.
+
 - **v0.31.0 (2026-07-27) — THE QUICK SIX: QUIETER BONKS, NO X-RAY GOBLINS, A READABLE PANEL, AND A
   REAL BOW.** Six small asks from the v0.30.0 play session, shipped fast on Jon's call (one plan
   review, no scripted test matrix — live testing is the test).

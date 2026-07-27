@@ -557,7 +557,8 @@ func _on_intent_rejected(action: String, reason: String) -> void:
 # ONE suppressed case — it now covers BOTH mashing during a committed glide AND a third intent
 # while one glides + one is held in the pipeline slot (§2.2.5 amendment): same semantic ("not
 # now, you're already committed"), not a world refusal; the bonk sound/flash (fired via main.gd)
-# already says so without log spam.
+# already says so without log spam. v0.32.0 adds "busy" (a move during an IN-PLACE commitment) as the
+# second suppressed case, for exactly that reason — see its arm below.
 func _log_glide_reject(reason: String) -> void:
 	match reason:
 		"blocked":
@@ -572,6 +573,13 @@ func _log_glide_reject(reason: String) -> void:
 			# misread. Silent, matching the suppressed bonk cue — the raw reason must never surface to players.
 			pass
 		"already moving":
+			pass
+		"busy":
+			# v0.32.0: a move submitted DURING an in-place commitment (attack windup/recovery, cast, drink,
+			# bow draw) — the referee refuses every one of them now, queued or otherwise. Suppressed for the
+			# same reason "already moving" is: it is not a world refusal, it is "not now, you're already
+			# committed", and the bonk sound + flash (fired via main.gd) already say so without log spam.
+			# Held input re-lands the step the instant the window ends, so a line per mashed key is noise.
 			pass
 		"recovering":
 			# v0.28.0 recovery lockout (GameConfig.recovery_locks_actions): a BUMP ATTACK refused because the

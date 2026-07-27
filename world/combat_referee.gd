@@ -867,10 +867,11 @@ func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int, recovery
 			return
 	# Dodged / empty ground — a distinct WHIFF (the target moved off in time). target_tile rides so the miss
 	# cue lands on the committed tile; kind "smite" so the log reads "fizzles — dodged!" not a melee miss.
-	# WHIFF RECOVERY IS A TOGGLE (v0.28.0, whiff_pays_recovery, default TRUE): the dodged cast still pays its
-	# follow-through and duration_sec carries it (pre-v0.26.0); with the flag off it stamps 0.0 and the
-	# caster's tail is released below — the dodge then robs the cast of its follow-through too.
-	var pays_recovery: bool = GameManager.config.whiff_pays_recovery
+	# WHIFF RECOVERY IS A DIAL (v0.32.0, whiff_recovery_beats, default -1 = pay it all): the dodged cast pays
+	# whatever _whiff_tail_sec says it owes and duration_sec carries exactly that, so the caster's spent tell
+	# matches the window the host really holds. At 0 the dodge robs the cast of its follow-through entirely
+	# (the v0.26.0 behavior); at N > 0 it keeps N beats of it and hands back the rest.
+	var paid_sec := _whiff_tail_sec(caster, recovery_sec)
 	NetEvents.post_event("attack", {
 		"attacker_id": caster_id,
 		"attacker_name": _name_of(caster),
@@ -882,15 +883,20 @@ func _resolve_smite(caster_id: int, target_tile: Vector2i, damage: int, recovery
 		"target_max": 0,
 		"kind": "smite",
 		"whiff": true,
-		"duration_sec": recovery_sec if pays_recovery else 0.0,
+		"duration_sec": paid_sec,
 	}, caster_id)
-	# LAST, after the fizzle event is on the wire (same ordering rule as the other two release sites).
-	# `recovery_sec` is unused on this branch by design — it was baked into the one cast+recovery record.
-	# v0.28.0: skipped entirely while whiff_pays_recovery is true — the window plays out untouched.
-	if pays_recovery:
+	# LAST, after the fizzle event is on the wire (same ordering rule as the other two release sites). The
+	# tail was baked into the one cast+recovery record, so shortening it means finishing that record early.
+	# v0.32.0, the three regimes of `whiff_recovery_beats`: FULL (the default) skips entirely and the window
+	# plays out untouched; NONE releases now; PARTIAL releases at the PAID boundary the event just quoted.
+	if paid_sec >= recovery_sec:
 		return
-	if not _move_referee.finish_busy_early(caster_id):
-		push_warning("[CombatReferee] smite whiff for %d posted duration_sec 0 but no in-place record was released — client/server recovery tell may disagree" % caster_id)
+	if paid_sec <= 0.0:
+		if not _move_referee.finish_busy_early(caster_id):
+			push_warning("[CombatReferee] smite whiff for %d posted duration_sec 0 but no in-place record was released — client/server recovery tell may disagree" % caster_id)
+		return
+	if not _move_referee.release_busy_after(caster_id, paid_sec):
+		push_warning("[CombatReferee] smite whiff for %d posted a partial duration_sec but no in-place record was scheduled for release — client/server recovery tell may disagree" % caster_id)
 
 
 # ── Active abilities (v0.20.0, the 1-5 hotbar — a player-triggered melee strike + stun) ──────
@@ -1067,10 +1073,11 @@ func _resolve_ability(attacker_id: int, target_tile: Vector2i, damage: int, stun
 			apply_stun(occ_id, stun_beats)
 			return
 	# Whiff — the target moved off / died. A distinct outcome (§2.3.4); kind "ability" + verb so the log reads
-	# "<verb> hits nothing". WHIFF RECOVERY IS A TOGGLE (v0.28.0, whiff_pays_recovery, default TRUE): the
-	# miss pays its recovery tail and duration_sec carries it (pre-v0.26.0); with the flag off, duration_sec
-	# 0.0 and the committed window is released below, leaving a missed ability's user free at once.
-	var pays_recovery: bool = GameManager.config.whiff_pays_recovery
+	# "<verb> hits nothing". WHIFF RECOVERY IS A DIAL (v0.32.0, whiff_recovery_beats, default -1 = pay it all):
+	# the miss pays whatever _whiff_tail_sec says it owes and duration_sec carries exactly that number, so the
+	# spent tell every peer plays matches the window the host really holds. At 0 the committed window is
+	# released below, leaving a missed ability's user free at once; at N > 0 the remainder is handed back.
+	var paid_sec := _whiff_tail_sec(attacker, recovery_sec)
 	NetEvents.post_event("attack", {
 		"attacker_id": attacker_id,
 		"attacker_name": _name_of(attacker),
@@ -1082,16 +1089,21 @@ func _resolve_ability(attacker_id: int, target_tile: Vector2i, damage: int, stun
 		"target_max": 0,
 		"kind": "ability",
 		"whiff": true,
-		"duration_sec": recovery_sec if pays_recovery else 0.0,
+		"duration_sec": paid_sec,
 		"verb": verb,
 	}, attacker_id)
 	# LAST, for the same ordering reason as _resolve_windup's release: the miss event precedes any `glide_to`
-	# a promoted pipelined step posts. `recovery_sec` goes unused on this branch by design.
-	# v0.28.0: skipped entirely while whiff_pays_recovery is true — the window plays out untouched.
-	if pays_recovery:
+	# a promoted pipelined step posts. v0.32.0, the three regimes of `whiff_recovery_beats`: FULL (the default)
+	# skips entirely and the window plays out untouched; NONE releases now; PARTIAL releases at the PAID
+	# boundary the event just quoted.
+	if paid_sec >= recovery_sec:
 		return
-	if not _move_referee.finish_busy_early(attacker_id):
-		push_warning("[CombatReferee] ability whiff for %d posted duration_sec 0 but no in-place record was released — client/server recovery tell may disagree" % attacker_id)
+	if paid_sec <= 0.0:
+		if not _move_referee.finish_busy_early(attacker_id):
+			push_warning("[CombatReferee] ability whiff for %d posted duration_sec 0 but no in-place record was released — client/server recovery tell may disagree" % attacker_id)
+		return
+	if not _move_referee.release_busy_after(attacker_id, paid_sec):
+		push_warning("[CombatReferee] ability whiff for %d posted a partial duration_sec but no in-place record was scheduled for release — client/server recovery tell may disagree" % attacker_id)
 
 
 # ── Instant abilities (v0.26.0 EXPERIMENT — Shield Block + Shadow Step; DESIGN §2.11.1) ──────
@@ -1828,14 +1840,19 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 	# Whiff: swing into empty/vacated ground. Distinct outcome — no damage, hp_after -1 (absent),
 	# target_tile carried so the client renders the swing toward the committed tile.
 	#
-	# WHIFF RECOVERY IS A TOGGLE (v0.28.0, GameConfig.whiff_pays_recovery, DEFAULT TRUE = pre-v0.26.0):
-	# TRUE  — the miss still pays its recovery tail. duration_sec carries the real recovery_sec, so every
-	#         peer plays the spent-recovery tint (main.gd's play_recovery) and the local attacker's
-	#         commit_in_place mirror roots it for exactly that window; the busy record is LEFT ALONE.
-	# FALSE — v0.26.0 "recovery only on contact": duration_sec 0.0 (no spent tell) and the busy window is
-	#         released at the bottom of this function.
-	# Read live host-side, so a `/config whiff_pays_recovery` flip lands on the very next miss.
-	var pays_recovery: bool = GameManager.config.whiff_pays_recovery
+	# WHIFF RECOVERY IS A DIAL (v0.32.0, GameConfig.whiff_recovery_beats, DEFAULT -1 = pay it ALL =
+	# pre-v0.26.0; it replaced the v0.28.0 `whiff_pays_recovery` bool, whose two settings are its two
+	# endpoints). _whiff_tail_sec is the one policy site; this resolve just spends what it returns:
+	#   paid == recovery_sec — the miss pays its FULL tail. duration_sec carries the real recovery_sec, so
+	#                          every peer plays the spent-recovery tint (main.gd's play_recovery) + green
+	#                          bar, the local attacker's commit_in_place mirror roots it for exactly that
+	#                          window, and the busy record is LEFT ALONE (nothing to release).
+	#   paid == 0.0         — v0.26.0 "recovery only on contact": duration_sec 0.0 (no spent tell) and the
+	#                          busy window is released AT ONCE at the bottom of this function.
+	#   0 < paid < full     — the PARTIAL tail: duration_sec carries the PAID seconds (so the tint/bar show
+	#                          exactly what is really owed) and the REMAINDER is released on a timer.
+	# Read live host-side, so a `/config whiff_recovery_beats` change lands on the very next miss.
+	var paid_sec := _whiff_tail_sec(attacker, recovery_sec)
 	var whiff_data := {
 		"attacker_id": attacker_id,
 		"attacker_name": _name_of(attacker),
@@ -1847,7 +1864,7 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 		"target_max": 0,
 		"kind": kind,
 		"whiff": true,
-		"duration_sec": recovery_sec if pays_recovery else 0.0,
+		"duration_sec": paid_sec,
 	}
 	# Weapon stamp on the WHIFF too (v0.9.3): a whiffed weapon swing still animates the rig arc, so a
 	# missed strike plays the weapon (it composes with the monster's whiff bowstring, exactly as a
@@ -1866,18 +1883,24 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 		whiff_data["swing_sec"] = recovery_sec
 	NetEvents.post_event("attack", whiff_data, attacker_id)
 	# Release the recovery remainder LAST (v0.26.0), after this resolve's own bookkeeping and after the
-	# event is on the wire — finish_busy_early can promote a pipelined step and post a `glide_to`, and the
-	# miss must be the earlier seq. `recovery_sec` is deliberately unused on this branch: it was baked into
-	# the single windup+recovery record at commit (the v0.19.0 double-hit fix), and dropping the tail is
-	# exactly what "recovery only on contact" means. The CONTACT branches above return before this and keep
-	# the full record byte-identically. A stunned / dead attacker returned at the top and keeps its window
-	# too (the stun IS the punishment; a dead attacker's record was torn down by clear_entity).
-	# v0.28.0: SKIPPED ENTIRELY when whiff_pays_recovery is true (the default) — the committed window then
-	# plays out untouched, which is what "the whiff pays" means, and `busy_released` never fires.
-	if pays_recovery:
+	# event is on the wire — a release can promote a pipelined step and post a `glide_to`, and the miss must
+	# be the earlier seq. The tail was baked into the single windup+recovery record at commit (the v0.19.0
+	# double-hit fix), so shortening it means finishing that record early. The CONTACT branches above return
+	# before this and keep the full record byte-identically. A stunned / dead attacker returned at the top and
+	# keeps its window too (the stun IS the punishment; a dead attacker's record was torn down by clear_entity).
+	# v0.32.0, the three regimes of `whiff_recovery_beats` (see _whiff_tail_sec):
+	#  - FULL (paid == recovery_sec, the default) — SKIPPED ENTIRELY: the committed window plays out
+	#    untouched, which is what "the whiff pays" means, and `busy_released` never fires.
+	#  - NONE (0.0) — released NOW, the v0.26.0 recovery-on-contact behavior.
+	#  - PARTIAL — released on a timer at the PAID boundary, the same number the event just quoted.
+	if paid_sec >= recovery_sec:
 		return
-	if not _move_referee.finish_busy_early(attacker_id):
-		push_warning("[CombatReferee] windup whiff for %d posted duration_sec 0 but no in-place record was released — client/server recovery tell may disagree" % attacker_id)
+	if paid_sec <= 0.0:
+		if not _move_referee.finish_busy_early(attacker_id):
+			push_warning("[CombatReferee] windup whiff for %d posted duration_sec 0 but no in-place record was released — client/server recovery tell may disagree" % attacker_id)
+		return
+	if not _move_referee.release_busy_after(attacker_id, paid_sec):
+		push_warning("[CombatReferee] windup whiff for %d posted a partial duration_sec but no in-place record was scheduled for release — client/server recovery tell may disagree" % attacker_id)
 
 
 ## THE reach predicate for a melee resolve (v0.29.0) — ONE test, both stages of _resolve_windup, so the
@@ -2173,6 +2196,34 @@ func _windup_duration_of(node: Node) -> float:
 		var bonus := 0.0 if w.range_tiles > 0 else _bonus_windup_beats_of(node)
 		return maxf(0.0, w.windup_beats + bonus) * _pace_beat_sec(node)
 	return 0.0
+
+
+## THE whiff-tail policy (v0.32.0) — how many seconds of its committed recovery a MISS actually pays.
+## One function, all three whiff resolves (melee windup, ability, smite), so the three can never drift.
+## Reads `GameConfig.whiff_recovery_beats` LIVE host-side, so a `/config whiff_recovery_beats N` lands on
+## the very next miss with no restart. `recovery_sec` is the FULL committed tail this resolve was armed
+## with. DESIGN §2.3.9; the dial's three regimes are documented on the field itself:
+##   -1 (default) → recovery_sec  (pay it all; the caller leaves the busy record alone)
+##    0           → 0.0           (pay none; the caller calls finish_busy_early now)
+##    N > 0       → min(N beats at THIS attacker's resolved pace, recovery_sec)
+##                                (pay part; the caller schedules release_busy_after for the remainder)
+## The min() is the whole reason this is a function and not an expression: a dial may only ever SHORTEN
+## the committed window, never lengthen it, so a value past the weapon's own recovery reads as "full"
+## and the caller's `paid == recovery_sec` comparison then takes the leave-it-alone branch for free.
+## Beats (not seconds) so the number means the same thing at either pace — stamped through the attacker's
+## own resolved beat, exactly like the recovery it is carving up.
+##
+## DEGENERATE CASE, stated so nobody re-derives it: an attacker with a ZERO tail (recovery_beats 0) returns
+## 0.0 at EVERY setting, so its callers take the "paid == full" leave-it-alone branch and never release
+## anything. That is correct and it is why the callers test full BEFORE zero: there is no tail to hand back,
+## and the record's own timer is already expiring in the same instant the resolve runs.
+func _whiff_tail_sec(node: Node, recovery_sec: float) -> float:
+	var beats: float = GameManager.config.whiff_recovery_beats
+	if beats < 0.0:
+		return recovery_sec
+	if beats == 0.0:
+		return 0.0
+	return minf(beats * _pace_beat_sec(node), recovery_sec)
 
 
 ## The attacker node's resolved beat (seconds) at stamp time — tactical or explore per PaceReferee

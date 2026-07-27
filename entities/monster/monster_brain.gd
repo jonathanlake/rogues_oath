@@ -466,6 +466,12 @@ func _think() -> void:
 ## attack think instead (the 0.05s then only delays ENTERING melee, imperceptible; the hot chase loop
 ## stays zero-gap). Gated on the SAME conga toggle players pipeline under (origin_frees_at_glide_start)
 ## — under hold-origin the slot is off for everyone and the backstop recovers at status-quo timing.
+##
+## v0.32.0: the referee now REFUSES a pipelined step whenever our busy record is IN-PLACE (a windup, its
+## recovery tail, a cast, a drink — see MoveReferee._validate_glide). Nothing to change here: the submit
+## simply returns false, we fall through to the caller's _reschedule_after backstop, and
+## notify_busy_released still wakes us the moment the window ends. Only a REAL glide (from != to) can
+## still pipeline, which is the only case this function was ever meant to serve.
 func _try_pipeline_next_step() -> bool:
 	# A KITER never chases (v0.19.10), so it must never pipeline a chase step — fall to the backstop so the
 	# next boundary re-decides flee/smite/hold via _act_as_kiter.

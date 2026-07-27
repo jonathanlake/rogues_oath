@@ -81,7 +81,13 @@ default — a reader must not take "off = the invariant holds" as a description 
    which WIDENS the pipeline's RTT budget from one beat to two). A
    pipelined mover's next tile is therefore spoken for up to one step early — intended
    gameplay, not an artifact ("decisions carry risk": conga semantics one step sooner). No
-   cancel path exists; disconnect is the sole slot-clear. **Tap/hold rule (v0.3.5, amended
+   cancel path exists; disconnect is the sole slot-clear. **SCOPE NARROWED v0.32.0 (Jon's
+   ruling): the pipeline is a GLIDE-to-glide mechanism only.** An IN-PLACE committed window
+   (attack windup+recovery, bump recovery, cast, drink, bow draw+tail) accepts NO movement,
+   queued or otherwise — a direction press during one is rejected ("busy"). Pre-v0.32.0 the
+   slot admitted these too and occupancy swapped at accept with no broadcast, so a rooted
+   attacker's game-position ghost-stepped a tile while the body stayed put (enemies missed
+   the body, walked onto its visual tile — the bug Jon reported after v0.31.0). **Tap/hold rule (v0.3.5, amended
    v0.8.0):** the threshold is now in BEATS — `key_repeat_min_hold_beats` (default 1.5,
    ~0.375s at the default tempo — 1.2 was a verified knife-edge where a 0.3s press doubled;
    client-side convenience in the §2.2.9 spirit). A single
@@ -522,21 +528,24 @@ revert switch it was while this was provisional.
      carries a present-only `discarded` field and the log reads *"(The leather armor is discarded.)"*
      The full rationale lives in **§2.10**.
 
-9. **§2.3.9 — Whiff recovery: A TOGGLE, and it now ships ON (`whiff_pays_recovery` = true, v0.28.0;
-   was "recovery only on contact" v0.26.0–v0.27.x).** A committed attack owns its whole window when it
-   LANDS — windup plus the planted recovery tail (Part 4 Q9's unified occupancy is untouched, and so is
-   the v0.19.0 same-window double-hit fix). What the dial decides is the **whiff** — the telegraphed tile
-   was vacated, the ability found nothing, the smite's target dodged:
-   - **`whiff_pays_recovery` TRUE (the DEFAULT since v0.28.0, and the pre-v0.26.0 behavior Jeff asked to
-     have back):** the miss pays its full recovery tail. The committed window plays out untouched, the
-     whiff event carries the real recovery seconds, and every peer shows the spent-recovery tint for it.
-   - **FALSE (the v0.26.0 experiment):** the remaining recovery is RELEASED at resolution — you paid for
-     the miss with the miss, not with a nap on top of it — the event stamps a zero gameplay duration, and
-     a whiffing goblin re-thinks that same frame (the `busy_released` monster wake). Both sides,
-     symmetric.
-   With the flag TRUE, `busy_released` never fires, so the v0.26.0 whiff-wake is inert by construction.
-   Positive polarity deliberately matches `stamina_enabled` / `recovery_locks_actions` — these get flipped
-   live mid-playtest and an inverted flag is a footgun. **Not the same "recovery" as §2.2.10's lockout**,
+9. **§2.3.9 — Whiff recovery: A DIAL (`whiff_recovery_beats`, v0.32.0 — generalizing the v0.28.0
+   `whiff_pays_recovery` toggle; ships -1 = the full tail).** A committed attack owns its whole window
+   when it LANDS — windup plus the planted recovery tail (Part 4 Q9's unified occupancy is untouched, and
+   so is the v0.19.0 same-window double-hit fix). What the dial decides is the **whiff** — the telegraphed
+   tile was vacated, the ability found nothing, the smite's target dodged:
+   - **-1 (the DEFAULT — the old toggle's TRUE, the pre-v0.26.0 behavior Jeff asked to have back):** the
+     miss pays its full recovery tail. The committed window plays out untouched, the whiff event carries
+     the real recovery seconds, and every peer shows the spent-recovery tint + bar for it.
+   - **0 (the old FALSE, the v0.26.0 experiment):** the remaining recovery is RELEASED at resolution —
+     you paid for the miss with the miss — the event stamps a zero gameplay duration, and a whiffing
+     goblin re-thinks that same frame (the `busy_released` monster wake). Both sides, symmetric.
+   - **N > 0 (NEW, Jon 2026-07-27 — "at least 1 beat on a whiff"):** the miss pays min(N beats at the
+     attacker's resolved pace, the full tail), then the remainder releases early (same token-guarded
+     release path, `busy_released` fires at the paid boundary). The middle ground between "the whole nap"
+     and "gone before the swing reads" — no-recovery whiffs made monsters look like they attack while
+     moving.
+   The -1 sentinel replaces the old positive-polarity bool; the beats value scales with tempo like every
+   other duration. **Not the same "recovery" as §2.2.10's lockout**,
    which reads the stamina POOL; this one is a committed-action window. The v0.26.0 rationale, kept because
    the toggle keeps it reachable:
    - **Why the release was tried.** The recovery tail is the *cost of having connected*; charging it for a
@@ -1252,8 +1261,10 @@ currently carries that marker — the legend stands for whenever one does.)*
    down this lane"). Bow v1: ranger roster [longsword, bow], 7-tile Chebyshev range,
    windup 2 + recovery 1 (the 2-beat draw, then the after-loose tail — additive since v0.23.1), damage 4, sky-to-horizontal draw telegraph +
    nocked arrow + pitched draw/loose sounds (Jon's spec — no string animation). Ranged
-   kiting pressure: the 3-beat rooted draw IS the hard choice; a mid-draw move request
-   pipelines (Q7 slot) and starts only after the window. STILL OPEN in this question:
+   kiting pressure: the rooted draw+tail IS the hard choice; **a mid-draw move request is
+   REJECTED outright (v0.32.0, Jon — supersedes the earlier "pipelines via the Q7 slot"
+   answer: the slot's occupancy-at-accept made the shooter's game-position ghost-step while
+   the body stayed rooted, so in-place windows now accept no movement at all — §2.2.5).** STILL OPEN in this question:
    LoS-proper (arrows use per-tile wall clipping; diagonal corner-cutting accepted v1),
    gamepad aiming, monster ranged attackers, ranged backstab/facing (the normalized-delta
    note in combat_referee).
