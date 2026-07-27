@@ -235,6 +235,24 @@ rough per-milestone effort signal (session-or-few each).
 
 Not scheduled — pulled in when their moment comes:
 
+- **UNIFY THE COMMITTED-ACTION RESOLVE SCAFFOLDING** *(named 2026-07-27, after the v0.29.0–v0.34.0
+  run)*. Four near-parallel copies of "commit a window now, resolve it later" live in
+  `CombatReferee`: the melee windup (`wind_up` / `_resolve_windup`), abilities
+  (`_validate_use_ability` / `_resolve_ability` / `_resolve_targeted`), the shaman casts
+  (`heal_cast` / `smite_cast` and their resolves), and the bow (`_commit_shot` / `_loose_arrow`).
+  Each stamps durations, whiffs, cooldowns and events in a slightly different shape, and the
+  divergence is where a run of real bugs came from: the recovery bar missing on bow shots
+  (v0.31.0), the 2-tile sticky fix landing on melee while abilities kept the un-tested branch
+  (v0.29.0), the whiff dial reaching three of the four paths (v0.32.0), and the smite's missing
+  interrupt-gen guard that only mattered once a PLAYER could cast (closed ad-hoc in v0.34.0).
+  Nothing is broken today — the cost is that every new combat feature must be written four times.
+  **Partially paid v0.33.0**: the shot commit became shooter-agnostic
+  (`_shoot_reject_reason` / `_commit_shot` / `commit_monster_shot`), which is the shape the other
+  three want. **Its moment is the next big combat push** (new weapon types, monster casters,
+  more conditions) — consolidating cold, mid-playtest-loop, buys nothing; consolidating right
+  before that push means the feature gets written once. Do it as its own version with the full
+  two-instance matrix, never folded into a feature batch.
+
 - **STAMINA follow-ups (v0.24.0 experiment → GRADUATED v0.26.0 by Jeff's verdict 2026-07-26; the
   graduate-or-revert question is CLOSED and the living rule is DESIGN §2.2.10)**. Still open:
   **confirm the units** — the recovery idle waits (light 2.5 / medium 3.0 / heavy 3.5 / monsters
