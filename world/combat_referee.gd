@@ -1676,10 +1676,20 @@ func _damage_type_name(damage_type: int) -> String:
 ## "strike" for the instant path — never inferred from recovery_sec, whose sign says nothing about
 ## which path fired (a zero-recovery instant strike is still a strike).
 ## The attacker must still be alive — a mid-wind-up kill deals nothing (the distinct outcome a slow
-## telegraph buys; on the instant path the same-stack liveness makes this always true). Damage hits
-## whatever hostile-to-the-attacker LIVING entity occupies the tile NOW (MoveReferee's authoritative
-## occupancy): a target that glided off whiffs; a different hostile that stepped onto the tile eats
-## it (the attack commits to ground, not a name). No occupant / no hostile / dead → a WHIFF event.
+## telegraph buys; on the instant path the same-stack liveness makes this always true).
+##
+## TWO-STAGE SHAPE (v0.29.0; stage 1's reach test is new, stage 2 is v0.24.8's toggle unchanged):
+##   1. GROUND COMMIT (always). Damage hits whatever hostile-to-the-attacker LIVING entity occupies the
+##      tile NOW (MoveReferee's authoritative occupancy) — a target that glided off whiffs; a different
+##      hostile that stepped onto the tile eats it (the attack commits to ground, not a name) — PROVIDED
+##      that occupant is genuinely WITHIN REACH: its whole motion record must sit inside the attacker's
+##      8-ring (_motion_within_reach). Occupancy flips to a glide's DESTINATION at accept, so without that
+##      test a body still two tiles away could be struck for owning the tile early. UNCONDITIONAL — this
+##      is the referee's legibility guarantee, not an experiment, and a failed test FALLS THROUGH.
+##   2. STICKY CATCH (toggled, GameConfig.swing_catches_adjacent, default ON since v0.29.0). The swing
+##      follows the INTENDED victim off the committed tile, subject to the same reach test in its exact-
+##      adjacency form. OFF = strict tile-only commitment.
+## Nothing reachable at either stage → a WHIFF event.
 ##
 ## `interrupt_gen` (v0.26.0 instants experiment): MoveReferee's forced-movement generation captured when this
 ## resolve was ARMED. -1 means "no capture needed" — the synchronous instant-strike caller, which resolves in
@@ -1702,34 +1712,55 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 	if is_stunned(attacker_id):
 		return
 	var attacker := _node_of_id(attacker_id)
+	# The attacker's authoritative tile, hoisted (v0.29.0): BOTH resolve stages measure reach from it now.
+	var attacker_tile: Vector2i = _move_referee.tile_of_entity(attacker_id)
 	var occ_id: int = _move_referee.entity_at(target_tile)
+	# ── Stage 1: the GROUND commit (primary) ──────────────────────────────────
+	# Whoever authoritatively occupies the committed tile eats the swing — "the attack commits to ground,
+	# not a name" — SUBJECT TO the reach test below.
+	#
+	# v0.29.0 REACH GUARD, UNCONDITIONAL (not part of the sticky toggle — this is a BUG FIX, repro'd
+	# headlessly with swing_catches_adjacent OFF): occupancy flips to a glide's DESTINATION at ACCEPT, so a
+	# victim gliding INTO the committed tile owns that tile for the whole slide while its rendered body is
+	# still up to two tiles from the attacker. Before this, such a victim was hit here, from two tiles away,
+	# with `whiff:false` — the very "attacks landing from two tiles away" illegibility (§2.3.4) that v0.24.9
+	# fixed for the STICKY branch only. The same motion-record test now guards BOTH branches through one
+	# helper (_motion_within_reach) so they cannot drift: EVERY tile in the occupant's motion record —
+	# occupancy + in-flight glide from/to + pipelined step from/to — must lie within Chebyshev 1 of the
+	# attacker's tile NOW. A settled occupant's record is just its own tile (distance 1 from the attacker),
+	# so ordinary hits are untouched; only a mid-flight body arriving from out of reach is spared.
+	#
+	# FALL-THROUGH on failure, never a return: the sticky branch below may still legitimately catch the
+	# INTENDED victim (it re-tests the same record and rejects it identically when it is the same entity),
+	# and otherwise the whiff path is the honest outcome.
 	if occ_id != _NO_ENTITY:
 		var occ := _node_of_id(occ_id)
-		if occ != null and is_alive(occ_id) and attacker != null and attacker.is_hostile_to(occ):
+		if occ != null and is_alive(occ_id) and attacker != null and attacker.is_hostile_to(occ) \
+				and _motion_within_reach(occ_id, attacker_tile, true):
 			apply_damage(attacker_id, occ_id, roll_damage_of(attacker), kind, recovery_sec)
 			return
+	# ── Stage 2: the STICKY catch (secondary, toggled) ────────────────────────
 	# STICKY SWING (v0.24.8 experiment, Jon: "swings still land if the target moved but is still
-	# directly around the swinger"): the committed tile has no valid hostile, but the INTENDED victim
+	# directly around the swinger"): the committed tile holds no reachable hostile, but the INTENDED victim
 	# (the body on the tile at commit) may have only SIDESTEPPED — if it is alive, still hostile, and
 	# its authoritative tile is Chebyshev-adjacent to the attacker's NOW, the blade catches it anyway.
 	# Escaping beyond adjacency still dodges (the whiff below), a ground-aimed windup (no intended
 	# victim) keeps pure tile commitment, and a DIFFERENT body on the tile was already hit above —
 	# ground commit stays primary. Symmetric: player swings and monster swings alike.
+	#
+	# v0.29.0 SCOPE NARROWING (the toggle's meaning, not its code): with stage 1 now doing the reach test
+	# unconditionally, this toggle governs ONLY "the swing FOLLOWS the mover off the committed tile". OFF
+	# (which is no longer the default — see GameConfig.swing_catches_adjacent) is strict tile-only
+	# commitment; the never-hit-from-two-tiles guarantee holds either way.
 	if GameManager.config.swing_catches_adjacent and intended_id != _NO_ENTITY and is_alive(intended_id):
 		var victim := _node_of_id(intended_id)
-		var attacker_tile: Vector2i = _move_referee.tile_of_entity(attacker_id)
-		# v0.24.9 tightening (Jon: "never two tiles away"): the catch requires the victim's ENTIRE
-		# motion record — occupancy + in-flight glide from/to + pipelined step from/to — inside the
-		# attacker's 8-ring. Under pipelining the occupancy tile can lead the rendered body by two
-		# tiles; testing every trace point means a caught victim can never LOOK out of reach.
-		var motion_tiles: Array[Vector2i] = _move_referee.motion_tiles_of(intended_id)
-		var all_adjacent := not motion_tiles.is_empty()
-		for motion_tile in motion_tiles:
-			if maxi(absi(motion_tile.x - attacker_tile.x), absi(motion_tile.y - attacker_tile.y)) != 1:
-				all_adjacent = false
-				break
+		# v0.24.9 tightening (Jon: "never two tiles away"), unchanged in substance — the loop moved into
+		# _motion_within_reach. EXACT adjacency here (allow_same_tile false, i.e. the old `!= 1` test): this
+		# branch is about a victim that STEPPED OFF the committed tile, so the attacker's own tile is not a
+		# candidate and the predicate stays exactly what v0.24.9 shipped.
 		if victim != null and attacker != null and attacker.is_hostile_to(victim) \
-				and not WorldGrid.is_wall(attacker_tile) and all_adjacent:
+				and not WorldGrid.is_wall(attacker_tile) \
+				and _motion_within_reach(intended_id, attacker_tile, false):
 			apply_damage(attacker_id, intended_id, roll_damage_of(attacker), kind, recovery_sec)
 			return
 
@@ -1786,6 +1817,36 @@ func _resolve_windup(attacker_id: int, target_tile: Vector2i, kind: String, reco
 		return
 	if not _move_referee.finish_busy_early(attacker_id):
 		push_warning("[CombatReferee] windup whiff for %d posted duration_sec 0 but no in-place record was released — client/server recovery tell may disagree" % attacker_id)
+
+
+## THE reach predicate for a melee resolve (v0.29.0) — ONE test, both stages of _resolve_windup, so the
+## "never hit something that renders two tiles away" guarantee can never drift between them.
+##
+## True when EVERY tile in `entity_id`'s authoritative motion record — occupancy, the from/to of an
+## in-flight glide, and the from/to of a pipelined next step (MoveReferee.motion_tiles_of) — lies within
+## Chebyshev 1 of `attacker_tile`. Testing the whole record, not just occupancy, is the v0.24.9 insight:
+## occupancy flips to a glide's DESTINATION at accept and can lead the RENDERED body by up to two tiles, so
+## any single-point test lets an unreachable-looking body be hit. An EMPTY record (no occupancy, no glide —
+## an entity MoveReferee does not track) is false: unknown position is never "in reach".
+##
+## `allow_same_tile` picks which of the two callers' predicates applies, and it is the ONLY difference
+## between them:
+##   true  (stage 1, the ground commit) — distance 0..1 is in reach. The honest "within reach" statement;
+##         distance 0 would be the attacker's own tile, which occupancy makes unreachable today, so this
+##         is future-proofing rather than a live case.
+##   false (stage 2, the sticky catch) — distance must be EXACTLY 1, byte-for-byte the `!= 1` rejection
+##         v0.24.9 shipped: that branch exists for a victim that stepped OFF the committed tile.
+func _motion_within_reach(entity_id: int, attacker_tile: Vector2i, allow_same_tile: bool) -> bool:
+	var motion_tiles: Array[Vector2i] = _move_referee.motion_tiles_of(entity_id)
+	if motion_tiles.is_empty():
+		return false
+	for motion_tile in motion_tiles:
+		var distance := maxi(absi(motion_tile.x - attacker_tile.x), absi(motion_tile.y - attacker_tile.y))
+		if distance > 1:
+			return false
+		if distance == 0 and not allow_same_tile:
+			return false
+	return true
 
 
 ## Resolve a lethal hit SYNCHRONOUSLY (decision 7, Q1 placeholder). Erase HP, then erase the dead

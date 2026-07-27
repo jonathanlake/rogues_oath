@@ -248,6 +248,18 @@ func report_hostile_action(player_id: int) -> void:
 ## map for the whole party (so the player's teammate-pull reads current qualifications) then defers to
 ## _resolve_player_tactical, which is the qualify + hysteresis half.
 func _resolve_tactical(entity_id: int) -> bool:
+	# FORCE PIN (v0.29.0 dev toggle, ships FALSE): everyone resolves tactical while it is on. Sits ABOVE the
+	# monster branch so it covers monsters too — a player falling through still meets its own copy of this
+	# guard in _resolve_player_tactical, and BOTH guards exist on purpose: _flush_pace_changes calls that
+	# function DIRECTLY (never through here), so a single guard in either place would leave the other entry
+	# point unpinned. Read LIVE from config (host-only referee), so a `/config force_tactical_pace 1` lands
+	# on the very next verdict with no restart. The exit-ramp promise leans on the POLL: the flush Timer
+	# calls _resolve_player_tactical every tick, whose own pin guard re-stamps _last_qualified — so the
+	# hysteresis history stays fresh for the whole pinned stretch (GLM r2 #1). NOTE the side effect the
+	# field's doc block spells out: the stamina system gates on is_tactical, so pinning tactical runs
+	# stamina everywhere.
+	if GameManager.config.force_tactical_pace:
+		return true
 	# Monsters: tactical iff engaged (always inside their own bubble); no hysteresis/forcing, no pass 1.
 	if entity_id < 0:
 		return _engagements.has(entity_id)
@@ -264,6 +276,14 @@ func _resolve_tactical(entity_id: int) -> bool:
 ## hysteresis the moment its puller's real source is gone. No _last_qualified entry = never qualified =
 ## explore immediately (fresh spawns / joiners).
 func _resolve_player_tactical(player_id: int) -> bool:
+	# FORCE PIN (v0.29.0 dev toggle, ships FALSE) — the second of the two guards; see _resolve_tactical for
+	# why both exist (_flush_pace_changes reaches this function directly). It STAMPS `_last_qualified` exactly
+	# as the qualified branch below does, and that is the whole point of writing it here rather than returning
+	# early somewhere cheaper: turning the pin OFF then leaves a normal hysteresis history behind, so the party
+	# rides the usual `tactical_exit_sec` ramp down to explore instead of snapping there on the next poll.
+	if GameManager.config.force_tactical_pace:
+		_last_qualified[player_id] = Time.get_ticks_msec()
+		return true
 	if _player_qualifies_tactical(player_id):
 		_last_qualified[player_id] = Time.get_ticks_msec()
 		return true

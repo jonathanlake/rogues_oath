@@ -134,7 +134,11 @@ const DEV_GAME_FIELDS := ["tactical_beat_sec",
 		# v0.28.0, Jeff's third batch — both plain host-side config writes read live at their seams, so a
 		# _GAME_FIELD_SPECS row is all either needs. whiff_pays_recovery flips §2.3.9 back to pre-v0.26.0
 		# (default) vs recovery-only-on-contact; recovery_locks_actions is the 0-stamina ACTION lockout.
-		"whiff_pays_recovery", "recovery_locks_actions"]
+		"whiff_pays_recovery", "recovery_locks_actions",
+		# v0.29.0 — a DEV PIN rather than a balance dial: everyone resolves TACTICAL while it is on, which
+		# also switches the stamina system on everywhere (stamina gates on is_tactical). Host-side only and
+		# read live by PaceReferee at each resolve, so a plain _GAME_FIELD_SPECS row is all it needs.
+		"force_tactical_pace"]
 ## v0.27.0: `shield_block_cooldown_beats` / `shadow_step_cooldown_beats` are GONE from this list because the
 ## GameConfig fields are gone — a cooldown lives on its ActiveAbility `.tres` now and is tuned with `/ab`
 ## (DEV_ABILITY_FIELDS above) or the panel's CLASSES section. A stale `/config shield_block_cooldown_beats`

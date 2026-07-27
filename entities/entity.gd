@@ -161,14 +161,28 @@ var _exhausted_fx_tween: Tween = null
 # the icon band so it can coexist with dots / "!" / sweat. Own slot — a new bark replaces.
 var _banter_label: Label = null
 var _banter_tween: Tween = null
-# SIDE RECOVERY BAR (v0.26.0): a thin vertical fill beside the body while this entity rests off a spent
-# stamina pool, driven by the host's `stamina_recovery` event (its stamped duration IS the fill time).
-# Own slot like the other cues (a re-arm replaces). NO generation token here, unlike the think/cast/stun
-# cues: this bar has no self-clearing local timer to go stale — the HOST owns when recovery ends (the
-# `exhausted` off edge), so replace-on-recall is the only lifecycle it needs. The READY BLINK on
-# completion runs on its own tween so it can't be killed by a bar teardown mid-pulse.
+# SIDE RECOVERY BAR (v0.26.0): a thin vertical fill beside the body while this entity is SPENT — one
+# slot, now shared by TWO sources (v0.29.0), which is what `_recovery_fx_source` records:
+#   "stamina" — resting off a spent stamina pool. Driven by the host's `stamina_recovery` event (its
+#               stamped duration IS the fill time) and ended by the host's `exhausted` OFF edge. HOST-
+#               OWNED LIFECYCLE, exactly as it has been since v0.26.0 — no local timer.
+#   "attack"  — the WEAPON RECOVERY window after a strike (v0.29.0, players AND monsters), started off the
+#               same `attack`/whiff event that already drives play_recovery's grey tint, from its stamped
+#               `duration_sec`. There is NO host end event for this window (the recovery tail is stamped
+#               once and never re-posted), so this source — and ONLY this source — SELF-CLEARS on a local
+#               SceneTreeTimer of exactly that duration.
+# ARBITRATION, stamina-priority: an "attack" call NO-OPS while a "stamina" bar is up (exhaustion is the
+# rarer and more important state, and its bar must not be shortened by a swing landing inside it); a
+# "stamina" call always takes the slot, replacing an attack bar. finish_recovering only ends the bar whose
+# source it names, so a self-clear timer can never cut a stamina rest short.
+# GENERATION token (`_recovery_fx_gen`), the same shape as the think/cast/stun cues and for the same reason:
+# the attack timer is fire-and-forget, so a bar armed after it must be able to invalidate it — the timer
+# captures the generation and no-ops on a mismatch. The READY BLINK on completion runs on its own tween so
+# it can't be killed by a bar teardown mid-pulse.
 var _recovery_fx: Node2D = null
 var _recovery_fx_tween: Tween = null
+var _recovery_fx_source: String = ""
+var _recovery_fx_gen: int = 0
 var _ready_blink_tween: Tween = null
 # Overhead SHIELD-BLOCK icon (v0.26.0 instants experiment): a steel-blue shield held while this entity's
 # one-shot guard is RAISED. Own slot in the icon band, mirrored across from the sweat drop — sweat (10,-46),
@@ -681,8 +695,23 @@ func play_exhausted() -> void:
 ## event on every re-arm, i.e. every time activity restarts the clock, and the bar must restart with it).
 ## A non-positive duration falls back to a static full-height bar rather than a zero-length tween, so a
 ## degenerate dial can never leave the "spent" alpha with no visible explanation.
-func play_recovering(duration_sec: float) -> void:
+##
+## v0.29.0 — SECOND SOURCE: `source` names which spent state this bar is showing, "stamina" (the v0.26.0
+## rest, the default so the two existing call sites read unchanged) or "attack" (the WEAPON RECOVERY window
+## after a strike, players and monsters alike — the same green fill answering the same question, "when can
+## it act again?"). See the `_recovery_fx` field block for the arbitration + lifecycle contract; the two
+## rules enforced HERE are (1) stamina-priority — an attack bar never displaces a rest bar — and (2) the
+## attack bar's local SELF-CLEAR timer, which no source-"stamina" call ever arms.
+func play_recovering(duration_sec: float, source: String = "stamina") -> void:
+	# STAMINA-PRIORITY (v0.29.0): a swing's recovery must not overwrite (and so visually shorten) an
+	# in-flight exhaustion rest — the rest is the rarer, more consequential read, and the host owns its
+	# end edge. The reverse is deliberately unguarded: a "stamina" call always takes the slot.
+	if source == "attack" and _recovery_fx != null and _recovery_fx_source == "stamina":
+		return
 	_clear_recovery_fx()
+	_recovery_fx_source = source
+	_recovery_fx_gen += 1
+	var gen := _recovery_fx_gen
 	var holder := Node2D.new()
 	holder.position = Vector2(14, -18)  # right of the body, vertically centred on it
 	add_child(holder)
@@ -713,11 +742,20 @@ func play_recovering(duration_sec: float) -> void:
 		_sprite.modulate.a = _RECOVERING_ALPHA
 	if duration_sec <= 0.0:
 		fill.scale = Vector2(1.0, 1.0)
-		return
-	fill.scale = Vector2(1.0, 0.0)
-	_recovery_fx_tween = create_tween()
-	_recovery_fx_tween.tween_property(fill, "scale", Vector2(1.0, 1.0), duration_sec)\
-			.set_trans(Tween.TRANS_LINEAR)
+	else:
+		fill.scale = Vector2(1.0, 0.0)
+		_recovery_fx_tween = create_tween()
+		_recovery_fx_tween.tween_property(fill, "scale", Vector2(1.0, 1.0), duration_sec)\
+				.set_trans(Tween.TRANS_LINEAR)
+	# SELF-CLEAR, "attack" ONLY (v0.29.0): the weapon-recovery window has no host end event — the tail is
+	# stamped once onto the attack event and never re-posted — so this cue owns its own ending, on the same
+	# local-timer + generation shape the cast sparkle uses (_clear_cast_fx). The generation is what makes it
+	# safe: a newer bar (another strike, or an exhaustion rest taking the slot) bumps it, and this timer then
+	# no-ops instead of blinking over the newer state. A "stamina" bar arms NOTHING here — the host's
+	# `exhausted` OFF edge remains the only thing that ends a rest.
+	if source == "attack":
+		get_tree().create_timer(maxf(duration_sec, 0.0)).timeout.connect(
+				_finish_recovering_if_current.bind(gen))
 
 
 ## End the recovery presentation (v0.26.0): drop the bar, restore the sprite's alpha, and play a brief
@@ -725,8 +763,18 @@ func play_recovering(duration_sec: float) -> void:
 ## mere absence of a cue (§2.3.4). Driven by the host's `exhausted` OFF edge (the regained point), and
 ## idempotent: safe to call on an entity that was never recovering (no bar, no blink queued twice) and
 ## from the same teardown paths that clear the sweat-drop.
-func finish_recovering() -> void:
+##
+## v0.29.0 — `source` names WHOSE ending this is ("stamina" = the host's exhausted OFF edge, the default so
+## the existing call site reads unchanged; "attack" = the weapon-recovery self-clear timer). It must match
+## the LIVE bar's source or this is a no-op: the two lifecycles share one slot, so without the match a
+## swing's timer could cut an exhaustion rest short — blink included — while the host still holds that
+## entity spent, which is precisely the "ready" lie §2.3.4 forbids.
+func finish_recovering(source: String = "stamina") -> void:
 	var was_recovering := _recovery_fx != null
+	# SOURCE GUARD (v0.29.0): only the owner of the live bar may end it. A call arriving with NO bar up falls
+	# through to the was_recovering early-out below — the pre-existing idempotent path, unchanged.
+	if was_recovering and _recovery_fx_source != source:
+		return
 	_clear_recovery_fx()
 	# Early-out BEFORE touching the alpha (GLM milestone review): this is called on every exhausted
 	# OFF edge, including ones where no bar ever existed (hard-stop mode, admin edges) — an entity
@@ -747,6 +795,8 @@ func finish_recovering() -> void:
 ## Tear down the recovery bar + its tween (v0.26.0). Idempotent; shared by play_recovering's replace
 ## and finish_recovering. Deliberately does NOT touch the sprite alpha — the two callers want
 ## different endings (replace keeps the spent look, finish restores + blinks).
+## v0.29.0: also clears the SOURCE tag, so "no bar" and "no owner" can never disagree — play_recovering
+## re-stamps it immediately after this call, finish_recovering leaves the slot genuinely unowned.
 func _clear_recovery_fx() -> void:
 	if _recovery_fx_tween != null and _recovery_fx_tween.is_valid():
 		_recovery_fx_tween.kill()
@@ -754,6 +804,17 @@ func _clear_recovery_fx() -> void:
 	if _recovery_fx != null and is_instance_valid(_recovery_fx):
 		_recovery_fx.queue_free()
 	_recovery_fx = null
+	_recovery_fx_source = ""
+
+
+## The attack bar's self-clear timeout (v0.29.0), generation-guarded exactly like _clear_cast_fx's: a
+## newer play_recovering — another strike, or an exhaustion rest claiming the slot — has already bumped
+## `_recovery_fx_gen`, so a stale timer returns without touching the newer cue. On a match it ends the bar
+## through the ordinary source-tagged path, so the ready blink is the same one a rest gets.
+func _finish_recovering_if_current(gen: int) -> void:
+	if gen != _recovery_fx_gen:
+		return
+	finish_recovering("attack")
 
 
 ## WHIFF feedback (§2.3.4) — a committed strike that resolved against empty ground. Lifted from Monster

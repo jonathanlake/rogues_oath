@@ -196,9 +196,14 @@ recovery wait rather than spinning on its back-off cadence.
   - **Status: PENDING Jeff's verdict, alongside the instants experiment** — graduate or revert with
     `recovery_locks_actions 0`.
 
-**ENVISIONED, not scheduled (Jeff, 2026-07-26).** The green recovery bar eventually replacing recovery
-*animation frames* for ALL actions — a post-swing recovery shown as the bar rather than as a held pose. That
-is where this section's pool and §2.3.9's committed windows would MERGE into one read. Not this version.
+**PARTIALLY REALIZED (v0.29.0; envisioned Jeff 2026-07-26).** The green recovery bar as the ONE "when can
+I act again" read for all actions: as of v0.29.0 every MELEE attacker — player and monster alike — shows
+the same transparent-sprite + filling-bar + ready-blink presentation over its post-strike recovery window
+(riding the host-stamped `duration_sec` already on the attack event; the weapon swing animation still
+plays alongside). Arbitration when both recoveries want the slot: the STAMINA bar wins (the rarer, more
+important state); the attack bar self-clears client-side on its stamped duration, while the stamina bar
+keeps its host-owned end edge. Still envisioned: casts and the bow draw joining the same read — that is
+where this section's pool and §2.3.9's committed windows would fully MERGE.
 
 **THE SYSTEM'S NAME IS STILL OPEN.** Jeff asked for a better one than "stamina"; Jon deferred the decision
 (2026-07-26), so it stays "stamina" in every command, field and doc until he calls it. Nothing was renamed.
@@ -212,13 +217,18 @@ announces itself twice (a distinct reject bonk on every refused step, plus the b
 whole tell is "I am still moving, but wrong". Each mode now has exactly one visual signature. HUD **pips
 appear only when max > 1** — at 1 the body's own cue is the read; raise the dial and the pips return.
 
-STICKY SWINGS (v0.24.8, **DEFAULT OFF since v0.27.0**): a melee wind-up could still catch its intended
-victim if it sidestepped but stayed adjacent to the swinger — a deliberate, toggleable bend of §2.3's
-commit-to-ground rule (`swing_catches_adjacent`). Jeff's second playtest verdict retired it by default: it
-read on screen as "attacks landing from two tiles away" (legal by the rule, illegible to the player, which
-§2.3.4 does not allow), and it degenerates for a BLINKED victim — the motion record is wiped by the
-teleport, leaving only the destination to test. Pure commit-to-ground is back: step off the tile and the
-swing whiffs. The toggle survives for A/B. The story beats drive
+STICKY SWINGS (v0.24.8; **DEFAULT ON since v0.29.0, and the two-tile bug fixed at the root**): a melee
+wind-up still catches its intended victim if it sidestepped but stayed adjacent to the swinger — a
+deliberate, toggleable bend of §2.3's commit-to-ground rule (`swing_catches_adjacent`). Jeff's v0.27.0
+verdict had retired it because it read as "attacks landing from two tiles away" — v0.29.0 traced that
+read to a REAL bug that was never the sticky catch at all: the PRIMARY hit test struck whoever's
+*occupancy* sat on the committed tile, and occupancy flips to a glide's destination at accept, so a body
+still visibly two tiles out mid-glide ate the hit (toggle on or off — reproduced headlessly pre-fix).
+The referee now requires the victim's ENTIRE motion record (occupancy + glide/pipeline from/to) within
+Chebyshev 1 of the attacker on BOTH hit branches, UNCONDITIONALLY — no path can land a hit on a body
+that could render outside the ring, and the toggle's meaning narrowed to just "the swing follows the
+mover": ON (shipped) = sidestep-within-reach is caught, backstep-to-two always whiffs; OFF = strict
+tile-only commitment. Jeff's arc rule verbatim: adjacent = hit, two tiles = never. The story beats drive
 GOBLIN BANTER (v0.24.4, expanded v0.27.0): host-picked overhead one-liners (chance-rolled, globally
 cooldown-throttled) — lines are GameConfig content, and the **nine moments** are engaged / retarget /
 last-stand / cornered (story-beat thinks), ally-died and its louder twin notable-death (a `banter_notable`

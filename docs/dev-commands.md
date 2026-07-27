@@ -53,7 +53,7 @@ from the allowlist, so it is never stale — this table is the annotated version
 | `player_regen_refills_full` / `monster_regen_refills_full` | 0\|1 | Rest completion refills the WHOLE pool at once (no trickle). |
 | `player_passive_regen_beats` / `monster_passive_regen_beats` | 0–100 | +1 stamina every N beats regardless of activity; 0 = off. |
 | `monster_think_min_beats` / `monster_think_max_beats` | 0–30 | The visible-hesitation roll range at story-beat moments. |
-| `swing_catches_adjacent` | 0\|1 | Sticky swings (v0.24.8, **default OFF since v0.27.0**) — a sidestep that stays adjacent to the swinger is still caught at resolve; 0 (the default now) = pure ground commit. Jeff retired it: it read as "attacks landing from two tiles away", and it degenerates for a blinked victim. Set to 1 to A/B it. |
+| `swing_catches_adjacent` | 0\|1 | Sticky swings (v0.24.8, **default back ON in v0.29.0**) — the swing FOLLOWS the intended victim to a tile still adjacent to the swinger; 0 = strict tile-only commitment (step off the committed tile and it whiffs). **The toggle no longer decides whether you can be hit from two tiles away.** That was the v0.27.0 retirement's actual complaint, and it came from the *primary* ground-commit branch — a victim gliding INTO the committed tile owns that tile from the moment its glide is accepted, while its body is still two tiles out. v0.29.0 fixed it at the root: the referee applies the full motion-record reach test to the primary branch too, **unconditionally**, so "never hit from two tiles away" is now referee behavior at either setting. The blink caveat stands: `teleport_entity` wipes the motion record, so with this ON a Shadow Step that lands adjacent can still be caught. |
 | `instant_abilities_enabled` | 0\|1 | **Experiment master toggle** (default ON) — Shield Block + Shadow Step (v0.26.0) **and the STRIKE cooldowns on Kick / Shield Bash** (v0.27.0), DESIGN §2.11.1. OFF = the two instants reject, the strike cooldowns are neither checked nor stamped (no refusal, no timer, no `ability_used` event) whatever `cooldown_beats` is authored, and nothing else anywhere behaves differently — i.e. the pre-v0.26 game exactly. **v0.27.1 made that literally true**: v0.27.0 shipped the strike cooldown ungated, so "they all switch off together" was a promise the code did not keep. This is the dial Jeff flips to answer the verdict question. |
 | `armor_flat_reduction_light` / `_medium` / `_heavy` | 0–99 (int) | **v0.27.0** — the FLAT half of the two-term armor rule (defaults 1 / 2 / 3), keyed to the worn body item's weight band. A physical hit on a player takes the SMALLER of the percentage result and `amount - flat`; UNARMORED is flat 0 (and 0%), so no armor never mitigates. Monster defenders keep the plain percentage path. **A mitigated hit is VISIBLE in the LOG** — the line names the amount ("… for 2 (13/20, armor absorbs 2)."), and the event carries the `armor` tag + the points `absorbed`. **v0.27.1 also tinted the popup steel-blue; v0.28.1 REMOVED that** (Jon): popup colour now carries exactly one meaning — who took the number (DESIGN §2.3.4's colour convention) — so a fifth colour answering "was it mitigated" was fighting it, and the log is the better channel anyway since it can say *how much*. DESIGN §2.3.8. |
 | `banter_earshot_tiles` | 0–60 (int) | **v0.27.1, widened v0.28.0** — one dial with **TWO consumers**, in Chebyshev tiles (default 12 ≈ a room and a bit). (1) **The REACTION gate, host-side:** the revenge/notable-death bark needs a living packmate within earshot **of the corpse**, and `help_me` needs an engaged ally within earshot **of the screamer** — engagement alone only answered "a fight is happening somewhere", which with packs in separate rooms produced cross-fight barks. (2) **The LOG gate, client-side (v0.28.0, Jon: "gate ALL barks by distance"):** every bark event ships the speaker's authoritative tile, and each peer's combat log prints the line only when its OWN player is within earshot of it (`game_log._bark_within_earshot`). So `0` does not merely silence the two reactions — it suppresses **every bark line** unless the speaker shares your tile. Three cases print past the log gate: no own player (a dead player is an earshot-less SPECTATOR and hears everything), a missing/malformed speaker tile, and a wall-sentinel tile on either side. The **overhead label is deliberately ungated** — it floats over the speaker, so distance already hides it. |
@@ -70,6 +70,13 @@ pickup) and the line "Still recovering — wait for the bar."; a monster's brain
 decisions and waits out the bar. **Movement is deliberately NOT covered** — that stays
 `player_`/`monster_exhausted_blocks_movement` (`/winded`), so all four combinations are reachable and
 testable. **A no-op while `/stamina` is off** (the predicate's first term). DESIGN §2.2.10. |
+| `force_tactical_pace` | 0\|1 | **v0.29.0 — a TESTING PIN, not a balance dial** (ships **0**). While 1,
+PaceReferee resolves **TACTICAL for everyone** — every player and every monster — ignoring bubbles, leashes,
+forcing windows and hysteresis, so you can look at fight-cadence behavior without first arranging a fight.
+**Side effect, and usually the reason you want it:** the stamina system gates on `is_tactical`, so pinning
+tactical **runs stamina everywhere** — pools spend, entities exhaust, and the recovery bar plays in an empty
+room. Read host-side at every resolve, so a flip lands on the next verdict; turning it back **off** exits
+through the normal `tactical_exit_sec` hysteresis ramp rather than snapping to explore. |
 
 **REMOVED in v0.27.0:** `shield_block_cooldown_beats` and `shadow_step_cooldown_beats`. Cooldowns live on the
 ABILITY resource now (`ActiveAbility.cooldown_beats`) — use `/ab shield_block cooldown_beats 30` or the panel's
@@ -114,6 +121,10 @@ an ability `.tres` is shared, exactly like MONSTER TYPES. GAME also gained the t
 **v0.28.0 rows.** GAME gained the two toggles from Jeff's third batch: **`whiff pays recovery`**
 (`whiff_pays_recovery`, default ON = pre-v0.26.0 §2.3.9) and **`recovery locks actions`**
 (`recovery_locks_actions`, default ON — the 0-stamina ACTION lockout, a no-op while `stamina` reads off).
+
+**v0.29.0 row.** GAME gained **`force tactical`** (`force_tactical_pace`, ships OFF) — the testing pin that
+resolves everyone to tactical pace, and therefore runs the stamina system everywhere. It sits last in the
+shared block deliberately: it is a debugging convenience, not a tuning value.
 
 ## Resolution notes
 

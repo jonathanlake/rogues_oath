@@ -1101,7 +1101,20 @@ func _handle_attack_event(event: Dictionary) -> void:
 	# Played on the attacker node on EVERY peer (whiff or landed), so the spent window matches the
 	# host's busy record on the wire — no new sync, same event the whole party already receives.
 	if attacker != null:
-		attacker.play_recovery(float(data.get("duration_sec", 0.0)))
+		var recovery_sec := float(data.get("duration_sec", 0.0))
+		attacker.play_recovery(recovery_sec)
+		# GREEN RECOVERY BAR + READY BLINK on the weapon-recovery window too (v0.29.0, Jon): the same
+		# side bar an exhaustion rest already uses, now answering the same question for the SPENT window
+		# after a strike — "when can this thing swing again?" — on players AND monsters, off this one
+		# event every peer already receives (no new sync). It rides EXACTLY where play_recovery rides:
+		# same handler, same stamped duration, so hits and whiffs both get it and a 0-duration event gets
+		# nothing — an AoO free attack (always 0) and a whiff under `whiff_pays_recovery` off (0 by the
+		# host's own stamp) correctly show no bar, because no recovery is owed. The grey tint and the rig
+		# swing are untouched and play alongside; the bar is the only cue that says HOW LONG is left.
+		# Source-tagged "attack": if this entity is mid-EXHAUSTION-rest the call no-ops (Entity's
+		# stamina-priority arbitration) rather than shortening the rarer, host-owned bar.
+		if recovery_sec > 0.0:
+			attacker.play_recovering(recovery_sec, "attack")
 	# Weapon rig swing (M3.7 → any Entity, v0.9.3, DESIGN §2.3.7): played on EVERY peer for a
 	# weapon-bearing attacker of EITHER kind. This tail runs for BOTH the landed and whiff branches
 	# above, so a whiffed weapon swing animates too (the whiff event now carries the weapon field).
@@ -1470,7 +1483,10 @@ func _handle_stamina_recovery_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
 	var ent := _node_for_peer(int(data.get("entity_id", 0))) as Entity
 	if ent != null:
-		ent.play_recovering(float(data.get("duration_sec", 0.0)))
+		# Source-tagged "stamina" EXPLICITLY (v0.29.0), even though it is the default: the bar's slot is
+		# shared with the weapon-recovery cue now, and this call site is the one that must always WIN the
+		# arbitration — spelling the owner out here is what makes that readable at the call, not two files away.
+		ent.play_recovering(float(data.get("duration_sec", 0.0)), "stamina")
 
 
 ## All peers: the stamina 0-EDGE (v0.24.3; split by mode v0.26.0; INVERTED v0.27.0).
@@ -1492,7 +1508,10 @@ func _handle_exhausted_event(event: Dictionary) -> void:
 			ent.play_exhausted()
 	else:
 		ent.hide_exhausted()
-		ent.finish_recovering()
+		# "stamina" EXPLICITLY (v0.29.0): the host's OFF edge ends the REST bar only. If this entity happens
+		# to be showing a weapon-recovery bar instead (its rest already finished, then it swung), this call
+		# no-ops and that bar keeps its own self-clear — the blink still fires, just for the right window.
+		ent.finish_recovering("stamina")
 
 
 func _handle_status_applied_event(event: Dictionary) -> void:
@@ -2715,15 +2734,30 @@ func peer_ready(p_name: String, client_version: String) -> void:
 		# carries the scene/slot default, so it's skipped by the entity_id guard.
 		#
 		# FILTER (v0.10.1): only send a field that DIFFERS from the joiner's own seed for that player — the
-		# joiner already seeds each existing player's weapon from the scene default (longsword) and class from
-		# its slot default (class_roster[spawn_index % size]) in that player's _ready, so a default value
-		# needs no wire traffic. A /class'd wizard (its class differs from its slot default) still syncs.
+		# joiner already seeds each existing player's weapon and class from SHARED CONFIG in that player's
+		# _ready (class from its slot default, class_roster[spawn_index % size]; weapon from that class's
+		# roster, else the scene default — v0.29.0), so a seed-equal value needs no wire traffic. A /class'd
+		# wizard (its class differs from its slot default) still syncs.
 		var default_weapon := _scene_default_weapon_name()
 		var roster := GameManager.config.class_roster
 		for existing in _players.get_children():
 			if not (existing is Player) or existing.entity_id == peer_id:
 				continue
-			if existing.equipped_weapon != null and existing.equipped_weapon.display_name != default_weapon:
+			# WEAPON SEED, v0.29.0: no longer always the scene default. Player._ready now prefers the
+			# SLOT-DEFAULT class's `weapon_roster[0]` when that class authors a roster (rogue → dagger),
+			# falling back to player.tscn's weapon otherwise — so the filter must compare against THAT, not
+			# against the scene weapon. Comparing against the scene weapon would silently mis-filter the exact
+			# case the rogue's new loadout creates: a rogue who Tab-swapped to the LONGSWORD holds a weapon
+			# that happens to EQUAL the scene default, the sync would be skipped, and the joiner would render
+			# that rogue holding a dagger for the rest of the session. Derived from the same shared config the
+			# joiner reads, host-side — never from anything the joiner told us.
+			var seed_weapon := default_weapon
+			if not roster.is_empty():
+				var slot_class: PlayerClass = roster[existing.spawn_index % roster.size()]
+				if slot_class != null and not slot_class.weapon_roster.is_empty() \
+						and slot_class.weapon_roster[0] != null:
+					seed_weapon = slot_class.weapon_roster[0].display_name
+			if existing.equipped_weapon != null and existing.equipped_weapon.display_name != seed_weapon:
 				sync_player_field.rpc_id(peer_id, existing.entity_id, "weapon", existing.equipped_weapon.display_name)
 			if existing.player_class != null and not roster.is_empty():
 				var slot_default: String = roster[existing.spawn_index % roster.size()].display_name

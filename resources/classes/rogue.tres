@@ -1,10 +1,13 @@
-[gd_resource type="Resource" script_class="PlayerClass" load_steps=6 format=3]
+[gd_resource type="Resource" script_class="PlayerClass" load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://resources/player_class.gd" id="1_class"]
 [ext_resource type="Resource" path="res://resources/passives/backstab.tres" id="2_backstab"]
 [ext_resource type="Resource" path="res://resources/abilities/kick.tres" id="3_kick"]
 [ext_resource type="Resource" path="res://resources/abilities/shadow_step.tres" id="4_step"]
 [ext_resource type="Resource" path="res://resources/items/leather_armor.tres" id="5_leather"]
+[ext_resource type="Resource" uid="uid://c2yq6v8kh4mxr" path="res://resources/weapons/dagger.tres" id="6_dagger"]
+[ext_resource type="Resource" uid="uid://b7lqx8n0swrd1" path="res://resources/weapons/longsword.tres" id="7_longsword"]
+[ext_resource type="Script" uid="uid://guqoq14bk8tr" path="res://resources/weapon_type.gd" id="8_weapon"]
 
 [resource]
 script = ExtResource("1_class")
@@ -13,3 +16,4 @@ atlas_coords = Vector2i(3, 0)
 passives = Array[PassiveAbility]([ExtResource("2_backstab")])
 active_abilities = Array[ActiveAbility]([ExtResource("3_kick"), ExtResource("4_step")])
 starting_body_armor = ExtResource("5_leather")
+weapon_roster = Array[ExtResource("8_weapon")]([ExtResource("6_dagger"), ExtResource("7_longsword")])

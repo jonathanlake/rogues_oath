@@ -10,6 +10,7 @@ display_name = "Goblin Brute"
 atlas_coords = Vector2i(7, 0)
 max_hp = 28
 weapon = ExtResource("2_club")
+bonus_damage = 2
 bonus_windup_beats = 1.0
 bonus_recovery_beats = 1.0
 glide_speed = ExtResource("1_lumb")

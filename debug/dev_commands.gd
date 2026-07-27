@@ -69,6 +69,9 @@ const _GAME_FIELD_SPECS := {
 	#                          a no-op while stamina_enabled is off. Read at each action validator.
 	"whiff_pays_recovery": { "bool": true },
 	"recovery_locks_actions": { "bool": true },
+	# v0.29.0 DEV PIN: everyone (players AND monsters) resolves TACTICAL while on — and stamina therefore
+	# runs everywhere, since it gates on is_tactical. Host-side write, read live at each PaceReferee resolve.
+	"force_tactical_pace": { "bool": true },
 }
 
 # The Players container + combat/move referees, handed in by Main via activate() on the HOST only.

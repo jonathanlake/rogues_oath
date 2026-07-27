@@ -9,6 +9,33 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.29.0 (2026-07-26) — JEFF'S FOURTH BATCH, PART ONE: THE TWO-TILE HIT IS DEAD, AND YOU CAN SEE
+  YOUR RECOVERY.** Five changes; the aggro/"whole room fights" rework is part two (v0.30.0).
+  **YOU CAN NO LONGER BE HIT FROM TWO TILES AWAY — AND STICKY SWINGS ARE BACK ON.** Jon reported the
+  old "hit from two tiles away" problem was still alive, and he was right: it was never the sticky-swing
+  toggle at all. The referee's main hit check struck whoever *owned* the target tile at strike time —
+  and the game hands you a tile the moment your step toward it is accepted, so a body still visibly two
+  tiles out mid-step could eat a swing. Reproduced in a scripted run, then fixed at the root: a swing
+  now lands only if every trace of the victim's movement is within one tile of the attacker, no matter
+  what any toggle says. With the real bug gone, **sticky swings ship ON** — exactly Jeff's rule: if you
+  dodge but stay within one tile of the swinger you are still in the arc and get hit; if you backstep to
+  two tiles the swing always whiffs. A seven-scenario scripted matrix (sidesteps, diagonal starts,
+  backsteps, mid-glide arrivals, toggle on AND off) verified every case.
+  **THE GREEN RECOVERY BAR NOW SHOWS ON EVERY MELEE SWING.** The transparent-body + filling-green-bar +
+  ready-blink presentation that marked movement recovery is now the universal "when can I act again"
+  tell: every attacker — you AND the goblins — shows it over the recovery window after a swing, hit or
+  miss, with the weapon animation still playing alongside. Watch a goblin's bar to know when it's safe
+  to step in; watch yours to know when you can swing again. (If the movement-exhaustion bar and the
+  swing bar ever compete, exhaustion wins — it's the rarer, more important warning.)
+  **THE ROGUE STARTS WITH THE DAGGER** and Tab-swaps to the longsword — the class finally leads with
+  its own weapon. Late joiners see everyone's real weapon correctly (fixing a sync gap this change
+  exposed). Other classes are untouched.
+  **THE GOBLIN BRUTE HITS HARDER: +2 innate damage on top of its club** (club 1-4 → brute swings 3-6,
+  before armor). The anvil now dents what it lands on.
+  **NEW TESTING SWITCH: `force tactical` (debug panel / `/config force_tactical_pace 1`)** pins the
+  whole session in tactical pace for combat testing — no more chasing the pace bubble to tune a fight.
+  Note it also runs the stamina system everywhere while on, since stamina lives in tactical pace.
+
 - **v0.28.1 (2026-07-26) — THE CLASS-CHANGE BAG FIX, AND WHAT THE DAMAGE NUMBERS' COLOURS MEAN.**
   Two small things, both from Jeff's v0.28.0 pass.
   **CHANGING CLASS NO LONGER FILLS YOUR BAG.** Jeff: *"When you change class it unequips the armor it's

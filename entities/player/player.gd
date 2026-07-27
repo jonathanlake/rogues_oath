@@ -102,10 +102,27 @@ func _ready() -> void:
 	_name_label.text = display_name
 	set_hp_display(max_hp, max_hp)
 
-	# Seed the weapon from the scene-assigned weapon (longsword by default) on every peer, so a fresh spawn /
-	# F5 respawn shows the scene-default weapon; a non-default weapon arrives later via a swap event or the
-	# late-join sync. set_weapon (not the raw rig call) so the local sampler's ranged flag is seeded too.
-	set_weapon(equipped_weapon)
+	# Seed the STARTING WEAPON on every peer, so a fresh spawn / F5 respawn shows the right weapon with no
+	# wire traffic; a later change arrives via a swap event or the late-join sync. set_weapon (not the raw
+	# rig call) so the local sampler's ranged flag is seeded too.
+	#
+	# v0.29.0 — the CLASS's own roster wins (Jon: "a rogue should start on the dagger"). The class seeded
+	# above is derived from shared config on every peer (class_roster[slot]), so roster[0] is the same
+	# deterministic answer everywhere — the identical no-traffic shape the class + body-armor seeds use, and
+	# the same "first entry of the loadout" rule /class already applies on a live class change. Deliberately
+	# ONE seed site (not a second set_weapon call below): a class with no roster of its own — four of the six
+	# — keeps the scene-assigned weapon (longsword, from player.tscn), which is what the late-join sync filter
+	# treats as the default. The GLOBAL GameConfig.weapon_roster is deliberately NOT consulted here: it is the
+	# Tab-cycle fallback for a roster-less class, not a spawn loadout, and reading it would silently re-seed
+	# every class off a dial meant for cycling.
+	# roster[0] null-guarded (GLM r2): a .tres authored with a null first entry falls back to the scene
+	# default HERE too, matching the late-join filter's guard in main.gd — without it the seed and the
+	# filter would disagree about what such a class starts holding (bare hands vs longsword).
+	if player_class != null and not player_class.weapon_roster.is_empty() \
+			and player_class.weapon_roster[0] != null:
+		set_weapon(player_class.weapon_roster[0])
+	else:
+		set_weapon(equipped_weapon)
 
 	# MoveInput samples only on the local player's node. Every peer instantiates the child (uniform
 	# node graph) but only ours is enabled.

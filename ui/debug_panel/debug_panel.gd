@@ -73,6 +73,9 @@ const _SHARED_DIALS := [
 	# no-op while the stamina button above reads off).
 	{ "label": "whiff pays recovery", "field": "whiff_pays_recovery", "bool": true },
 	{ "label": "recovery locks actions", "field": "recovery_locks_actions", "bool": true },
+	# v0.29.0 — the TESTING PIN, deliberately last in the group so it doesn't read as a balance dial:
+	# everyone resolves tactical while it is on, which also runs the stamina system everywhere.
+	{ "label": "force tactical", "field": "force_tactical_pace", "bool": true },
 ]
 
 const _WEAPON_FIELDS := ["damage_min", "damage_max", "windup_beats", "recovery_beats"]

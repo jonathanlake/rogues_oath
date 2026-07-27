@@ -68,6 +68,21 @@ extends Resource
 ## tactical). Read HOST-side by PaceReferee.
 @export var player_tactical_radius_tiles: int = 3
 
+## FORCE TACTICAL PACE (v0.29.0) — a DEV/TESTING PIN, not a design dial. While true, PaceReferee resolves
+## TACTICAL for EVERYONE — every player and every monster — regardless of bubbles, leashes, forcing windows
+## or hysteresis, so a fight cadence can be examined without first arranging a fight. Positive polarity and
+## SHIPS FALSE: off, every pace verdict is exactly the §2.8.7 machinery it has always been.
+##
+## SIDE EFFECT, stated out loud because it is the reason to reach for this: the STAMINA system gates on
+## `is_tactical`, so pinning tactical also switches stamina on EVERYWHERE — pools spend, exhaustion and its
+## recovery bar happen in an empty room. That is usually the point (it is how you look at the recovery
+## presentation without a goblin), but it means this pin changes more than the beat length.
+##
+## Read HOST-side and LIVE at every resolve (the referee is host-only), so a `/config force_tactical_pace 1`
+## or a panel toggle lands on the very next verdict — and flipping it back OFF exits through the normal
+## `tactical_exit_sec` hysteresis ramp rather than snapping to explore (see PaceReferee's two guards).
+@export var force_tactical_pace: bool = false
+
 ## Rest beats appended to every movement step's committed window (DESIGN §2.8/§2.2). A step is now
 ## 1 beat TOTAL — this defaults to 0.0. Kept as a reversible, now-ANSWERED experiment: the v0.7.0
 ## committed rest (go-stop-go) read as lag in feel-testing, so the pause moved out of the action
@@ -144,22 +159,29 @@ extends Resource
 @export var monster_exhausted_step_beats: float = 5.0
 
 ## STICKY SWING (v0.24.8 experiment, Jon: "swings still land if the target moved but is still
-## directly around the swinger"): when a melee wind-up resolves and its committed tile is empty,
-## the INTENDED victim is still hit if it merely sidestepped — alive, hostile, and currently
-## Chebyshev-adjacent to the attacker. Escaping beyond adjacency still dodges; ground-aimed
-## windups keep pure tile commitment; symmetric for players and monsters. This deliberately
+## directly around the swinger"): when a melee wind-up resolves and its committed tile holds no
+## reachable hostile, the INTENDED victim is still hit if it merely sidestepped — alive, hostile, and
+## its whole motion record Chebyshev-adjacent to the attacker. Escaping beyond adjacency still dodges;
+## ground-aimed windups keep pure tile commitment; symmetric for players and monsters. This deliberately
 ## bends "commits to ground, not to a name" (DESIGN §2.3) INSIDE the §2.2.10 experiment — the
-## kiting-thread fix in its adjacency form. `/config swing_catches_adjacent 0` restores pure
-## ground commitment live.
+## kiting-thread fix in its adjacency form.
 ##
-## RETIRED-BY-DEFAULT (v0.27.0, Jeff's second playtest verdict): default true → **false**. Two reasons,
-## both his report. (1) It read as "attacks landing from two tiles away" — the catch is legal by the rule
-## but illegible on screen, which §2.3.4 does not allow. (2) It degenerates for a BLINKED victim:
-## motion_tiles_of returns only the blink DESTINATION once teleport_entity has wiped the motion record,
-## so a Shadow Step out of a swing could still be caught by it. Pure commit-to-ground restores the
-## legible rule — step off the tile and the swing whiffs. The toggle SURVIVES for A/B (`/config
-## swing_catches_adjacent 1`), so this is a default flip, not a removal.
-@export var swing_catches_adjacent: bool = false
+## RESTORED AS THE DEFAULT (v0.29.0): **false → true**, and the toggle now means strictly LESS than it
+## used to. Its v0.27.0 retirement was a workaround for a bug that lived somewhere else. Jeff's report
+## was "attacks landing from two tiles away" (illegible, §2.3.4) — but that came out of the PRIMARY,
+## always-on ground-commit branch, where a victim GLIDING INTO the committed tile owned it from the
+## moment the glide was accepted while its body was still two tiles out. Turning this dial off never
+## fixed that; it only removed the follow-the-mover catch that was never the cause. v0.29.0 fixes it at
+## the root instead: CombatReferee._resolve_windup now applies the full motion-record reach test to the
+## PRIMARY branch too, unconditionally, so **"never hit from two tiles away" is referee behavior, not a
+## setting** (see _motion_within_reach). With that guarantee independent of this flag, the flag governs
+## exactly one thing:
+##   TRUE  (default) — the swing FOLLOWS the intended victim to a tile still adjacent to the swinger.
+##   FALSE           — strict tile-only commitment: step off the committed tile and the swing whiffs.
+## The v0.27.0 blink caveat stands and is unchanged: teleport_entity wipes the motion record, so a
+## Shadow-Stepped victim's record is just its DESTINATION — with this on, a blink that lands adjacent can
+## still be caught. `/config swing_catches_adjacent 0` restores pure ground commitment live.
+@export var swing_catches_adjacent: bool = true
 
 ## WHIFF PAYS RECOVERY (v0.28.0, Jeff's third batch) — DESIGN §2.3.9, now a toggle.
 ## TRUE (the default, and the PRE-v0.26.0 behavior Jeff asked to have back): a whiffed swing / ability /
