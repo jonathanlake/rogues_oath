@@ -9,6 +9,29 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.31.0 (2026-07-27) — THE QUICK SIX: QUIETER BONKS, NO X-RAY GOBLINS, A READABLE PANEL, AND A
+  REAL BOW.** Six small asks from the v0.30.0 play session, shipped fast on Jon's call (one plan
+  review, no scripted test matrix — live testing is the test).
+  **YOU CAN MUTE THE "CAN'T MOVE" BONK.** Mash the keys while rooted and the reject sound spams —
+  now there's a checkbox for it: debug panel → **LOCAL (this machine) → mute reject bonk**. It's
+  per-machine (muting yourself doesn't mute your teammate), and the red flash + shake stay so a
+  rejection is never silent (§2.3.4) — it resets each launch (no settings file exists yet).
+  **GOBLINS NO LONGER NOTICE YOU THROUGH WALLS.** Aggro acquisition now uses the same sound-travel
+  rule as the v0.30.0 shout: a goblin only acquires you if you're reachable within its aggro range
+  through open floor. Getting SHOT still aggros from anywhere (no free sniping), and open-room
+  behavior is unchanged.
+  **THE DEBUG PANEL IS BIGGER** — wider dock, font up ~20% across every row.
+  **ARROWS FLY THEIR FULL RANGE.** The click aims the lane (still must be within range 7); the
+  arrow no longer stops on the clicked tile — it continues along that line to max range, stopping
+  only at the first body or wall. Yes, that means you can hit an enemy standing BEHIND the one you
+  aimed past — and log lines describe where the arrow actually ended.
+  **BOW SHOTS SHOW THE GREEN RECOVERY BAR.** The rooted window was always there (the system worked)
+  — but no event told your screen about it, so the bar never appeared. The loose now carries the
+  recovery seconds: draw plays its animation, then the bar fills over the after-shot tail, hit or
+  miss — same read as melee.
+  **BOW RETUNED: windup 3 / recovery 4** (the longsword's numbers, for now — Jon's balance call).
+  Total rooted window per shot goes 3 → 7 beats, which the bar now makes visible.
+
 - **v0.30.0 (2026-07-26) — JEFF'S FOURTH BATCH, PART TWO: PULL ONE GOBLIN AND THE ROOM ANSWERS — BUT
   WALLS CONTAIN IT.** The "whole room fights us" rework, built the way Jon and Jeff chose it: emergence
   over pack ids.

@@ -254,11 +254,17 @@ func commit_in_place(duration_sec: float) -> void:
 ## "the host refused" is never confusable with the commit ack or with a silent no-op. Called on
 ## the sender's own player. A bonk only ever fires when NOT gliding (you were refused), but we
 ## still guard the shake against an active glide tween so the two can't fight over position.
+##
+## LOCAL MUTE (v0.31.0): GameManager.mute_reject_sfx gates the AUDIO HALF ONLY. The flash, the shake
+## and the sampler relay stay unconditional — §2.3.4's rule is that a rejection is never confusable
+## with a silent no-op, so the visual tell must survive the mute. Process-local presentation: the
+## flag is never networked and never adjudicated on.
 func play_bonk() -> void:
 	_flash(_HURT_FLASH_COLOR)
 	if not (_glide_tween != null and _glide_tween.is_valid()):
 		_shake()
-	_bonk_audio.play()
+	if not GameManager.mute_reject_sfx:
+		_bonk_audio.play()
 	# Relay the reject to our own sampler (local player only) so it enters the retry cooldown.
 	if _move_input.enabled:
 		_move_input.on_rejected()

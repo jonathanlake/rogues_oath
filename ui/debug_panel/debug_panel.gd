@@ -13,6 +13,14 @@ extends CanvasLayer
 ## refresh / after changes) — never from the local config, which is stale on clients for
 ## host-side-written g-fields.
 ##
+## THE ONE CARVE-OUT (v0.31.0): the "LOCAL (this machine)" section at the top. Those widgets are NOT
+## host state and have no dev_command to submit — they are per-machine PRESENTATION preferences
+## (today: mute the reject bonk) that live as plain GameManager vars, so they flip that var DIRECTLY.
+## The invariant above still holds for everything that touches the game: nothing in the LOCAL section
+## may ever read or write a value any referee adjudicates from. Its widgets are deliberately kept OUT
+## of _game_editors (and every other editor registry), so _apply_snapshot can never repaint them from
+## host data — a snapshot has nothing to say about this machine's speakers.
+##
 ## Input safety: no full-rect invisible controls (the v0.7.1 click-eater lesson) — only the
 ## right-side Panel exists and it STOPs mouse; hidden Controls receive no input in Godot 4.
 ## Typing in a SpinBox is already movement-safe: its inner LineEdit satisfies MoveInput's
@@ -101,6 +109,9 @@ var _painting: bool = false
 var _snapshot: Dictionary = {}
 
 var _root: PanelContainer = null
+# LOCAL section (v0.31.0) — the one non-intent widget set; see the carve-out in the header block.
+var _local_box: VBoxContainer = null
+var _mute_bonk_check: CheckBox = null
 var _game_box: VBoxContainer = null
 var _weapons_box: VBoxContainer = null
 var _types_box: VBoxContainer = null
@@ -151,6 +162,7 @@ func _input(event: InputEvent) -> void:
 		return
 	visible = not visible
 	if visible:
+		_sync_local_widgets()
 		_request_snapshot()
 	else:
 		var focus := _root.get_viewport().gui_get_focus_owner() if _root != null else null
@@ -183,10 +195,13 @@ func _build() -> void:
 	# Panel-wide small type: the PROJECT theme authors game-sized fonts PER CONTROL TYPE (fine for
 	# the HUD, huge for an inspector), and explicit per-type sizes beat a child theme's
 	# default_font_size (screenshot bugs #2/#3) — so this theme overrides font_size per type too.
+	# 11 → 13 in v0.31.0 (Jon: the inspector was legible but squint-y). Every per-control override
+	# further down moved by the same +2, and the dock widened to -510 to keep the rows' minimum sizes
+	# inside the rect — the two must move TOGETHER or the bleed-left bug returns (see _sync_width).
 	var panel_theme := Theme.new()
-	panel_theme.default_font_size = 11
+	panel_theme.default_font_size = 13
 	for control_type in ["Label", "Button", "CheckBox", "LineEdit", "OptionButton", "SpinBox"]:
-		panel_theme.set_font_size("font_size", control_type, 11)
+		panel_theme.set_font_size("font_size", control_type, 13)
 	_root.theme = panel_theme
 	add_child(_root)
 	# CANVAS-PX vs SCREEN-PX (the v0.16.0 windowed-HUD lesson): offsets are canvas units, which the
@@ -199,7 +214,7 @@ func _build() -> void:
 	_root.add_child(outer)
 	var title := Label.new()
 	title.text = "DEBUG TUNING  (` to close)"
-	title.add_theme_font_size_override("font_size", 12)
+	title.add_theme_font_size_override("font_size", 14)
 	outer.add_child(title)
 	var toggles := HBoxContainer.new()
 	toggles.add_theme_constant_override("separation", 6)
@@ -217,7 +232,7 @@ func _build() -> void:
 	refresh.pressed.connect(_request_snapshot)
 	toggles.add_child(refresh)
 	_status_label = Label.new()
-	_status_label.add_theme_font_size_override("font_size", 9)
+	_status_label.add_theme_font_size_override("font_size", 11)
 	_status_label.text = "press refresh / ` reopen for current values"
 	outer.add_child(_status_label)
 	var scroll := ScrollContainer.new()
@@ -228,6 +243,7 @@ func _build() -> void:
 	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body.add_theme_constant_override("separation", 4)
 	scroll.add_child(body)
+	_local_box = _make_section(body, "LOCAL (this machine)")
 	_game_box = _make_section(body, "GAME / STAMINA (players | monsters)")
 	_weapons_box = _make_section(body, "WEAPONS")
 	# v0.27.0: abilities became tunable (cooldowns, retuned stuns/damage), so they get a section. The heading
@@ -236,14 +252,20 @@ func _build() -> void:
 	_classes_box = _make_section(body, "CLASSES (ability .tres — all wielders)")
 	_types_box = _make_section(body, "MONSTER TYPES (shared .tres — all instances)")
 	_instances_box = _make_section(body, "LIVE INSTANCES (this one monster only)")
+	_build_local_rows()
 	_build_game_rows()
 	# Weapons / types / instances build on the first snapshot (their sets are data-driven).
 
 
-## Keep the dock ~430 SCREEN pixels wide whatever the window's content scale factor is: the rect
-## stays a fixed 422 canvas units (so the rows' minimum sizes always fit — an offset-shrunk rect
+## Keep the dock ~510 SCREEN pixels wide whatever the window's content scale factor is: the rect
+## stays a fixed 502 canvas units (so the rows' minimum sizes always fit — an offset-shrunk rect
 ## loses to min-size and bleeds left, the first screenshot's bug), and the ROOT is counter-scaled
 ## by 1/factor, pivoted top-right so the shrink hugs the dock edge. Net visual width = rect px.
+##
+## THE TWO NUMBERS MOVE TOGETHER: pivot_offset.x is always (dock width − 8), the rect width left
+## after the stylebox's 8-unit left content margin. v0.31.0 grew both (430/422 → 510/502) to pay for
+## the +2 font bump — a wider font makes every row's MINIMUM wider, and min-size beating the rect is
+## exactly what produces the bleed. Widen here rather than trimming a row.
 func _sync_width() -> void:
 	if _root == null:
 		return
@@ -252,9 +274,9 @@ func _sync_width() -> void:
 	# (reading content_scale_factor alone misses the stretch half; screenshot bug #4).
 	var canvas_width: float = maxf(get_viewport().get_visible_rect().size.x, 1.0)
 	var scale_factor: float = maxf(float(get_window().size.x) / canvas_width, 0.01)
-	_root.offset_left = -430.0
+	_root.offset_left = -510.0
 	_root.scale = Vector2(1.0 / scale_factor, 1.0 / scale_factor)
-	_root.pivot_offset = Vector2(422.0, 0.0)
+	_root.pivot_offset = Vector2(502.0, 0.0)
 
 
 ## A folding section: header button toggles the content VBox. Returns the content box.
@@ -262,7 +284,7 @@ func _make_section(parent: VBoxContainer, heading: String) -> VBoxContainer:
 	var header := Button.new()
 	header.text = "▼ " + heading
 	header.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	header.add_theme_font_size_override("font_size", 10)
+	header.add_theme_font_size_override("font_size", 12)
 	parent.add_child(header)
 	var content_box := VBoxContainer.new()
 	content_box.add_theme_constant_override("separation", 2)
@@ -271,6 +293,31 @@ func _make_section(parent: VBoxContainer, heading: String) -> VBoxContainer:
 		content_box.visible = not content_box.visible
 		header.text = ("▼ " if content_box.visible else "▶ ") + heading)
 	return content_box
+
+
+## LOCAL section rows (v0.31.0) — THE architecture carve-out (see the header block). These widgets
+## flip a GameManager var DIRECTLY: no _queue, no _submit, no dev_command intent, and deliberately NOT
+## registered in _game_editors, so no snapshot repaint can ever reach them. That is correct precisely
+## because none of this is host state — it is what THIS machine does with its own speakers, and the
+## host has no opinion about it. Add a row here ONLY for a value no referee ever reads.
+func _build_local_rows() -> void:
+	var row := HBoxContainer.new()
+	_mute_bonk_check = CheckBox.new()
+	_mute_bonk_check.text = "mute reject bonk"
+	# Direct local write — the deliberate exception. The bonk's red flash + shake are NOT muted
+	# (Player.play_bonk gates only the audio line): §2.3.4 keeps the visual half of the rejection.
+	_mute_bonk_check.toggled.connect(func(on: bool): GameManager.mute_reject_sfx = on)
+	row.add_child(_mute_bonk_check)
+	_local_box.add_child(row)
+	_sync_local_widgets()
+
+
+## Paint the LOCAL widgets from their GameManager vars — on build and on every panel open, so the box
+## always shows this machine's real state even if something else ever flips the var. no_signal so the
+## repaint can't echo back into the setter (the _painting discipline the host rows use, in miniature).
+func _sync_local_widgets() -> void:
+	if _mute_bonk_check != null:
+		_mute_bonk_check.set_pressed_no_signal(GameManager.mute_reject_sfx)
 
 
 func _build_game_rows() -> void:
@@ -321,7 +368,7 @@ func _label(text: String, width: int) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.custom_minimum_size = Vector2(width, 0)
-	label.add_theme_font_size_override("font_size", 10)
+	label.add_theme_font_size_override("font_size", 12)
 	label.clip_text = true
 	return label
 

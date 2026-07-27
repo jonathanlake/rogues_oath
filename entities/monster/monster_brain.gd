@@ -55,7 +55,8 @@ var _active: bool = false
 # diagonal multiplier to mirror the referee's stamp (see the busy gate in _think).
 var _last_step_was_diagonal: bool = false
 # Aggro latch (DESIGN §2.8, aggro persistence). Set true the first think the nearest player is
-# within aggro_range_tiles; while latched AND monster_type.aggro_persists, the range check is
+# within aggro_range_tiles AND reachable through open floor (v0.31.0 wall-bounded acquire — see
+# _should_chase); while latched AND monster_type.aggro_persists, the range check is
 # skipped so the chase never leash-drops. With aggro_persists false it tracks current in-range
 # state (legacy leash). Unused by unlimited-range monsters (aggro_range_tiles <= 0 skip the gate).
 var _aggroed: bool = false
@@ -490,7 +491,9 @@ func _try_pipeline_next_step() -> bool:
 	var nearest := _nearest_target(my_tile, targets)
 	var nearest_dist := maxi(absi(nearest.x - my_tile.x), absi(nearest.y - my_tile.y))
 	# Same acquire/leash decision the idle branch makes — never pipeline a chase we wouldn't start.
-	if not _should_chase(nearest_dist):
+	# ONE shared decision, so the v0.31.0 wall-bounded acquire applies here identically (my_tile is our
+	# post-step tile, the same vantage the pipelined step would be taken from).
+	if not _should_chase(my_tile, nearest, nearest_dist):
 		return false
 	# Movement only: adjacency is the attack think's job, fired by the backstop next boundary.
 	if nearest_dist <= 1:
@@ -956,10 +959,30 @@ func _personality_name() -> String:
 ## (default) range no longer matters once latched — the chase never leash-drops, following across
 ## rooms. With aggro_persists false the legacy LEASH returns: _aggroed tracks current in-range state
 ## and the chase drops the instant the target breaks range. Returns whether to engage.
-func _should_chase(nearest_dist: int) -> bool:
+##
+## WALL-BOUNDED ACQUISITION (v0.31.0): on the ACQUIRE EDGE ONLY — not yet latched, and inside the
+## Chebyshev range — the target must also be reachable through OPEN FLOOR, i.e. present in
+## WorldGrid.tiles_within_travel(my_tile, aggro_range_tiles). Same SOUND MODEL as the v0.30.0 pack
+## rally, and the same BFS: a monster notices someone it could walk to, not someone standing on the
+## far side of a wall two tiles away. In open floor travel distance EQUALS Chebyshev, so open-room
+## behaviour is bit-for-bit what it was; the fill only ever takes tiles away.
+##
+## THE BFS RUNS ON THAT EDGE ALONE. An already-latched monster short-circuits on _aggroed (a chase
+## across rooms is exactly what aggro_persists promises, and re-testing reach would silently
+## reintroduce a leash); aggro_range_tiles <= 0 (unlimited) still skips the whole gate before we get
+## here. So the cost is one capped flood-fill per acquisition, not per think.
+##
+## DELIBERATELY UNTOUCHED: `notify_attacked` still aggros regardless of walls or range — being shot
+## wakes you up wherever the arrow came from (no free sniping, monster.gd:114). Flee and banter
+## ranges keep their pure-Chebyshev reads; only ACQUISITION learned about walls.
+func _should_chase(my_tile: Vector2i, nearest_tile: Vector2i, nearest_dist: int) -> bool:
 	if _monster_type == null or _monster_type.aggro_range_tiles <= 0:
 		return true
 	if nearest_dist <= _monster_type.aggro_range_tiles:
+		if _aggroed:
+			return true                     # already latched: no re-test, no BFS
+		if not WorldGrid.tiles_within_travel(my_tile, _monster_type.aggro_range_tiles).has(nearest_tile):
+			return _aggroed                 # in Chebyshev range but behind a wall — keep idling
 		_aggroed = true
 	elif not _monster_type.aggro_persists:
 		_aggroed = false
@@ -983,7 +1006,7 @@ func _update_engagement(my_tile: Vector2i, targets: Array) -> bool:
 	# the rally fires on that LATCHING EDGE only — this runs every think (and the busy pipeline calls
 	# _should_chase too), so an unguarded fan-out would re-rally the whole bubble several times a second.
 	var was_aggroed := _aggroed
-	var chasing := _should_chase(nearest_dist)
+	var chasing := _should_chase(my_tile, nearest, nearest_dist)
 	if _aggroed and not was_aggroed:
 		_rally_pack()
 	# The leash target is the id occupying that nearest tile (authoritative occupancy, not a rendered

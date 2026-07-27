@@ -243,6 +243,16 @@ var tactical_beat_sec: float = config.tactical_beat_sec
 ## Defaults false (explore), the correct pre-fight state on every peer before any flip.
 var local_pace_is_tactical: bool = false
 
+## PROCESS-LOCAL presentation toggle (v0.31.0, Jon): silence the REJECT "bonk" on THIS machine only.
+## Flipped straight from the debug panel's LOCAL section — it is not host state, so it is never an
+## intent, never networked, and never in a dev_snapshot. It gates ONE line: the bonk's audio playback
+## in Player.play_bonk. The red flash + shake stay unconditional, because §2.3.4 says a rejection is
+## never silent — the mute trades the ear for the eye, it does not remove the feedback.
+## NEVER read by any adjudication (nothing gameplay-facing reads it at all).
+## SESSION-SCOPED: there is no persistence layer, so this resets to false on every launch, exactly
+## like local_pace_is_tactical above and every debug_* knob below.
+var mute_reject_sfx: bool = false
+
 ## Set from the main menu before host_game() / join_game(). Flows into the spawn
 ## dict so all peers know each player's display name independently of peer ID.
 var player_name: String = ""

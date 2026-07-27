@@ -773,7 +773,13 @@ weapon has no melee swing, so a point-blank keyboard-bump is a weaponless KICK (
 Q6 option A). Taking damage from any range AGGROS the target.
 
 **Shipped so far:** the bow — traveling shot, mouse + shift aim, point-blank kick, damage-aggro,
-straight-line flight + per-weapon art orientation (v0.17.0–v0.17.3).
+straight-line flight + per-weapon art orientation (v0.17.0–v0.17.3). **v0.31.0:** the arrow flies
+its FULL `range_tiles` along the aimed slope — the click (still range-gated) sets the LANE, not the
+stopping point, so a body behind your clicked tile can be hit and walls still clip the flight; the
+post-loose recovery tail shows the green recovery bar (`recovery_sec` stamped on
+`projectile_launched` — same §2.3.9-merge presentation as melee, the draw keeps its animation as
+the telegraph); bow retuned to windup 3 / recovery 4 beats (the longsword's numbers — Jon's
+balance call, "for now").
 
 **Still envisioned:** monster ranged attackers (the model already allows a non-player shooter);
 true line-of-sight (arrows use per-tile wall clipping today; diagonal corner-cutting accepted for
@@ -1100,7 +1106,11 @@ travel-tiles through an open doorway — intended, and the dial handles over-pul
 pre-v0.30.0 wall-blind Chebyshev radius (= the rallier's tactical bubble, 3-5 tiles), which left the back
 rows of big rooms asleep; the shout is now fully DECOUPLED from `tactical_radius_tiles` (the pace bubble),
 closing the §2.12 "one field feeds both bubbles" finding. Aggro ACQUISITION is normalized alongside:
-every goblin type acquires at 5 tiles (v0.30.0, was 3-5 mixed); the shaman still opens at its spell
+every goblin type acquires at 5 tiles (v0.30.0, was 3-5 mixed), and **as of v0.31.0 acquisition is
+wall-bounded too** — the acquire check requires the target reachable within `aggro_range_tiles` of
+open-floor travel (the same BFS the shout uses), so a goblin no longer notices you through a wall.
+Deliberately still wall-blind: `notify_attacked` (a hit aggros from anywhere — no free sniping),
+kiter flee range, banter earshot. The shaman still opens at its spell
 ranges (smite 8, heal 5 — per-spell exports, deliberately decoupled from aggro).
 
 **Shipped so far (v0.22.0):** the scorer + opt-in flag; the Goblin Shaman on utility AI with

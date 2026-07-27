@@ -1681,6 +1681,17 @@ func _handle_projectile_launched_event(event: Dictionary) -> void:
 		# Event-resolved weapon passed down (v0.17.1 review #9): a late-joiner whose rig cache is still stale
 		# in the weapon-sync retry window paints the RIGHT release art from the launch event, not the old weapon.
 		shooter.play_loose(dir, weapon)
+		# GREEN RECOVERY BAR on a bow shot (v0.31.0, Jon) — the exact pair the melee `attack` handler plays,
+		# moved to the moment that actually exists for ranged. The shooter is rooted for draw + tail and the
+		# host stamps the tail onto this event, so "when can I shoot again?" gets the same answer here as a
+		# swing gets there. The DRAW keeps its draw animation as its telegraph (no bar for the wind-up half —
+		# that phase is already legible), and the arrow's own hit event still carries duration_sec 0.0.
+		# Source-tagged "attack" so a shooter mid-EXHAUSTION-rest keeps the rarer host-owned bar (Entity's
+		# stamina-priority arbitration); the bar self-clears on its own generation-guarded local timer.
+		var recovery_sec := float(data.get("recovery_sec", 0.0))
+		if recovery_sec > 0.0:
+			shooter.play_recovery(recovery_sec)
+			shooter.play_recovering(recovery_sec, "attack")
 	# Spawn the flying-arrow visual (code-built Projectile, under the world-space FX layer). The shooter node
 	# is present on every peer that received this launch (no mid-flight late-join replay), so the fallback is
 	# purely defensive.

@@ -1384,7 +1384,10 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	if target_tile == shooter_tile:
 		return { "ok": false, "reason": "Can't shoot your own tile." }
 	# Range gate: CHEBYSHEV distance to the CLICKED tile ≤ the weapon's range_tiles (server-authoritative,
-	# read from the shared weapon resource — never a client value).
+	# read from the shared weapon resource — never a client value). The click must still be WITHIN range —
+	# what changed in v0.31.0 is only what happens AFTER: the arrow no longer STOPS on the clicked tile, it
+	# flies the weapon's full range_tiles along that same aim line (see _loose_arrow). Aiming short is now
+	# a direction, not a brake.
 	var cheb := maxi(absi(target_tile.x - shooter_tile.x), absi(target_tile.y - shooter_tile.y))
 	if cheb > weapon.range_tiles:
 		return { "ok": false, "reason": "Out of range." }
@@ -1412,7 +1415,11 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	var windup_sec := _windup_duration_of(shooter)   # weapon.windup_beats × pace beat — the draw before loose
 	if GameManager.debug_windup_override_sec > 0.0:
 		windup_sec = GameManager.debug_windup_override_sec
-	var busy_sec := windup_sec + _recovery_duration_of(shooter)   # draw + after-loose tail = the occupied window
+	# The after-loose tail in its OWN local (v0.31.0): it is both half of busy_sec AND the number the
+	# GREEN RECOVERY BAR needs, and the bar is raised at the LOOSE moment (the only ranged event that
+	# fires while the shooter is still spent), so it rides the loose bind down to projectile_launched.
+	var recovery_sec := _recovery_duration_of(shooter)
+	var busy_sec := windup_sec + recovery_sec   # draw + after-loose tail = the occupied window
 	# LOOSE timer armed BEFORE commit_in_place (v0.17.1 review #8). Co-due SceneTreeTimers fire in CREATION
 	# order, and commit_in_place creates its OWN completion timer internally — so at the TIE
 	# (busy_sec == windup_sec, reachable v0.23.1 only when recovery_beats is authored 0 — a zero after-loose
@@ -1435,10 +1442,13 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# alone skipped it) — zero live impact today (no monster archers, Player.bonus_damage defaults 0).
 	var shot_damage := maxi(0, randi_range(mini(weapon.damage_min, weapon.damage_max),
 			maxi(weapon.damage_min, weapon.damage_max)) + _bonus_damage_of(shooter))
+	# weapon.range_tiles rides the bind too (v0.31.0 full-range flight): the flight path is built at LOOSE,
+	# so the range must be baked HERE with the damage and the flight speed — a mid-draw `/w bow range` retune
+	# can no more lengthen an arrow already committed to than it can change its damage (stamp-and-bake).
 	get_tree().create_timer(windup_sec).timeout.connect(_loose_arrow.bind(
 			_round_gen, sender_peer_id, shooter_tile, target_tile, shot_damage,
 			weapon.display_name, weapon.projectile_tiles_per_beat,
-			_move_referee.interrupt_gen_of(sender_peer_id)))
+			_move_referee.interrupt_gen_of(sender_peer_id), weapon.range_tiles, recovery_sec))
 	# Commit the FULL window in place (from==to — the shooter is rooted while drawing AND recovering; no
 	# occupancy move). A miss means it went busy between the checks and now (host single-threaded; defensive).
 	if not _move_referee.commit_in_place(sender_peer_id, busy_sec):
@@ -1460,12 +1470,24 @@ func _validate_shoot(sender_peer_id: int, data: Dictionary) -> Dictionary:
 ## broadcasts projectile_launched, and starts the per-tile arrival chain. Everything is captured PRIMITIVES
 ## (no node refs), so a shooter that despawns MID-FLIGHT can't crash the arrow (its damage/identity are baked).
 ##
+## FULL-RANGE FLIGHT (v0.31.0, Jon): the clicked tile aims the shot, it does not stop it. The path is built
+## to an endpoint pushed out along the SAME slope to the weapon's full `range_tiles`, so a click at 3 tiles
+## with a range-7 bow sends the arrow 7 tiles down that line — anything standing further along it is now in
+## the way. The click is still range-GATED at validate (you cannot aim past the bow's reach); only the flight
+## got longer. Walls still own the far end: _clip_line_at_walls trims the longer line exactly as before.
+##
 ## RANGED IS OUT OF SCOPE for recovery-on-contact (v0.26.0): the bow keeps its full draw + recovery commit,
 ## because the arrow resolves on its OWN timeline — a hit/miss can land many beats after the shooter's window
 ## already closed, so there is no window left to release at the moment contact is known. Melee/casts release
 ## their tail at resolve (see MoveReferee.finish_busy_early); the bow deliberately does not.
+##
+## `recovery_sec` is carried purely to STAMP the launch event (v0.31.0 green recovery bar): the shooter is
+## rooted for draw + tail and the loose is the one moment on that timeline every peer hears about, so the bar
+## is raised there. It changes NO adjudication here — the commit window was stamped at validate and is never
+## re-derived (§2.8.2), and nothing about the tail is released early.
 func _loose_arrow(round_gen: int, shooter_id: int, shooter_tile: Vector2i, target_tile: Vector2i,
-		damage: int, weapon_name: String, tiles_per_beat: float, interrupt_gen: int = -1) -> void:
+		damage: int, weapon_name: String, tiles_per_beat: float, interrupt_gen: int = -1,
+		range_tiles: int = 0, recovery_sec: float = 0.0) -> void:
 	# Round-generation guard FIRST (v0.17.1 review #4): a draw in flight when F5 reset the round must loose
 	# NOTHING into the fresh round. is_alive alone can't catch it — a same-peer respawn reuses the id and is
 	# alive again — so the captured generation (bumped by reset_round) is the identity that no longer matches.
@@ -1482,10 +1504,23 @@ func _loose_arrow(round_gen: int, shooter_id: int, shooter_tile: Vector2i, targe
 	# teardown (clear_entity) already erased its commit record. This mirrors _resolve_windup's is-alive guard.
 	if not is_alive(shooter_id):
 		return
-	# Path = the 8-way line shooter→target, CLIPPED to end at the last OPEN tile before the first wall (an
+	# EXTEND THE AIM TO FULL RANGE (v0.31.0). Push the endpoint out along the SAME slope until the shot is
+	# `range_tiles` long in Chebyshev terms. Scale the REAL delta, never `.sign()` — snapping to sign would
+	# flatten every knight-ish aim onto the eight cardinals and send the arrow somewhere the player never
+	# pointed. cheb >= 1 is guaranteed (validate rejects the shooter's own tile), and the dominant axis
+	# scales to exactly ±range_tiles, so the extended length is exactly range_tiles — no overshoot past the
+	# gate the click had to pass. cheb == range_tiles (a max-range click) leaves the endpoint untouched.
+	var flight_target := target_tile
+	var delta := target_tile - shooter_tile
+	var cheb := maxi(absi(delta.x), absi(delta.y))
+	if cheb > 0 and range_tiles > cheb:
+		flight_target = shooter_tile + Vector2i(
+				roundi(float(delta.x) * float(range_tiles) / float(cheb)),
+				roundi(float(delta.y) * float(range_tiles) / float(cheb)))
+	# Path = the 8-way line shooter→endpoint, CLIPPED to end at the last OPEN tile before the first wall (an
 	# arrow can't fly through a wall). `clipped` records whether a wall cut it short (→ "blocked") vs it
-	# reaching the target tile (→ "spent").
-	var clip := _clip_line_at_walls(WorldGrid.line_tiles(shooter_tile, target_tile))
+	# reaching the extended end tile (→ "spent"). Walls remain the ONLY thing that shortens the flight.
+	var clip := _clip_line_at_walls(WorldGrid.line_tiles(shooter_tile, flight_target))
 	var path: Array[Vector2i] = clip["path"]
 	var clipped: bool = clip["clipped"]
 	var proj_id := _next_projectile_id
@@ -1495,12 +1530,17 @@ func _loose_arrow(round_gen: int, shooter_id: int, shooter_tile: Vector2i, targe
 	var tile_duration := PaceReferee.beat_or_explore(_pace, shooter_id) / maxf(tiles_per_beat, 0.001)
 	# Broadcast the launch (as_peer = shooter, mirroring windup) so every peer can render the flight in chunk
 	# 2. Paired 1:1 with a projectile_ended by id in EVERY case, including the empty (adjacent-wall) path.
+	# `recovery_sec` (v0.31.0): the shooter's after-loose tail, so every peer can raise the GREEN RECOVERY
+	# BAR on the shooter at the loose — the melee `attack` event has carried the equivalent since v0.29.0,
+	# but a bow's only attack event is the arrow's HIT (duration_sec 0.0, and a miss posts none at all), so
+	# the bar had nothing to read. Presentation stamp only: the window itself was committed at validate.
 	NetEvents.post_event("projectile_launched", {
 		"id": proj_id,
 		"shooter_id": shooter_id,
 		"path": path,
 		"tile_duration_sec": tile_duration,
 		"weapon": weapon_name,
+		"recovery_sec": recovery_sec,
 	}, shooter_id)
 	# Adjacent-wall click: no open tile to enter, the arrow thunks immediately. The commit window still runs
 	# in full (Commitment Rule) — only the arrow did nothing. End at the shooter's tile (its last open spot).

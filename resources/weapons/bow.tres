@@ -5,11 +5,11 @@
 [resource]
 script = ExtResource("1_weapon")
 display_name = "bow"
-recovery_beats = 1.0
+recovery_beats = 4.0
 damage_min = 4
 damage_max = 4
 damage_type = 2
-windup_beats = 2.0
+windup_beats = 3.0
 range_tiles = 7
 projectile_tiles_per_beat = 4.0
 projectile_atlas_coords = Vector2i(0, 23)
