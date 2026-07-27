@@ -82,6 +82,13 @@ To script a dev command, add it to the HOST's array as one element (`"cmd=/god"`
   banner forever — log shows ONLY the engine banner, no version print, no eventlog file ever
   appears. Fix: embed quotes in the element itself: `"--path", "`"$proj`""`. A banner-only log
   IS this failure — don't wait longer, re-check the argv.
+- **The SAME raw join silently truncates space-containing `cmd=` values (2026-07-27 — cost a
+  gate run):** `"cmd=/config root_breaks_on_damage 1"` as a plain array element splits into
+  three argv tokens; the game receives `cmd=/config` alone and the command lands as a usage
+  reject (or, worse, a defaults-only variant that HAPPENS to pass — `/root me 30` truncating
+  to `/root` still roots you for 30). Fix: embed quotes — `'"cmd=/config root_breaks_on_damage
+  1"'` — and ALWAYS read the receipt back from that instance's stdout before trusting the
+  assertion.
 
 - **`cmd=` values are mangled by BOTH shells, silently, in two different ways (2026-07-26 —
   each cost a real run):**
