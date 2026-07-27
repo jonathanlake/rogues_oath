@@ -86,6 +86,11 @@ const _GAME_FIELD_SPECS := {
 	# and your own party focusing the held target does not free it. ON turns the root into a setup you spend.
 	# The A/B switch for that feel question; read live at the apply_damage seam.
 	"root_breaks_on_damage": { "bool": true },
+	# v0.35.0 — the odds a bow monster with no clean lane AND no useful sidestep looses through its own
+	# packmate anyway. A PROBABILITY, so 0-1; 0 = it holds, 1 = it always shoots (the setting to use when
+	# you want to see the friendly-fire banter on demand instead of waiting on the roll). Plain host-side
+	# write, read live at each archer think.
+	"archer_reckless_shot_chance": { "min": 0, "max": 1 },
 }
 
 # The Players container + combat/move referees, handed in by Main via activate() on the HOST only.

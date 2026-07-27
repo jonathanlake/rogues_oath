@@ -4,11 +4,12 @@ extends Resource
 ## Designer-editable COMBAT-HOOK base (v0.11.0, Jeff's class-identity framework; DESIGN §2.3 "add a
 ## .tres, not a script"). A PassiveAbility is a class-owned combat observer/modifier: a PlayerClass
 ## carries an Array[PassiveAbility] (resources/player_class.gd) and CombatReferee runs the ATTACKER's
-## list through the three hooks below at the fixed combat seams. Subclass it (e.g. resources/passives/
+## list through the five hooks below at the fixed combat seams. Subclass it (e.g. resources/passives/
 ## backstab.gd) to add an ability, then drop a .tres — no referee edit per ability.
 ##
-## HOST-ONLY, SERVER-AUTHORITATIVE. Every hook runs only inside CombatReferee.apply_damage / the
-## before_attack fan-out, which are inert on clients (the referee's activate() runs host-side only).
+## HOST-ONLY, SERVER-AUTHORITATIVE. Every hook runs only inside CombatReferee.apply_damage, the
+## before_attack fan-out, or the two beats accessors (_windup_duration_of / _recovery_duration_of) — all
+## of which are inert on clients (the referee's activate() runs host-side only).
 ## A passive therefore NEVER executes client-side and never reads a client value — the ctx it receives
 ## is built from the referees' authoritative state (occupancy tiles, server facing, HP). Clients only
 ## ever see the RESULT as the discrete `attack` event (its `tags`), never the passive itself.
@@ -47,6 +48,32 @@ func before_attack(_ctx: Dictionary) -> void:
 ## target_facing (Vector2i, server facing), attack_dir (Vector2i sign-vector attacker→target), tags (Array).
 func modify_damage(ctx: Dictionary) -> int:
 	return int(ctx.get("amount", 0))
+
+
+## The two TIMING seams (v0.35.0, the ranger's Archery): receive ctx.beats — the wielder's BASE beats for
+## this action, the weapon's field plus any wielder bonus, BEFORE the 0-floor and BEFORE the beats→seconds
+## pace multiply — and return the (possibly modified) beats. CombatReferee writes the result back into
+## ctx.beats between calls, so several passives chain in ARRAY ORDER exactly as modify_damage does, and the
+## referee re-floors at 0 afterward (a passive may shorten an action to instant, never to negative).
+##
+## WHY NOT FOLDED INTO modify_damage: damage is priced when a blow LANDS, but a duration is stamped when an
+## action is COMMITTED — a different seam with a different context (there is no target yet, and there may
+## never be one). One hook serving both would hand every damage passive a half-built ctx.
+##
+## FIRED FOR MELEE AND RANGED ALIKE, on every path that converts a weapon's beats into a committed window
+## (a telegraphed wind-up, a bow's draw, either one's recovery tail). A passive meaning to touch only one of
+## those MUST gate on ctx.weapon itself — Archery checks `weapon.range_tiles > 0`. The referee stays
+## weapon-agnostic on purpose: it owns WHEN the chain runs, the passive owns WHETHER it applies.
+##
+## Host-only and server-authoritative like the rest of this contract; ctx is built from the referees' own
+## state. ctx keys: beats (float), wielder (node), wielder_id (int), weapon (WeaponType or null).
+func modify_windup_beats(ctx: Dictionary) -> float:
+	return float(ctx.get("beats", 0.0))
+
+
+## The recovery-tail half of the pair above — same ctx, same chaining, same host-only contract.
+func modify_recovery_beats(ctx: Dictionary) -> float:
+	return float(ctx.get("beats", 0.0))
 
 
 ## Post-broadcast OBSERVATION seam fired AFTER the `attack` event is posted (and the final amount is

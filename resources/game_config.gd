@@ -351,6 +351,24 @@ extends Resource
 	"help me, you fools!", "HELP! HELP!", "don't just STAND there!!",
 	"someone DO something!", "I'm too pretty to die!"]
 
+## FRIENDLY FIRE (v0.35.0, Jon) — the goblin archer put an arrow in a packmate. TWO moments, because a
+## friendly-fire incident is a two-sided joke and one line can't carry it: the VICTIM barks first, the
+## CULPRIT answers about 0.7s later, so it reads as an exchange rather than a chorus. Both are forced past
+## the chance roll AND past the global cooldown (see Banter.bark's `force`) — a half-delivered exchange,
+## where the victim yells and nobody owns up, is worse than silence.
+##
+## These fire for any allied monster-on-monster damage, not only arrows, so a future stray AoE inherits
+## them for free. Player-on-player friendly fire does NOT bark: players have their own voices.
+@export var banter_friendly_fire_hurt: Array[String] = [
+	"you IDIOT!", "someone shot me!", "watch where you're pointing that!",
+	"that's MY back!", "I'm on your SIDE, you halfwit!", "arrows go THAT way!",
+	"OW! who did that?!", "we're on the same team!!"]
+## The culprit's answer, posted on a short delay after the victim's line above.
+@export var banter_friendly_fire_oops: Array[String] = [
+	"whoops.", "my hand slipped.", "you walked into it!", "sorry! sorry.",
+	"that one was free.", "stop standing in front of me!", "...didn't see ya.",
+	"could've happened to anyone."]
+
 ## Monster hesitation (Jeff: "enemies think before moving"): on entering battle a monster rolls
 ## think beats uniformly in [min, max] (host RNG) and holds its WHOLE brain — no move, attack or
 ## cast — for that long, with a visible thinking cue. Beats at the monster's resolved pace.
@@ -379,6 +397,25 @@ extends Resource
 ## organic aggro latch (MonsterBrain._rally_pack), so `/config rally_travel_tiles 8` lands on the very
 ## next shout with no restart.
 @export var rally_travel_tiles: int = 15
+
+## RECKLESS SHOT CHANCE (v0.35.0, Jon: "the archer should reposition, but leave the chance for friendly
+## fire") — the odds (0-1) that a bow monster with NO clean lane and NOWHERE USEFUL TO STEP looses anyway,
+## straight through its own packmate. Rolled HOST-side, once, at the bottom of the archer's shoot rung
+## (MonsterBrain._act_as_kiter), and only after the reposition attempt has already failed.
+##
+## WHY IT IS A CHANCE AND NOT A RULE: both absolutes are worse. Never shooting through an ally is what
+## produced the v0.34.0 bug this dial ships with — a penned-in archer with a blocked lane had no rung left
+## and simply stood still forever, which reads as a broken monster rather than a cautious one. ALWAYS
+## shooting makes the lane check pointless and turns every pack fight into a self-inflicted massacre. A
+## roll keeps the archer visibly trying to line up a clean shot while leaving friendly fire a real,
+## recurring outcome — which is the point: it is on-brand (Jon), and it is where the friendly-fire banter
+## comes from.
+##
+## 0 = never (the archer holds when penned in — the old behavior, minus the freeze, since the reposition
+## rung above still runs). 1 = always shoot; useful for TESTING the friendly-fire banter on demand rather
+## than waiting on the roll. Read LIVE at each think, so `/config archer_reckless_shot_chance 1` lands on
+## the very next blocked lane with no restart.
+@export var archer_reckless_shot_chance: float = 0.25
 
 ## Provisional playtest toggle (DESIGN §2.2.9): click-to-move pathing. The .tres ships it false, which
 ## drops MoveInput into adjacent-only click mode — a click on one of the 8 neighbor tiles submits one

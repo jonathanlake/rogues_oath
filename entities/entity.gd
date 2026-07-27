@@ -49,6 +49,17 @@ const _DRINK_TINT := Color(0.45, 1.4, 0.55)
 # composes with the root-modulate tint cues above instead of fighting them for the same slot.
 const _RECOVERING_ALPHA := 0.55
 
+# Minimum seconds a HELD cue (cast star, stun burst, root tendrils, thinking dots) stays up (v0.35.0).
+# Each of those four builds a child node driven by an INFINITE looping tween and tears it down from a
+# generation-guarded timer — and each used to arm that timer only `if hold_sec > 0.0`. A host-stamped
+# window can legitimately be ZERO (a 0-beat authored windup, an ability dialled to instant in the debug
+# panel), and at zero the gate skipped the teardown entirely: the node and its endless tween lived for
+# the rest of the session, one more per occurrence. Zero must mean "blink", never "forever". Mirrors
+# FxLayer._MIN_CUE_HOLD_SEC, which floors the world-space danger-tile cue for the identical reason; the
+# two are deliberately separate consts rather than a shared owner, since Entity and FxLayer have no
+# type relationship worth inventing for one float.
+const _MIN_CUE_HOLD_SEC := 0.15
+
 # ── Signals ──────────────────────────────────────────────────────────────────
 
 ## Emitted the instant a glide begins (before the tween runs). Player wires it to block its own
@@ -524,8 +535,8 @@ func play_spell_cast(hold_sec: float, symbol_color: Color) -> void:
 	_cast_fx_tween.parallel().tween_property(star, "modulate:a", 0.55, 0.35).from(1.0)
 	_cast_fx_tween.tween_property(star, "scale", Vector2(0.85, 0.85), 0.35)
 	_cast_fx_tween.parallel().tween_property(star, "modulate:a", 1.0, 0.35)
-	if hold_sec > 0.0:
-		get_tree().create_timer(hold_sec).timeout.connect(_clear_cast_fx.bind(gen))
+	# FLOORED, never gated — see _MIN_CUE_HOLD_SEC. A 0-length channel blinks; it does not leak.
+	get_tree().create_timer(maxf(hold_sec, _MIN_CUE_HOLD_SEC)).timeout.connect(_clear_cast_fx.bind(gen))
 
 
 ## Clear the cast sparkle. No-arg (gen -1) = unconditional (re-cast pre-clear / death); a bound generation (from
@@ -577,8 +588,9 @@ func play_stunned(hold_sec: float) -> void:
 	_stun_wobble_tween = create_tween().set_loops()
 	_stun_wobble_tween.tween_property(_sprite, "rotation", 0.22, 0.18).from(-0.22)
 	_stun_wobble_tween.tween_property(_sprite, "rotation", -0.22, 0.18)
-	if hold_sec > 0.0:
-		get_tree().create_timer(hold_sec).timeout.connect(hide_stun.bind(gen))
+	# FLOORED, never gated — see _MIN_CUE_HOLD_SEC. The paired status_expired is still the primary
+	# teardown; this is the backup belt, and a backup that skips itself at 0 is not a backup.
+	get_tree().create_timer(maxf(hold_sec, _MIN_CUE_HOLD_SEC)).timeout.connect(hide_stun.bind(gen))
 
 
 ## Clear the stun icon. No-arg (gen -1) = unconditional (status_expired / re-stun pre-clear / death); a bound
@@ -631,8 +643,8 @@ func play_rooted(hold_sec: float) -> void:
 	_rooted_fx_tween = create_tween().set_loops()
 	_rooted_fx_tween.tween_property(roots, "scale", Vector2(1.12, 0.92), 0.45).from(Vector2(0.9, 1.05))
 	_rooted_fx_tween.tween_property(roots, "scale", Vector2(0.9, 1.05), 0.45)
-	if hold_sec > 0.0:
-		get_tree().create_timer(hold_sec).timeout.connect(hide_rooted.bind(gen))
+	# FLOORED, never gated — see _MIN_CUE_HOLD_SEC. Same two-belt shape as the stun icon above.
+	get_tree().create_timer(maxf(hold_sec, _MIN_CUE_HOLD_SEC)).timeout.connect(hide_rooted.bind(gen))
 
 
 ## Clear the rooted tendrils. No-arg (gen -1) = unconditional (status_expired / re-root pre-clear / death);
@@ -707,8 +719,9 @@ func play_thinking(hold_sec: float, alert: bool = false) -> void:
 	_think_fx_tween = create_tween().set_loops()
 	_think_fx_tween.tween_property(fx, "position:y", -54.0, 0.35).from(-50.0)
 	_think_fx_tween.tween_property(fx, "position:y", -50.0, 0.35)
-	if hold_sec > 0.0:
-		get_tree().create_timer(hold_sec).timeout.connect(hide_thinking.bind(gen))
+	# FLOORED, never gated — see _MIN_CUE_HOLD_SEC. This cue has NO paired expiry event (it is
+	# self-clearing by design), so the local timer is the only teardown there is.
+	get_tree().create_timer(maxf(hold_sec, _MIN_CUE_HOLD_SEC)).timeout.connect(hide_thinking.bind(gen))
 
 
 ## Overhead EXHAUSTED cue (v0.24.3, §2.3.4-distinct): a cyan sweat-drop that drips while this

@@ -556,6 +556,25 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 	# the died branch). A Player target is skipped (only monsters have a brain to wake).
 	if target is Monster and is_alive(target_id):
 		target.notify_attacked()
+	# FRIENDLY FIRE BANTER (v0.35.0, Jon) — one goblin just hurt another. Sits at the very tail, after the
+	# `attack` event is out and after the aggro wake, so the exchange lands BEHIND the hit that caused it in
+	# the one ordered stream: you see the arrow connect, then hear about it.
+	#
+	# Deliberately hooked HERE rather than in _arrow_step, even though the archer's stray arrow is the only
+	# source today: apply_damage is where every damage kind converges, so a future stray AoE or a thrown
+	# weapon inherits the joke without a second hook — and the "am I hitting my own side?" question is
+	# answered once, by _is_hostile_pair, the same predicate the lane check trusts.
+	#
+	# The four terms, each earning its place: BOTH monsters (players have their own voices, and a monster
+	# hurting a PLAYER is just combat); not self-inflicted (a monster standing in its own smite is a
+	# different joke and has no one to blame); the victim SURVIVED (this is on the survivor path — a
+	# corpse doesn't complain, and the death already fires ally_died, which is the better line for it);
+	# and amount > 0, so a fully-absorbed graze that nobody felt stays silent.
+	if attacker is Monster and target is Monster and attacker_id != target_id \
+			and amount > 0 and not _is_hostile_pair(attacker_id, target_id):
+		Banter.bark_friendly_fire(get_tree(),
+				target_id, _name_of(target), _move_referee.tile_of_entity(target_id),
+				attacker_id, _name_of(attacker), _move_referee.tile_of_entity(attacker_id))
 	return false
 
 
@@ -1351,6 +1370,20 @@ func _resolve_targeted(caster_id: int, target_tile: Vector2i, root_beats: float,
 		var occ := _node_of_id(occ_id)
 		if occ != null and is_alive(occ_id) and caster != null and caster.is_hostile_to(occ):
 			apply_condition(occ_id, "rooted", root_beats)
+			# A HOSTILE CAST IS AN AGGRO SOURCE (v0.35.0, Jon's playtest) — the same wake apply_damage
+			# performs at its own tail. Without it a control spell was the one offensive act in the game
+			# that a monster could sleep through: Entangling Roots dealt no damage, so nothing ever
+			# reached notify_attacked and a druid could hold a dormant pack down and walk past it.
+			# notify_attacked latches _aggroed and fires the one-hop pack rally ONLY on the latching
+			# EDGE, so re-rooting an already-angry goblin is idempotent and never re-shouts.
+			#
+			# ON THE LAND BRANCH ON PURPOSE, not at the cast commit: dodging the telegraph IS the
+			# counterplay (§2.1 "slow telegraph, hard commit"), so a cast that whiffs onto bare ground
+			# has nobody to wake and must not aggro. Kept at THIS call site rather than inside
+			# apply_condition, which is condition-agnostic and will one day carry beneficial statuses —
+			# a buff landing on an ally must never read as an attack.
+			if occ is Monster:
+				occ.notify_attacked()
 			return
 	# WHIFF — the target stepped off, died, or the ground was bare. A distinct §2.3.4 outcome on the same
 	# `attack` event every other whiff uses (kind "ability"), so no new client plumbing is needed.
@@ -1643,6 +1676,12 @@ func reset_round() -> void:
 ## It deliberately does NOT run the lane check: the referee's projectile rule is "the first stoppable body
 ## eats it" for EVERYONE, and a player is free to shoot down their own party's line. Refusing to fire past
 ## an ally is a BRAIN policy (see `is_lane_clear`), so it lives in the caller that wants it.
+##
+## DO NOT ADD ONE (v0.35.0, GLM diff review). That is no longer merely a design preference — the archer's
+## RECKLESS SHOT (GameConfig.archer_reckless_shot_chance) deliberately calls this after its lane check has
+## FAILED, to loose through a packmate on purpose. A lane gate here would silently swallow that shot and
+## drop the archer back into the do-nothing hold the dial was added to fix, with nothing in the log to say
+## why. The brain asks the question; this function only ever answers "can you commit the occupancy".
 func commit_monster_shot(shooter_id: int, target_tile: Vector2i) -> float:
 	return _commit_shot(shooter_id, target_tile)
 
@@ -1667,12 +1706,28 @@ func commit_monster_shot(shooter_id: int, target_tile: Vector2i) -> float:
 ## re-checked at the loose — by then the world has moved, and the Commitment Rule (§2.1) says the arrow flies
 ## anyway: an ally who walks INTO a committed shot eats it, exactly as they would a player's arrow.
 func is_lane_clear(shooter_id: int, target_tile: Vector2i) -> bool:
+	return lane_clear_from(shooter_id, _move_referee.tile_of_entity(shooter_id), target_tile)
+
+
+## The lane check asked from a HYPOTHETICAL tile (v0.35.0) — everything is_lane_clear documents above, with
+## the origin passed in rather than read from occupancy. is_lane_clear is now this function called with the
+## shooter's live tile, so the two can never answer differently.
+##
+## WHY IT EXISTS: an archer whose lane is blocked used to have no move but "hold and hope", because it could
+## only ask about where it already stood. With `from_tile` it can ask "would stepping HERE open the shot?"
+## and act on the answer (MonsterBrain._reposition_step). The occupancy read still comes from the referee —
+## only the ORIGIN is hypothetical, so a candidate tile is judged against the real world, including the
+## shooter's own body still standing where it is (which is behind the line, never on it).
+##
+## `from_tile` is NOT validated as walkable or free: this answers a geometry question only. The caller vets
+## the tile and the move referee owns the verdict on actually going there.
+func lane_clear_from(shooter_id: int, from_tile: Vector2i, target_tile: Vector2i) -> bool:
 	var shooter := _node_of_id(shooter_id)
 	# Same ranged discriminator the shot gate uses: no weapon / a melee weapon has no lane to clear.
 	var weapon: WeaponType = shooter.equipped_weapon if shooter is Entity else null
 	if weapon == null or weapon.range_tiles <= 0:
 		return false
-	var shooter_tile: Vector2i = _move_referee.tile_of_entity(shooter_id)
+	var shooter_tile: Vector2i = from_tile
 	# A zero-length aim builds no path (line_tiles from == to is empty); refuse it here so the loop below
 	# can't be handed a degenerate line the commit would reject a moment later anyway.
 	if target_tile == shooter_tile:
@@ -2612,12 +2667,43 @@ func _max_hp_of(node: Node) -> int:
 ## an engaged monster telegraphs at the tactical beat). The bonus is melee-only (skipped for a ranged
 ## weapon, whose windup_beats is its DRAW — wielder beat-bonuses must never retune the bow), floored at 0.
 ## A weaponless node has no windup (0) — unarmed is a future natural-weapon, not a fallback.
+##
+## PASSIVE TIMING CHAIN (v0.35.0): the wielder's class passives get modify_windup_beats on the base+bonus
+## beats before the floor and before the pace multiply — the ranger's Archery is the first user. Applied
+## HERE rather than at each caller because this accessor is already the ONE funnel every windup runs
+## through (a melee telegraph and the bow's draw alike), which is exactly why the chain can't be forgotten
+## on a future path. Monsters and classless nodes yield an empty list and skip it entirely.
 func _windup_duration_of(node: Node) -> float:
 	if node is Entity and node.equipped_weapon != null:
 		var w: WeaponType = node.equipped_weapon
 		var bonus := 0.0 if w.range_tiles > 0 else _bonus_windup_beats_of(node)
-		return maxf(0.0, w.windup_beats + bonus) * _pace_beat_sec(node)
+		var beats := _passive_beats(node, w, w.windup_beats + bonus, true)
+		return maxf(0.0, beats) * _pace_beat_sec(node)
 	return 0.0
+
+
+## Run the wielder's passive TIMING chain over `beats` and return the result (v0.35.0). `windup` picks
+## which of the two hooks to call, so the two accessors share one dispatch and can never drift on ctx
+## shape or chaining order. Passives run in ARRAY ORDER, each seeing the previous one's output — the same
+## contract modify_damage has, for the same reason (a deterministic result when a class owns several).
+##
+## NOT FLOORED HERE: the callers floor at 0 immediately after, as they already did for the wielder bonus,
+## so there is exactly one floor per accessor rather than two that could disagree. Host-only — this whole
+## referee is inert on clients — and reusing _passives_of means a monster, the training dummy or any
+## classless node short-circuits on the empty array without building a ctx.
+func _passive_beats(node: Node, weapon: WeaponType, beats: float, windup: bool) -> float:
+	var passives := _passives_of(node)
+	if passives.is_empty():
+		return beats
+	var ctx := {
+		"beats": beats,
+		"wielder": node,
+		"wielder_id": node.entity_id if node is Entity else 0,
+		"weapon": weapon,
+	}
+	for p in passives:
+		ctx["beats"] = p.modify_windup_beats(ctx) if windup else p.modify_recovery_beats(ctx)
+	return float(ctx["beats"])
 
 
 ## THE whiff-tail policy (v0.32.0) — how many seconds of its committed recovery a MISS actually pays.
@@ -2665,11 +2751,16 @@ func _pace_beat_sec(node: Node) -> float:
 ## tail stamps tactical because _begin_bump armed the forcing window first). Bonus is melee-only + floored
 ## at 0. A weaponless Player keeps attack_recovery_beats (vestigial fallback); a weaponless Monster has 0.
 ## The one conversion for a bump tail (bump_duration_of) and an instant strike's busy (wind_up).
+## PASSIVE TIMING CHAIN (v0.35.0): same shape and same rationale as _windup_duration_of above — the
+## wielder's class passives get modify_recovery_beats on the base+bonus beats before the floor and the
+## pace multiply. This accessor is the one funnel for every tail (melee swing, bow loose, bump), which is
+## what makes Archery's "one beat off the ranged recovery" a single edit rather than a per-callsite hunt.
 func _recovery_duration_of(node: Node) -> float:
 	if node is Entity and node.equipped_weapon != null:
 		var w: WeaponType = node.equipped_weapon
 		var bonus := 0.0 if w.range_tiles > 0 else _bonus_recovery_beats_of(node)
-		return maxf(0.0, w.recovery_beats + bonus) * _pace_beat_sec(node)
+		var beats := _passive_beats(node, w, w.recovery_beats + bonus, false)
+		return maxf(0.0, beats) * _pace_beat_sec(node)
 	if node is Player:
 		return node.attack_recovery_beats * _pace_beat_sec(node)
 	return 0.0
@@ -2776,13 +2867,19 @@ func _bonus_windup_beats_of(node: Node) -> float:
 ## weapon's point-blank bump is a KICK, never a telegraph, so it returns 0. MoveReferee reads this to decide
 ## whether a player's bump routes through the telegraphed wind_up path (> 0) or stays the instant strike (0 =
 ## today's default for every weapon). Read HOST-side; the wire is never trusted.
+##
+## Runs the SAME passive timing chain _windup_duration_of runs (v0.35.0) even though no shipped passive
+## touches melee beats today. This function is a ROUTING predicate and that one is the DURATION stamp; if
+## they ever disagreed about the beats, a future passive that shortened a melee windup to 0 would route a
+## bump down the telegraphed path and then stamp it a zero-length telegraph. Sharing the chain makes the
+## two answers the same answer by construction rather than by everyone remembering.
 func melee_windup_beats_of(node: Node) -> float:
 	if not (node is Entity) or node.equipped_weapon == null:
 		return 0.0
 	var w: WeaponType = node.equipped_weapon
 	if w.range_tiles > 0:
 		return 0.0
-	return maxf(0.0, w.windup_beats + _bonus_windup_beats_of(node))
+	return maxf(0.0, _passive_beats(node, w, w.windup_beats + _bonus_windup_beats_of(node), true))
 
 
 ## Wielder MELEE recovery bonus in BEATS (v0.19.0): monsters only (MonsterType.bonus_recovery_beats). Melee-

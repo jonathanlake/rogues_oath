@@ -81,12 +81,23 @@ const _SHARED_DIALS := [
 	# recovery-on-contact), N = pay N beats capped at the full tail. Step 0.5 like the other beat dials.
 	# "recovery locks actions" is still the v0.28.0 0-stamina ACTION lockout (a no-op while the stamina
 	# button above reads off).
-	{ "label": "whiff recovery beats", "field": "whiff_recovery_beats", "min": -1, "max": 30, "step": 0.5 },
+	# v0.35.0 label fix: the old bare "whiff recovery beats" read like a magnitude you turn UP to get more
+	# recovery. It is the opposite — a CAP that can only shorten, so every value at or above the weapon's
+	# own tail behaves exactly like the -1 default (Jon set it to 14, saw nothing change, and filed it as a
+	# bug). The label now states both the sentinel and the direction, since the row is the only place most
+	# of this dial's meaning is ever read.
+	{ "label": "whiff recovery beats (-1 = full; caps at weapon tail)",
+		"field": "whiff_recovery_beats", "min": -1, "max": 30, "step": 0.5 },
 	{ "label": "recovery locks actions", "field": "recovery_locks_actions", "bool": true },
 	# v0.30.0 — the pack-rally SHOUT's reach in TRAVEL tiles through open floor (walls bound it; 0 = no
 	# shout). Sits with the other monster-AI dials rather than the stamina block: it tunes who joins a
 	# fight, not how anybody moves.
 	{ "label": "rally travel", "field": "rally_travel_tiles", "min": 0, "max": 40, "step": 1 },
+	# v0.35.0 — chance a penned-in bow monster shoots THROUGH its own packmate rather than holding. Sits
+	# with the other monster-AI dials; step 0.05 because it is a probability, not a beat count. Push it to
+	# 1 to make friendly fire (and its banter) reproducible on demand.
+	{ "label": "archer reckless shot", "field": "archer_reckless_shot_chance",
+		"min": 0, "max": 1, "step": 0.05 },
 	# v0.34.0 conditions — the ROOT's break-on-damage question, shipped OFF. On = any damaging hit frees a
 	# rooted target; off = the root runs its authored beats whatever you do to it.
 	{ "label": "root breaks on damage", "field": "root_breaks_on_damage", "bool": true },

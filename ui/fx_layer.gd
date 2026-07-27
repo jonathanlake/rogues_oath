@@ -9,6 +9,13 @@ extends Node2D
 ## popup starts above the sprite's head rather than over its face, then rises further from there.
 @export var damage_popup_offset_px: Vector2 = Vector2(0.0, -14.0)
 
+## Minimum seconds a held CUE stays up (v0.35.0). Every self-clearing cue in the codebase is armed from a
+## host-stamped window, and a window can legitimately stamp ZERO (a 0-beat authored windup, a dial tuned to
+## instant). Zero must mean "blink", never "forever": a cue whose teardown is gated on a positive duration
+## leaks its node AND its looping tween when the duration is 0. One shared floor, named once, so the
+## fx-layer and Entity cue families can't drift on the answer. Short enough to still read as instant.
+const _MIN_CUE_HOLD_SEC := 0.15
+
 
 ## Spawn one floating-combat-text popup for `text`/`color` over `tile` (v0.10.0). The popup is parented
 ## HERE (this FX layer), NEVER the struck entity, so a killing-blow popup survives the victim's despawn —
@@ -64,10 +71,18 @@ func danger_tile(tile: Vector2i, hold_sec: float, color: Color = Color(0.95, 0.2
 	mark.color = color
 	mark.position = WorldGrid.tile_to_world(tile)
 	add_child(mark)
-	# Pulse the alpha so the danger reads as active; killed + freed at hold_sec.
+	# Pulse the alpha so the danger reads as active; killed + freed at the FLOORED hold below.
 	var t := create_tween().set_loops()
 	t.tween_property(mark, "modulate:a", 1.0, 0.3).from(0.55)
 	t.tween_property(mark, "modulate:a", 0.55, 0.3)
-	if hold_sec > 0.0:
-		get_tree().create_timer(hold_sec).timeout.connect(t.kill)
-		get_tree().create_timer(hold_sec).timeout.connect(mark.queue_free)
+	# THE HOLD IS FLOORED, NEVER GATED (v0.35.0 fix). This used to arm the kill/free timers only
+	# `if hold_sec > 0.0` — so a ZERO-length cast left an orphan Polygon2D with an INFINITE looping
+	# tween parented here for the rest of the session, and every subsequent cast stacked another one.
+	# That is reachable from the shipped game, not just a theoretical: cast_sec is
+	# `ability.windup_beats × beat`, and windup_beats is editable to 0 from the debug panel's CLASSES
+	# section, so tuning a cast down to instant quietly littered the room with permanent squares.
+	# A floor rather than an early return because the mark is a §2.3.4 CUE: an instant cast still gets
+	# a visible blip saying where it landed, it just can't outlive itself.
+	var hold := maxf(hold_sec, _MIN_CUE_HOLD_SEC)
+	get_tree().create_timer(hold).timeout.connect(t.kill)
+	get_tree().create_timer(hold).timeout.connect(mark.queue_free)

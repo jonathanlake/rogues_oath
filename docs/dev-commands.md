@@ -1,4 +1,4 @@
-# Dev slash commands, the debug panel + the harness knobs (current to v0.34.0)
+# Dev slash commands, the debug panel + the harness knobs (current to v0.35.0)
 
 Live tuning + dev toggles typed into the in-game chat box. A leading `/` marks a dev command: the
 game log intercepts it (never sends it as chat), parses it client-side into `{cmd, args}`, and submits
@@ -96,6 +96,7 @@ shout** (the rally is off). Replaces the old wall-blind Chebyshev reach, which r
 rule is unchanged and independent of this number: a rallied monster never re-shouts, so a big value widens one
 fill and can never chain the map awake. Read host-side at each organic aggro latch, so a change lands on the
 very next shout. |
+| `archer_reckless_shot_chance` | 0–1 | **v0.35.0** — the odds a BOW MONSTER with no clean firing lane **and no useful sidestep** looses anyway, straight through its own packmate. Rolled host-side once per think, and only after the new reposition rung has already failed to find a tile that opens the lane. **0** = it holds when penned in (the pre-v0.35.0 caution, minus the freeze — the reposition rung still runs). **1** = it always shoots, which is how you make friendly fire (and its paired banter) reproducible on demand instead of waiting on the roll. The middle exists because both absolutes are worse: never shooting is what let a blocked archer stand still forever, and always shooting makes the lane check pointless. Read live at each archer think. |
 | `root_breaks_on_damage` | 0\|1 | **v0.34.0 conditions — ships OFF.** OFF = the ROOTED condition runs its authored beats and nothing your party does to the held target frees it (a root is a reliable lock-down). ON = any hit that deals damage > 0 clears the root immediately, so the root becomes a SETUP you spend the moment you cash it in — its normal `status_expired` doubles as the released-early cue, so there is no second event to watch for. A 0-damage landed hit (a kick, a fully-absorbed swing) never breaks it: the dial says damage, not contact. This is the A/B switch for a feel question Jon+Jeff have not answered; read live at the one `apply_damage` seam. |
 
 **REMOVED in v0.27.0:** `shield_block_cooldown_beats` and `shadow_step_cooldown_beats`. Cooldowns live on the
@@ -156,6 +157,14 @@ sentinel, not a quantity.
 **v0.29.0 row.** GAME gained **`force tactical`** (`force_tactical_pace`, ships OFF) — the testing pin that
 resolves everyone to tactical pace, and therefore runs the stamina system everywhere. It sits last in the
 shared block deliberately: it is a debugging convenience, not a tuning value.
+
+**v0.35.0 row.** GAME gained **`archer reckless shot`** (`archer_reckless_shot_chance`, default 0.25) — how
+often a penned-in bow monster shoots through its own packmate. It sits with the monster-AI dials for the same
+reason `rally travel` does: it tunes what the pack DOES, not how anybody moves. Also v0.35.0, the **`whiff
+recovery beats`** row was RELABELLED (not re-scoped) to `whiff recovery beats (-1 = full; caps at weapon
+tail)` — the bare old label read like a magnitude you turn UP, when the dial is a cap that can only ever
+SHORTEN a miss's tail, so every value at or above the weapon's own recovery behaves exactly like the default.
+Turning it up and seeing nothing change is the expected result, not a bug.
 
 **v0.34.0 row.** GAME gained **`root breaks on damage`** (`root_breaks_on_damage`, ships OFF) — the ROOTED
 condition's break-on-damage question. CLASSES gained the sixth `/ab` field, **`root_beats`**, so Entangling

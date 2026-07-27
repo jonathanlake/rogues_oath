@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="Archery" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://resources/passives/archery.gd" id="1_archery"]
+
+[resource]
+script = ExtResource("1_archery")
+display_name = "Archery"
+windup_beats_delta = -1.0
+recovery_beats_delta = -1.0

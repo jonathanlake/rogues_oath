@@ -81,12 +81,29 @@ func set_targeting(center: Vector2i, radius: int) -> void:
 	_targeting = true
 	_targeting_center = center
 	_targeting_radius = radius
+	# Ask for the frame that PAINTS it. _process only requests redraws while something would draw, so
+	# the very first armed frame would otherwise wait on _process's own next tick; more importantly this
+	# pairs with clear_targeting's request below, keeping "the flag changed" and "the canvas was told"
+	# at the same two sites rather than relying on the _process condition to cover both edges.
+	queue_redraw()
 
 
 ## Take the targeting ring down (v0.34.0) — the cursor fired, was cancelled, or its owner is gone.
 ## Idempotent; Main calls it liberally.
+##
+## THE ERASE IS THE POINT (v0.35.0 fix). A CanvasItem's draw list is RETAINED: it survives until
+## something calls queue_redraw() again. Clearing the flag alone therefore did NOT take the ring off
+## screen — and because _process only requests redraws while `_debug_on or _targeting`, dropping the
+## flag ALSO stopped the one thing that would have erased it. With F7 off (the normal case) the last
+## painted ring simply stayed there forever, which is exactly the "the green box never goes away"
+## report. Requesting one final redraw here runs _draw with _targeting false, which paints nothing and
+## clears the canvas. Guarded on an ACTUAL flip so the liberal callers (Main re-syncs every frame)
+## don't queue a redraw per frame for a ring that is already down.
 func clear_targeting() -> void:
+	if not _targeting:
+		return
 	_targeting = false
+	queue_redraw()
 
 
 func _ready() -> void:

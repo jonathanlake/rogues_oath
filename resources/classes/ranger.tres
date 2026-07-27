@@ -5,9 +5,11 @@
 [ext_resource type="Resource" uid="uid://b7lqx8n0swrd1" path="res://resources/weapons/longsword.tres" id="2_longsword"]
 [ext_resource type="Resource" path="res://resources/weapons/bow.tres" id="3_bow"]
 [ext_resource type="Script" uid="uid://guqoq14bk8tr" path="res://resources/weapon_type.gd" id="3_nxhev"]
+[ext_resource type="Resource" path="res://resources/passives/archery.tres" id="4_archery"]
 
 [resource]
 script = ExtResource("1_class")
 display_name = "ranger"
 atlas_coords = Vector2i(2, 0)
+passives = Array[PassiveAbility]([ExtResource("4_archery")])
 weapon_roster = Array[ExtResource("3_nxhev")]([ExtResource("2_longsword"), ExtResource("3_bow")])

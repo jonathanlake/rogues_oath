@@ -545,7 +545,17 @@ revert switch it was while this was provisional.
      and "gone before the swing reads" — no-recovery whiffs made monsters look like they attack while
      moving.
    The -1 sentinel replaces the old positive-polarity bool; the beats value scales with tempo like every
-   other duration. **Not the same "recovery" as §2.2.10's lockout**,
+   other duration.
+   **THE DIAL IS A CAP — IT ONLY EVER SHORTENS** (stated plainly, v0.35.0, because it mis-read in play:
+   Jon turned it UP to 14, saw the club's normal tail, and reasonably filed it as broken). N is clamped to
+   the attacker's own committed recovery, so any N at or above the weapon's `recovery_beats` is *identical
+   to -1*. A dial may only ever hand time back, never take more — the committed window is the weapon's to
+   define. To see the dial do anything, turn it DOWN. Two supports were added so this reads without the
+   docs: the panel row names the sentinel and the cap, and a whiff's combat-log line now quotes the seconds
+   it actually paid (the tail is otherwise a silent difference between two idle-looking bodies).
+   **Bow shots have no whiff concept** and are untouched by this dial — a loosed arrow's tail never
+   releases early, because a shot that reaches empty air is not a miss the shooter can be said to have
+   made. **Not the same "recovery" as §2.2.10's lockout**,
    which reads the stamina POOL; this one is a committed-action window. The v0.26.0 rationale, kept because
    the toggle keeps it reachable:
    - **Why the release was tried.** The recovery tail is the *cost of having connected*; charging it for a
@@ -779,7 +789,8 @@ not reflexes). THE ONE HIT RULE: the arrow stops at the first stoppable occupant
 shooter, and — with `projectile_hits_allies` off — not an ally). Aiming is a mouse-click on a
 hostile tile; SHIFT+click fires at any in-range tile (lane denial / deliberate FF). A ranged
 weapon has no melee swing, so a point-blank keyboard-bump is a weaponless KICK (low fixed damage;
-Q6 option A). Taking damage from any range AGGROS the target.
+Q6 option A). Taking damage from any range AGGROS the target — as does a **hostile CAST that lands**
+(v0.35.0; see §2.11's conditions note).
 
 **Shipped so far:** the bow — traveling shot, mouse + shift aim, point-blank kick, damage-aggro,
 straight-line flight + per-weapon art orientation (v0.17.0–v0.17.3). **v0.31.0:** the arrow flies
@@ -800,6 +811,31 @@ packmate (friendly fire stays ON — a committed arrow can still catch an ally w
 mid-flight, and the overshoot past the target can too; that's the on-brand body-blocking). Its
 telegraph is the bow DRAW itself (no coil flash — same read as a player archer). One swapped into
 the room-B east pack's north flank.
+
+**v0.35.0 — THE BOW PAYS FOR ITSELF, AND THE ARCHER STOPS FREEZING.** Three changes, all from Jon
+playing v0.34.0.
+*Balance:* the bow authors **2-5 damage, windup 4, recovery 7** (was a flat 4-4 at 3/4). It had been
+the strictly-best weapon; the swingy roll and the fat tail make committing to a shot a real cost, and
+the flat roll is gone (§2.3's "position beats dice" line applies to the *spread*, not to a weapon
+having none). ONE `bow.tres` serves the player and the goblin, deliberately — a second resource
+would be two numbers free to drift.
+*Class identity:* the ranger's edge is now SPEED, not ownership. The **Archery** passive takes one
+beat off the draw and one off the recovery of any ranged weapon, so the ranger shoots 3/6 against
+the goblin's 4/7. This introduced the passive framework's first non-damage seams —
+`modify_windup_beats` / `modify_recovery_beats`, chained in array order at the two beats→seconds
+accessors exactly as `modify_damage` chains at the damage seam. Timing and damage are separate hooks
+because a duration is stamped at COMMIT and damage is priced at LAND: one hook could not serve both
+without handing damage passives a half-built context.
+*AI:* the lane check's failure branch used to be "hold" — which, for an archer already at a
+comfortable distance, meant re-thinking an unchanging picture forever (the freeze Jon reported; the
+v0.33.0 note "kiting reshuffles the geometry" assumed a kiter still in motion). A blocked archer now
+**repositions**: one step to a tile whose lane IS clear, constrained to stay inside weapon range and
+OUTSIDE the flee band, so a reposition can never undo the kiting it exists to serve. Penned in with
+no such tile, it rolls `archer_reckless_shot_chance` (ships 0.25) and looses through the packmate
+anyway — the deliberate middle between a caution that reads as a broken monster and a recklessness
+that makes the lane check pointless. Friendly fire between monsters now has its own paired banter
+(victim, then culprit a beat later), which is the feedback that makes it read as comedy rather than
+as a bug.
 
 **Still envisioned:** true line-of-sight (arrows use per-tile wall clipping today; diagonal
 corner-cutting accepted for v1); more ranged weapon types (crossbow / thrown — each a `.tres`);
@@ -1018,6 +1054,16 @@ by stepping off, interrupt-gen guarded since a PLAYER caster can be blinked mid-
 6, 2-beat cast, 2-beat recovery, 40-beat cooldown under the §2.11.1 umbrella, roots 30 beats).
 **The DRUID** is the seventh class: the 32rogues druid sprite, leather armor, club, Entangling
 Roots. Backstab treating ROOTED as a compromised state (the §2.3 note) stays FUTURE — not wired.
+
+**v0.35.0 — A HOSTILE CAST IS AN AGGRO SOURCE.** Landing a control spell now wakes the target's brain
+and fires the pack rally, exactly as damage does (§2.9's aggro line). Shipping v0.34.0 without it left
+one offensive act in the game that a monster could sleep through: aggro was wired to `apply_damage`,
+Entangling Roots deals none, so a druid could hold a dormant pack down and stroll past — a control
+spell that is strictly safer than an attack inverts what control is *for*. Scoped deliberately narrow:
+it fires on the **land** branch, so dodging the telegraph still costs the caster everything (the
+counterplay §2.1 sells), and a cast onto bare ground wakes nobody. It is NOT inside `apply_condition`
+— that registry is condition-agnostic and will carry beneficial statuses, and a buff landing on an
+ally must never read as an attack.
 
 **Still envisioned:** an equippable off-hand item (a real shield in the `[Off]` socket, not just the class
 ability — it waits on §2.10's EQUIPMENT slot model); clickable ability slots (the keys drive them today);

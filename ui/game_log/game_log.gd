@@ -456,11 +456,20 @@ func _on_event_received(event: Dictionary) -> void:
 func _log_attack(data: Dictionary) -> void:
 	var attacker_name := str(data.get("attacker_name", ""))
 	if bool(data.get("whiff", false)):
+		# THE PAID TAIL, quoted (v0.35.0). `duration_sec` on a whiff event is exactly what
+		# CombatReferee._whiff_tail_sec decided this miss owes — the one observable the
+		# `whiff_recovery_beats` dial has. Without it the dial was invisible in play: Jon set it to 14,
+		# saw no change, and reasonably concluded it was broken — when in fact the dial CAPS at the
+		# weapon's own tail (it may only ever shorten a committed window), so any value at or above the
+		# weapon's recovery is identical to the default. Naming the seconds makes "this is already the
+		# full tail" and "this was cut short" different sentences instead of the same silence.
+		# Suffix only, so the outcome phrasing every peer already reads is untouched.
+		var tail := " (recovers %.1fs)" % float(data.get("duration_sec", 0.0))
 		# A dodged SMITE (v0.19.10) gets its own line — the player stepped off the red tile in time (§2.3.4).
 		if str(data.get("kind", "")) == "smite":
-			add_line("%s's smite fizzles — dodged!" % attacker_name)
+			add_line("%s's smite fizzles — dodged!%s" % [attacker_name, tail])
 		else:
-			add_line("%s's attack hits nothing." % attacker_name)
+			add_line("%s's attack hits nothing.%s" % [attacker_name, tail])
 		return
 	var target_name := str(data.get("target_name", ""))
 	# SHIELD BLOCK (v0.26.0 instants experiment): the blow connected and was turned aside. FIRST of the

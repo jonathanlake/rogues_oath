@@ -34,6 +34,17 @@ extends Node
 const _IDLE_BANTER_MIN_SEC := 15.0
 const _IDLE_BANTER_MAX_SEC := 30.0
 
+## The eight king-move offsets, scanned in this order by _reposition_step (v0.35.0). ORTHOGONALS FIRST,
+## then diagonals: an orthogonal sidestep changes the firing angle the most per step and can never be
+## refused by the corner rule, so the archer prefers the move most likely to both open the lane and be
+## accepted. Order is otherwise arbitrary but FIXED — a deterministic scan keeps the host's choice
+## reproducible in a trace, which a shuffled one would not. Declared here rather than reaching for
+## WorldGrid's own private neighbour list: that one is the flood fill's, and a private const is not a
+## contract this file may lean on.
+const _STEP_DIRS: Array[Vector2i] = [
+	Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]
+
 ## Re-think delay in BEATS after a refused/blocked action (a contested tile back-off) — converted at
 ## the live beat when used, not cached (DESIGN §2.8; matches MoveInput's held-retry cadence so a
 ## monster and a player back off a contested tile together). 1 beat = one movement step. NOTE: the
@@ -581,14 +592,37 @@ func _act_as_kiter(my_tile: Vector2i, targets: Array) -> void:
 	# Range read off the authored MonsterType.weapon (the same resource seeded onto equipped_weapon at spawn,
 	# which is what the referee re-reads host-side to adjudicate) — the brain only decides, never adjudicates.
 	if _monster_type.weapon != null and _monster_type.weapon.range_tiles > 0 and not _recovery_locks_actions():
-		if nearest_dist <= _monster_type.weapon.range_tiles and _combat.is_lane_clear(_entity_id, nearest):
-			var shot_wait: float = _combat.commit_monster_shot(_entity_id, nearest)
-			if shot_wait >= 0.0:
-				# The draw + recovery is a commit_in_place record: it ends WITHOUT waking us (no glide), so
-				# book our own re-think just past it — the smite rung's exact shape, and the wind-up's.
-				_reschedule_after(shot_wait + windup_rethink_epsilon_sec)
+		if nearest_dist <= _monster_type.weapon.range_tiles:
+			# (2a) CLEAN LANE — loose. Unchanged from v0.33.0.
+			var lane_clear: bool = _combat.is_lane_clear(_entity_id, nearest)
+			# (2b) BLOCKED LANE → REPOSITION (v0.35.0, Jon's playtest). This rung is the whole fix for "the
+			# archer completely stops doing anything when he can't find a clean shot". v0.33.0 skipped the
+			# shoot rung outright on a blocked lane and fell to smite/hold — and the bow goblin authors no
+			# smite, so it landed on hold and re-thought the SAME geometry forever. Nothing in the loop ever
+			# moved it, because flee only triggers inside flee_range_tiles and this archer was already at a
+			# comfortable distance. The comment there ("kiting reshuffles the geometry and the next think
+			# asks again") assumed a kiter that was still moving; a happily-spaced one isn't.
+			#
+			# So: step somewhere the lane DOES open. One step, submitted through the same validator every
+			# other monster move uses, and then we re-think from the new tile — no multi-step plan, because a
+			# plan would be a commitment the world invalidates before it finishes.
+			if not lane_clear and _reposition_step(my_tile, nearest):
 				return
-			# Declined (went busy / stunned between the gate and here) — fall through to smite / hold.
+			# (2c) STILL BLOCKED, NOWHERE TO GO → maybe loose ANYWAY, through the packmate
+			# (GameConfig.archer_reckless_shot_chance). A penned-in archer that can neither clear its lane
+			# nor step aside has to do SOMETHING, and "shoot your mate in the back" is the funny answer as
+			# well as the on-brand one (friendly fire is intended emergence, and the FF banter hangs off it).
+			# Rolled ONCE per think, so a failed roll just holds and asks again next cadence.
+			if not lane_clear and randf() < GameManager.config.archer_reckless_shot_chance:
+				lane_clear = true
+			if lane_clear:
+				var shot_wait: float = _combat.commit_monster_shot(_entity_id, nearest)
+				if shot_wait >= 0.0:
+					# The draw + recovery is a commit_in_place record: it ends WITHOUT waking us (no glide), so
+					# book our own re-think just past it — the smite rung's exact shape, and the wind-up's.
+					_reschedule_after(shot_wait + windup_rethink_epsilon_sec)
+					return
+				# Declined (went busy / stunned between the gate and here) — fall through to smite / hold.
 	# (3) Smite the GROUND at a random in-range player's tile (host picks it; the player can dodge off it).
 	# RECOVERY LOCKOUT (v0.28.0): a smite is a CAST, so a recovering kiter skips it and holds — note that
 	# the FLEE step above is NOT gated, because backing off is movement and movement is the other channel.
@@ -624,9 +658,59 @@ func _flee_step(my_tile: Vector2i, nearest_tile: Vector2i) -> bool:
 	for dir in _flee_candidates(away):
 		var dest: Vector2i = my_tile + dir
 		if WorldGrid.is_walkable(dest) and _referee.is_tile_free(dest):
-			_last_step_was_diagonal = dir.x != 0 and dir.y != 0
+			# ON SUCCESS ONLY (v0.35.0 fix, GLM diff review). This site had written the flag BEFORE the
+			# submit since v0.19.10, against the contract _step_toward_targets states explicitly: on a
+			# refusal the flag must keep the CURRENT (still-gliding) step's shape, or the busy gate's
+			# settle backstop is computed from a step that never happened and the wake fires at the wrong
+			# time. Harmless on the common single-candidate retreat, wrong whenever the fallbacks run.
 			if _referee.submit_monster_intent(_entity_id, dir):
+				_last_step_was_diagonal = dir.x != 0 and dir.y != 0
 				return true
+	return false
+
+
+## Submit ONE step that opens a blocked firing lane on `target_tile` (v0.35.0, the bow goblin). Returns true
+## when a glide was accepted (on_boundary drives the next think), false when no neighbouring tile helps — the
+## caller then rolls the reckless shot / holds.
+##
+## Scans the 8 neighbours and keeps the first that satisfies ALL of:
+##   - walkable and free (pre-check; the referee's validator still owns the real verdict, corner rule included)
+##   - the lane from THERE is clear (CombatReferee.lane_clear_from — the same path builder the arrow flies,
+##     asked from a hypothetical origin, so "would this open the shot" is answered by the shot's own geometry
+##     rather than a lookalike heuristic that could drift from it)
+##   - still inside the weapon's reach, and NOT inside flee_range_tiles.
+##
+## THAT LAST TERM IS THE IMPORTANT ONE: without it the cheapest lane-opener is almost always a step toward the
+## target (walking around the packmate by closing distance), which would have the archer solve its lane problem
+## by shuffling into melee — undoing the kiting that defines the whole archetype and fighting rung (1), which
+## would then immediately flee back out. The two rungs would oscillate and the archer would never shoot. So a
+## reposition may only ever move SIDEWAYS in range terms, never into the flee band.
+##
+## ROOTED, as _flee_step: you cannot sidestep what has your ankles — report "no step" and let the caller fall
+## through to the reckless roll, which is exactly the right play for a rooted archer with a blocked lane.
+func _reposition_step(my_tile: Vector2i, target_tile: Vector2i) -> bool:
+	if _is_rooted():
+		return false
+	var weapon: WeaponType = _monster_type.weapon
+	if weapon == null or weapon.range_tiles <= 0:
+		return false
+	for dir in _STEP_DIRS:
+		var dest: Vector2i = my_tile + dir
+		if not (WorldGrid.is_walkable(dest) and _referee.is_tile_free(dest)):
+			continue
+		var dist: int = maxi(absi(target_tile.x - dest.x), absi(target_tile.y - dest.y))
+		if dist > weapon.range_tiles or dist <= _monster_type.flee_range_tiles:
+			continue
+		if not _combat.lane_clear_from(_entity_id, dest, target_tile):
+			continue
+		# ON SUCCESS ONLY — the contract stated at _step_toward_targets: a REFUSED submit must leave the
+		# flag showing the CURRENT (still-gliding) step's shape, or the caller's already-computed settle
+		# backstop stops matching the window the referee actually stamped. It matters more here than
+		# anywhere else: this loop can try up to eight candidates, so a pre-emptive write would leave the
+		# flag holding the last REJECTED direction every time the scan runs out.
+		if _referee.submit_monster_intent(_entity_id, dir):
+			_last_step_was_diagonal = dir.x != 0 and dir.y != 0
+			return true
 	return false
 
 

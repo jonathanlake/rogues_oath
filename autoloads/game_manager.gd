@@ -156,7 +156,14 @@ const DEV_GAME_FIELDS := ["tactical_beat_sec",
 		# right room, and did it leak too far through the doorway?") is a feel question about a distance, and
 		# answering it by restarting for each number is exactly what these dials exist to avoid. Host-side
 		# only, read live at each organic aggro latch, so a plain _GAME_FIELD_SPECS row is all it needs.
-		"rally_travel_tiles"]
+		"rally_travel_tiles",
+		# v0.35.0 — the odds a penned-in bow monster (no clean lane, no useful sidestep) shoots through its
+		# own packmate instead of holding. A live dial for the classic reason: the right number is a FEEL
+		# question about how often friendly fire should happen, which is only answerable by watching several
+		# fights at several settings — and 1.0 turns it into a reproducible trigger for testing the
+		# friendly-fire banter. Host-side only, read live at each archer think, so a plain _GAME_FIELD_SPECS
+		# row is all it needs.
+		"archer_reckless_shot_chance"]
 ## v0.27.0: `shield_block_cooldown_beats` / `shadow_step_cooldown_beats` are GONE from this list because the
 ## GameConfig fields are gone — a cooldown lives on its ActiveAbility `.tres` now and is tuned with `/ab`
 ## (DEV_ABILITY_FIELDS above) or the panel's CLASSES section. A stale `/config shield_block_cooldown_beats`

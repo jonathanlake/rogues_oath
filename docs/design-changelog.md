@@ -9,6 +9,50 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.35.0 (2026-07-27) — SPELLS MAKE ENEMIES ANGRY, THE BOW GETS HONEST, AND THE ARCHER STOPS
+  FREEZING.** Five things Jon found playing v0.34.0, fixed same-day.
+  **CASTING A SPELL ON SOMETHING NOW ANGERS IT — AND ITS FRIENDS.** Entangling Roots deals no
+  damage, and "wake up and shout for help" was wired to damage only — so you could root a goblin
+  and the whole pack would carry on sleeping. Rooting a goblin now wakes it and fires the same
+  pack shout a hit does. (It only counts when the spell LANDS: dodge the cast and nobody stirs,
+  and a cast onto bare ground wakes nothing.)
+  **THE GREEN BOX THAT NEVER LEAVES — FIXED, TWICE.** Two separate bugs wearing one costume. The
+  range ring wasn't being *erased* when you clicked or cancelled — the flag was cleared but nothing
+  ever repainted the layer, so the last frame just sat there. Separately, any ground-cast marker
+  whose cast time was **zero** never cleaned itself up, so if you'd tuned a cast's windup down to 0
+  in the panel, every cast left a permanent pulsing square behind, stacking forever. Both fixed —
+  and the same "zero means blink, not forever" fix went to the stun, root and thinking cues, which
+  all had it.
+  **THE BOW IS REBALANCED (Jon's numbers):** damage **4-4 → 2-5** (it can spike, it can also
+  disappoint), draw **3 → 4 beats**, recovery **4 → 7 beats**. It was strictly the best weapon in
+  the game; now committing to a shot costs something real. **The goblin archer carries the same bow,
+  so it takes the same nerf** — deliberately: one bow, one place to balance it.
+  **THE RANGER GETS A PASSIVE — "ARCHERY":** one beat off the draw AND one off the recovery with
+  any ranged weapon. So the ranger shoots at 3/6 where the goblin shoots at 4/7. The class's edge is
+  now that it is *faster* with a bow than anyone else, which is a better identity than "it owns the
+  good weapon". Listed by name in the character-info panel.
+  **THE BOW GOBLIN NO LONGER STANDS THERE DOING NOTHING.** With a packmate in its firing lane it
+  skipped its shot — and if it was already at a comfortable distance it had no other move either, so
+  it froze and re-thought the same picture forever. It now **sidesteps to open the lane** (never
+  toward you: a reposition can't undo its kiting). If it is penned in with nowhere useful to go,
+  a new **`archer reckless shot`** chance (panel / `/config`, default 0.25) has it shoot through its
+  mate anyway.
+  **GOBLINS NOW REACT TO FRIENDLY FIRE.** Put an arrow in a packmate and the victim yells ("you
+  IDIOT!", "arrows go THAT way!"); the culprit answers a beat later ("whoops.", "you walked into
+  it!"). Eight lines a side, editable in the config like every other bark. Set `archer reckless
+  shot` to 1 to see it on demand.
+  **`whiff recovery beats` WASN'T BROKEN — IT ONLY GOES DOWN.** Jon set it to 14 and saw nothing
+  change. The dial is a **cap**: it can only ever *shorten* a miss's recovery, never lengthen it, so
+  any value at or above the weapon's own recovery is identical to the -1 default. Turn it *down*
+  (0 = pay nothing, 1 = pay one beat). The panel row now says so, and a whiff's log line quotes the
+  seconds it actually paid, so the dial is visible instead of silent. (Bow shots still have no whiff
+  concept and ignore it entirely — unchanged.)
+  **Verified headless:** the druid's cast woke its target *and* rallied two goblins outside aggro
+  range; a blocked archer stepped aside and then loosed cleanly; the ranger's bow stamped 0.75s
+  draw / 1.5s recovery against the goblin's 1.0s / 1.75s. One GLM red-team pass on the diff — it
+  caught a stale-flag bug in the new step code, and the same bug pre-existing in the kiter's flee
+  step, both fixed.
+
 - **v0.34.0 (2026-07-27, overnight) — THE DRUID, ENTANGLING ROOTS, AND "CONDITIONS".** Second half
   of the overnight batch — Jeff's spec, built to the answers Jon gave before bed.
   **CONDITIONS ARE NOW A SYSTEM.** Stun pioneered the shape; there's now a general registry beside
