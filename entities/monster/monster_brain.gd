@@ -197,11 +197,12 @@ func notify_attacked() -> void:
 
 
 ## PACK RALLY receiver (v0.22.0, Jon's directive — "all the other goblins in there attack"). Called host-side by
-## CombatReferee.rally_pack when an allied monster inside its tactical bubble entered combat: this brain joins the
-## fight without having seen a player itself. Applies to EVERY brain, legacy cascade included — it is a shared
-## aggro source, not a utility-AI feature.
+## CombatReferee.rally_pack when an allied monster's SHOUT reached this one — i.e. an ally entered combat and the
+## sound could travel here over open floor within GameConfig.rally_travel_tiles (v0.30.0; before that it was the
+## ally's wall-blind tactical bubble). This brain joins the fight without having seen a player itself. Applies to
+## EVERY brain, legacy cascade included — it is a shared aggro source, not a utility-AI feature.
 ##
-## ONE HOP: this latch deliberately does NOT fan out again (no _rally_pack call here), so overlapping bubbles can
+## ONE HOP: this latch deliberately does NOT fan out again (no _rally_pack call here), so overlapping shouts can
 ## never chain-react a whole map awake from a single proximity trip. An ALREADY-aggroed brain returns immediately:
 ## it is fighting already, and re-waking it mid-cadence would just churn timers.
 ##
@@ -900,12 +901,22 @@ func _post_ai_decision(candidates: Array, chosen: String) -> void:
 
 ## Fan the PACK RALLY out through the combat referee (v0.22.0). Called ONLY on an ORGANIC aggro-latching edge
 ## (a proximity acquire in _update_engagement, or notify_attacked) — never from notify_rallied, which is what
-## keeps the rally one hop deep. The radius is this monster's own resolved tactical bubble (§2.8.7): "the
-## fight I am in" is exactly the set of allies that should hear about it, and it is already a designer dial.
+## keeps the rally one hop deep.
+##
+## v0.30.0 — THE SHOUT (Jon + Jeff). The reach is now the ONE GLOBAL SOUND DIAL, GameConfig.rally_travel_tiles,
+## and the referee spends it as a WALL-BOUNDED FLOOD FILL rather than a radius. It used to be this monster's own
+## resolved tactical bubble (§2.8.7, 3-5 tiles), which was the coupling ROADMAP's parking lot and DESIGN §2.12
+## flagged: "how far does my presence set the fight's pace" and "how far does my voice carry" are different
+## questions, and answering both with one per-type number meant the back rows of a big room never joined a fight
+## while a wall was no obstacle at all. The two are decoupled here — the tactical bubble keeps tuning pace only.
+##
+## LIVE HOST-SIDE READ, deliberately at the moment of the shout rather than cached at activation: this brain runs
+## only on the host (§2.5), and reading GameManager.config here is what lets `/config rally_travel_tiles N` (or
+## the panel row) land on the very next shout with no restart.
 func _rally_pack() -> void:
 	if _combat == null or _monster_type == null:
 		return
-	_combat.rally_pack(_entity_id, _monster_type.resolved_tactical_radius())
+	_combat.rally_pack(_entity_id, GameManager.config.rally_travel_tiles)
 
 
 ## Roll this instance's AI personality at activation (v0.22.0), host-only. Uniform pick over the authored pool;

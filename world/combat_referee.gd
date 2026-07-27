@@ -732,24 +732,42 @@ func has_pending_smite_at(tile: Vector2i) -> bool:
 ## PACK RALLY (v0.22.0, Jon's directive): one monster entering combat drags its neighbours in with it —
 ## "all the other goblins in there attack". Called HOST-side by a MonsterBrain the moment it latches aggro
 ## ORGANICALLY (proximity acquire, or being attacked), never on a rally-induced latch. Every LIVING, BRAINED
-## allied monster whose authoritative tile is within `radius_tiles` CHEBYSHEV of the rallier is told through
-## Monster.notify_rallied() -> MonsterBrain.notify_rallied(), the same relay shape notify_attacked uses.
+## allied monster the shout REACHES is told through Monster.notify_rallied() -> MonsterBrain.notify_rallied(),
+## the same relay shape notify_attacked uses.
 ##
-## ONE HOP BY CONSTRUCTION: notify_rallied latches aggro but never calls back here, so overlapping tactical
-## bubbles cannot chain-react the whole map awake from one proximity trip. An already-aggroed brain ignores
-## the rally entirely (it is already fighting), which also makes a rally cheap and idempotent.
+## v0.30.0 — IT IS A SOUND NOW (Jon + Jeff). `travel_tiles` is spent as a WALL-BOUNDED FLOOD FILL over open
+## floor (WorldGrid.tiles_within_travel), not as a Chebyshev radius, and the number is one GLOBAL dial
+## (GameConfig.rally_travel_tiles) instead of the shouter's own tactical bubble. The old radius was wrong in
+## both directions at once: wall-blind, so a shout carried through solid rock into the next room, and only 3-5
+## tiles wide, so the back rows of a big room never joined the fight they were standing in. The model is now
+## "can the sound get there" — walls bound it, a doorway carries it. Two consequences worth stating plainly:
+##  - A SHOUT LEAKS A FEW TRAVEL-TILES THROUGH AN OPEN DOORWAY, and that is INTENDED emergence — a goblin
+##    wandering just outside hears the scuffle. Over-pull is answered by turning the dial down, not by adding
+##    a room test.
+##  - In open floor a travel tile IS a king-step (the fill uses the A* grid's corner rule), so the number
+##    reads exactly like the old radius did; it only ever takes tiles away, never adds surprising ones.
+##
+## ONE HOP BY CONSTRUCTION, unchanged and independent of the dial: notify_rallied latches aggro but never calls
+## back here, so a generous travel number widens ONE fill and can never chain-react the map awake. An
+## already-aggroed brain ignores the rally entirely (it is already fighting), which also makes a rally cheap
+## and idempotent. One hop + a generous wall-bounded shout is the whole design: it wakes a room, not a map.
 ##
 ## Allies = every OTHER monster (v1's only factions are players-vs-monsters, matching Monster.is_hostile_to).
-## Tiles are read from the MOVE referee (authoritative occupancy), never a rendered position. A 0/negative
-## radius (a monster projecting no tactical bubble) rallies nobody.
-func rally_pack(rallier_id: int, radius_tiles: int) -> void:
-	if radius_tiles <= 0 or _monsters == null:
+## Tiles are read from the MOVE referee (authoritative occupancy), never a rendered position — and note that
+## the fill itself ignores occupancy (bodies do not block sound), so a crowded corridor still carries it.
+## A 0/negative `travel_tiles` (the dial's "off" setting) shouts to nobody.
+##
+## ONE BFS, N LOOKUPS: the fill runs once before the loop and each candidate costs a Dictionary probe — never a
+## path query per ally.
+func rally_pack(rallier_id: int, travel_tiles: int) -> void:
+	if travel_tiles <= 0 or _monsters == null:
 		return
 	var origin: Vector2i = _move_referee.tile_of_entity(rallier_id)
 	# tile_of_entity answers with the wall sentinel for an untracked id (despawned between the brain's
 	# decision and here) — no live body rests on a wall, so this is the unambiguous "gone" read.
 	if WorldGrid.is_wall(origin):
 		return
+	var heard: Dictionary = WorldGrid.tiles_within_travel(origin, travel_tiles)
 	for child in _monsters.get_children():
 		if not (child is Monster) or child.entity_id == rallier_id:
 			continue
@@ -759,7 +777,10 @@ func rally_pack(rallier_id: int, radius_tiles: int) -> void:
 		if child.monster_type == null or not child.monster_type.has_brain:
 			continue
 		var tile: Vector2i = _move_referee.tile_of_entity(child.entity_id)
-		if maxi(absi(tile.x - origin.x), absi(tile.y - origin.y)) > radius_tiles:
+		# Membership IS the reach test: a tile absent from the fill is either too far to travel or walled off
+		# from the shout entirely. (A despawned ally's wall-sentinel tile is never in the fill, so it also
+		# fails closed here without a separate guard.)
+		if not heard.has(tile):
 			continue
 		child.notify_rallied()
 

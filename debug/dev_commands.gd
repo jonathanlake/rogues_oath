@@ -72,6 +72,11 @@ const _GAME_FIELD_SPECS := {
 	# v0.29.0 DEV PIN: everyone (players AND monsters) resolves TACTICAL while on — and stamina therefore
 	# runs everywhere, since it gates on is_tactical. Host-side write, read live at each PaceReferee resolve.
 	"force_tactical_pace": { "bool": true },
+	# v0.30.0 the pack-rally SHOUT's reach in TRAVEL tiles (wall-bounded flood fill, not a radius).
+	# 0 = no shout. Capped at 40 — comfortably past the largest room, so a big value means "the whole
+	# connected region" in practice while still refusing an absurd typo. Plain host-side write, read
+	# live at each organic aggro latch.
+	"rally_travel_tiles": { "min": 0, "max": 40, "int": true },
 }
 
 # The Players container + combat/move referees, handed in by Main via activate() on the HOST only.

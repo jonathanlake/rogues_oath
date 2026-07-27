@@ -361,9 +361,9 @@ Not scheduled — pulled in when their moment comes:
   Jon+Jeff's. Tendencies read = FEEL item, watched live via `/ai`. REMAINING beyond that: positional
   movement objectives (behind-ally kiting), plain-goblin migration, threat memory, crowded-top-set
   tie-break. **v0.23.0 (the Warren showcase, DESIGN §2.12) added two findings from its calibration
-  battles:** (1) `tactical_radius_tiles` feeds BOTH the player-pace bubble and the pack-rally bubble — a
-  separate `rally_radius_tiles` export is wanted before any monster needs them to differ more than the
-  Warren brute's does; (2) the chase model inverts tank order (a slow anvil arrives LAST — fast allies
+  battles:** (1) `tactical_radius_tiles` feeds BOTH the player-pace bubble and the pack-rally bubble —
+  **CLOSED v0.30.0:** the rally became the wall-bounded shout flood-fill with its own global
+  `rally_travel_tiles` dial, so `tactical_radius_tiles` is pace-only now; (2) the chase model inverts tank order (a slow anvil arrives LAST — fast allies
   lead every charge), so a hold-position/guard-post behavior is prerequisite for heavy frontliners; the
   authored-but-unused `speed_lumbering` tier (1.5 glide-beats) waits on it. **FUNCTION debt (v0.23.3,
   first thing next harness session — blocked tonight on Jon's live session holding port 3000):** the

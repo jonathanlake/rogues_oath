@@ -77,6 +77,18 @@ forcing windows and hysteresis, so you can look at fight-cadence behavior withou
 tactical **runs stamina everywhere** — pools spend, entities exhaust, and the recovery bar plays in an empty
 room. Read host-side at every resolve, so a flip lands on the next verdict; turning it back **off** exits
 through the normal `tactical_exit_sec` hysteresis ramp rather than snapping to explore. |
+| `rally_travel_tiles` | 0–40 (int) | **v0.30.0** — how far the pack-rally **SHOUT** travels through OPEN
+FLOOR, in travel tiles (default **15**). **Not a radius: walls bound it.** When a monster aggros organically
+it shouts, and the referee flood-fills outward from its tile — every living, brained ally the sound REACHES
+joins the fight. In open floor a travel tile is exactly a king-step, so the number reads like a radius; around
+a corner it costs what walking it would cost, and a wall stops it dead. 15 covers the largest room end to end,
+which is the point: a fight wakes the room you are standing in. **A shout leaking a few travel-tiles through
+an open doorway is intended** — if it over-pulls, turn this down; that is what the dial is for. **0 = no
+shout** (the rally is off). Replaces the old wall-blind Chebyshev reach, which reused the shouter's tactical
+(pace) bubble — 3–5 tiles, so back rows never joined, yet happy to carry through solid rock. The **one-hop**
+rule is unchanged and independent of this number: a rallied monster never re-shouts, so a big value widens one
+fill and can never chain the map awake. Read host-side at each organic aggro latch, so a change lands on the
+very next shout. |
 
 **REMOVED in v0.27.0:** `shield_block_cooldown_beats` and `shadow_step_cooldown_beats`. Cooldowns live on the
 ABILITY resource now (`ActiveAbility.cooldown_beats`) — use `/ab shield_block cooldown_beats 30` or the panel's
@@ -125,6 +137,10 @@ an ability `.tres` is shared, exactly like MONSTER TYPES. GAME also gained the t
 **v0.29.0 row.** GAME gained **`force tactical`** (`force_tactical_pace`, ships OFF) — the testing pin that
 resolves everyone to tactical pace, and therefore runs the stamina system everywhere. It sits last in the
 shared block deliberately: it is a debugging convenience, not a tuning value.
+
+**v0.30.0 row.** GAME gained **`rally travel`** (`rally_travel_tiles`, default 15) — the pack-rally shout's
+travel distance through open floor, wall-bounded, 0 = off. It sits with the monster-AI dials rather than the
+stamina block: it tunes who joins a fight, not how anybody moves.
 
 ## Resolution notes
 

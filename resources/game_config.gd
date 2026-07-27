@@ -342,6 +342,29 @@ extends Resource
 @export var monster_think_min_beats: int = 1
 @export var monster_think_max_beats: int = 6
 
+## PACK-RALLY SHOUT REACH in TRAVEL TILES (v0.30.0, Jon + Jeff) — the ONE global dial for how far a
+## monster's rally shout carries. Units: Chebyshev-EQUIVALENT travel tiles through OPEN FLOOR. It is
+## not a radius: CombatReferee.rally_pack flood-fills outward from the shouter's authoritative tile
+## (WorldGrid.tiles_within_travel), so **WALLS BOUND THE SHOUT** and only allies the sound can actually
+## REACH are woken. In an open room a travel tile is exactly a king-step, so the number reads like the
+## old radius did; around a corner it costs what walking it would cost.
+##
+## WHY IT REPLACED THE PER-MONSTER RADIUS: the shout used to reuse the shouter's resolved TACTICAL
+## bubble (3-5 tiles), which coupled two unrelated ideas — "how far does my presence set the fight's
+## pace" and "how far does my voice carry" — and, being wall-blind, it both missed the back rows of a
+## big room and could pull through a wall. One global dial, wall-bounded, decouples them.
+##
+## DEFAULT 15 is deliberately GENEROUS: it covers the largest authored room end to end, so a shout
+## wakes the room you are standing in. A shout leaking a few travel-tiles through an open doorway is
+## INTENDED emergence (a wandering goblin in the room hears it) — if it over-pulls in play, this dial
+## is the answer, not a new rule. 0 = NO SHOUT (the rally is off; the early return in rally_pack).
+##
+## The ONE-HOP contract is unchanged and independent of this number: a rallied monster never re-shouts,
+## so raising this widens one fill, it can never chain a map awake. Read HOST-side and LIVE at each
+## organic aggro latch (MonsterBrain._rally_pack), so `/config rally_travel_tiles 8` lands on the very
+## next shout with no restart.
+@export var rally_travel_tiles: int = 15
+
 ## Provisional playtest toggle (DESIGN §2.2.9): click-to-move pathing. The .tres ships it false, which
 ## drops MoveInput into adjacent-only click mode — a click on one of the 8 neighbor tiles submits one
 ## step, any farther click does nothing (Jeff: "if you click 8 spaces ahead nothing happens"). The SCRIPT

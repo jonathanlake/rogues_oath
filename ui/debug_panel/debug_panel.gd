@@ -73,6 +73,10 @@ const _SHARED_DIALS := [
 	# no-op while the stamina button above reads off).
 	{ "label": "whiff pays recovery", "field": "whiff_pays_recovery", "bool": true },
 	{ "label": "recovery locks actions", "field": "recovery_locks_actions", "bool": true },
+	# v0.30.0 — the pack-rally SHOUT's reach in TRAVEL tiles through open floor (walls bound it; 0 = no
+	# shout). Sits with the other monster-AI dials rather than the stamina block: it tunes who joins a
+	# fight, not how anybody moves.
+	{ "label": "rally travel", "field": "rally_travel_tiles", "min": 0, "max": 40, "step": 1 },
 	# v0.29.0 — the TESTING PIN, deliberately last in the group so it doesn't read as a balance dial:
 	# everyone resolves tactical while it is on, which also runs the stamina system everywhere.
 	{ "label": "force tactical", "field": "force_tactical_pace", "bool": true },

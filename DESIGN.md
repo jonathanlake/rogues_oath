@@ -1088,11 +1088,20 @@ per spawned instance — two exist: **supportive** (heal ×1.5, smite ×0.85) an
 smite ×1.3). The `/ai` dev toggle broadcasts each decision's full score table to the F3 overlay so a
 session can watch the weights live.
 
-**Pack rally (all brains, not just utility):** a goblin entering combat — proximity aggro or being hit —
-rallies every allied brain inside its own tactical bubble (`resolved_tactical_radius()`); rallied brains
-latch aggro but do NOT re-rally (one hop, no map-wide cascade). This is how the shaman joins fights beyond
-its own 3-tile aggro: the frontline aggros, the pack wakes, the shaman opens at its spell ranges (smite 8,
-heal 5 — per-spell exports, deliberately decoupled from aggro).
+**Pack rally = THE SHOUT (all brains, not just utility; sound model v0.30.0):** a goblin entering combat —
+proximity aggro or being hit — SHOUTS, and the shout travels as a wall-bounded SOUND FLOOD-FILL: it
+propagates through open floor tiles (8-way BFS, the A* corner rule, bodies don't block sound) up to
+`GameConfig.rally_travel_tiles` travel-tiles (dial, ships 15 — covers the largest room) and STOPS AT WALLS.
+Every allied brain standing anywhere the sound reaches latches aggro; rallied brains do NOT re-shout (one
+hop, no map-wide cascade — walls now do the bounding that the hop limit alone used to). Chosen over
+authored pack/room ids deliberately (Jon + Jeff, 2026-07-26) to keep the emergence: a wanderer standing in
+the room hears the fight, a fleeing shaman can drag neighbours back, and a shout CAN leak a few
+travel-tiles through an open doorway — intended, and the dial handles over-pull. This replaced the
+pre-v0.30.0 wall-blind Chebyshev radius (= the rallier's tactical bubble, 3-5 tiles), which left the back
+rows of big rooms asleep; the shout is now fully DECOUPLED from `tactical_radius_tiles` (the pace bubble),
+closing the §2.12 "one field feeds both bubbles" finding. Aggro ACQUISITION is normalized alongside:
+every goblin type acquires at 5 tiles (v0.30.0, was 3-5 mixed); the shaman still opens at its spell
+ranges (smite 8, heal 5 — per-spell exports, deliberately decoupled from aggro).
 
 **Shipped so far (v0.22.0):** the scorer + opt-in flag; the Goblin Shaman on utility AI with
 Heal (quadratic missing-HP curve — scratches score ~nothing, a dying ally dominates), Smite (standstill
@@ -1107,15 +1116,18 @@ a **3.75s** cast at the shipped 0.25s tactical beat; v0.23.0 authored 3 beats ag
 its day, i.e. the 1.5s cast this section used to quote, and the retunes to 10 (v0.26.0) then 15 (v0.27.0)
 made the channel the shaman's real cost — and its smite weight is authored DOWN, healer first); a
 pinned-aggressive Shaman Zealot holds the east flank lane.
-The room mouth is the tripwire: the Brute's aggro trips there and its authored rally bubble (5) pulls the
-whole pack, Zealot included. The intended arc — "focus the big one" fails visibly (heals out-pace the
-trade, verified: 5.6s unhealed vs 7.7s healed under identical focus — **measured at the v0.23.0 tempo and
-cast length, so read them as the shape of the finding, not as current seconds**), "kill the healer" is the real fight,
-and the last shaman turns and fights. Emergent, unauthored: the Zealot heals allies while its smite is
-pending-blocked, and the pack heals its own wounded Mender. Design findings the calibration runs bought:
-one monster's `tactical_radius_tiles` feeds BOTH the pace bubble and the rally bubble (splitting them is
-future work), and the chase model inverts tank order — a slow anvil arrives last, so the Brute runs at
-normal speed until a hold-position behavior exists (the authored `speed_lumbering` tier waits for it).
+The room mouth is the tripwire: the Brute's aggro trips there (5 tiles — the v0.30.0 normalized number;
+its pre-v0.30.0 authored 4-aggro/5-bubble split, the "slows you before it notices you" quirk, is retired
+with the shout model, and its whole-room shout now pulls the pack regardless). The intended arc — "focus
+the big one" fails visibly (heals out-pace the trade, verified: 5.6s unhealed vs 7.7s healed under
+identical focus — **measured at the v0.23.0 tempo and cast length, so read them as the shape of the
+finding, not as current seconds**), "kill the healer" is the real fight, and the last shaman turns and
+fights. Emergent, unauthored: the Zealot heals allies while its smite is pending-blocked, and the pack
+heals its own wounded Mender. Design findings the calibration runs bought: one monster's
+`tactical_radius_tiles` fed BOTH the pace bubble and the rally bubble (**closed v0.30.0** — the shout has
+its own global `rally_travel_tiles` dial; `tactical_radius_tiles` is pace-only now), and the chase model
+inverts tank order — a slow anvil arrives last, so the Brute runs at normal speed until a hold-position
+behavior exists (the authored `speed_lumbering` tier waits for it).
 
 **Still envisioned:** positional movement objectives (move *behind* allied melee, formation kiting,
 heal-range approach as its own scored candidate); more personalities; a crowded-top-set tie-break (today

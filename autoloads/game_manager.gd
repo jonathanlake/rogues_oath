@@ -138,7 +138,13 @@ const DEV_GAME_FIELDS := ["tactical_beat_sec",
 		# v0.29.0 — a DEV PIN rather than a balance dial: everyone resolves TACTICAL while it is on, which
 		# also switches the stamina system on everywhere (stamina gates on is_tactical). Host-side only and
 		# read live by PaceReferee at each resolve, so a plain _GAME_FIELD_SPECS row is all it needs.
-		"force_tactical_pace"]
+		"force_tactical_pace",
+		# v0.30.0 — the pack-rally SHOUT's travel reach (a wall-bounded flood fill, not a radius). A live
+		# dial for the same reason banter_earshot_tiles is one: the thing it tunes ("did that shout wake the
+		# right room, and did it leak too far through the doorway?") is a feel question about a distance, and
+		# answering it by restarting for each number is exactly what these dials exist to avoid. Host-side
+		# only, read live at each organic aggro latch, so a plain _GAME_FIELD_SPECS row is all it needs.
+		"rally_travel_tiles"]
 ## v0.27.0: `shield_block_cooldown_beats` / `shadow_step_cooldown_beats` are GONE from this list because the
 ## GameConfig fields are gone — a cooldown lives on its ActiveAbility `.tres` now and is tuned with `/ab`
 ## (DEV_ABILITY_FIELDS above) or the panel's CLASSES section. A stale `/config shield_block_cooldown_beats`

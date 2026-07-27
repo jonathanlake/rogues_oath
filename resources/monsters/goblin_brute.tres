@@ -14,5 +14,4 @@ bonus_damage = 2
 bonus_windup_beats = 1.0
 bonus_recovery_beats = 1.0
 glide_speed = ExtResource("1_lumb")
-aggro_range_tiles = 4
-tactical_radius_tiles = 5
+aggro_range_tiles = 5

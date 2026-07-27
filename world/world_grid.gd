@@ -166,6 +166,76 @@ static func line_tiles(from: Vector2i, to: Vector2i) -> Array[Vector2i]:
 
 # ── Pathfinding ───────────────────────────────────────────────────────────────
 
+# The eight king-move offsets, in the order the flood fill expands them (orthogonals first, then
+# diagonals — cosmetic only, since a uniform-cost BFS reaches every tile at the same distance either
+# way). Lives beside the pathfinding block because tiles_within_travel is its only reader.
+const _NEIGHBOR_STEPS: Array[Vector2i] = [
+	Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1),
+]
+
+
+## SOUND PROPAGATION primitive (v0.30.0, the pack-rally shout): every tile reachable from `origin`
+## within `max_travel` 8-way steps THROUGH OPEN FLOOR, as a Dictionary of Vector2i -> int travel
+## distance. `origin` is included at distance 0. A plain uniform-cost BFS, so the value stored for a
+## tile is its true shortest travel distance, not the order it happened to be visited in.
+##
+## WHY IT EXISTS: a wall-blind Chebyshev radius answers "how far away is that" — a shout needs "can
+## the sound GET there". Walls bound this fill, so a shout fills the room it was made in and leaks
+## only through actual openings (a doorway leak of a few travel-tiles is INTENDED emergence, and the
+## one global travel dial is how over-pull is answered).
+##
+## CORNER RULE — deliberately the A* grid's: a DIAGONAL step is allowed only when at least one of its
+## two flanking orthogonals is walkable (AStarGrid2D.DIAGONAL_MODE_AT_LEAST_ONE_WALKABLE — see
+## _build_astar, and DESIGN §2.2.7's relaxed wall half). A single wall corner may be rounded; a
+## diagonal squeeze between two walls that touch only at a corner may not. That choice is what keeps
+## **travel distance == Chebyshev distance in open floor**, so every radius intuition the old
+## wall-blind rally taught (and the tiles the F7 overlay draws) keeps its meaning — the fill only ever
+## takes tiles AWAY relative to the old radius, never adds surprising ones.
+##
+## OCCUPANCY IS DELIBERATELY IGNORED, matching the _astar stance above: BODIES DO NOT BLOCK SOUND. A
+## packed corridor still carries a shout, and a fill can never depend on where everyone happened to be
+## standing this frame.
+##
+## STATELESS — no cache, by design. The map is 48x28 and the fill is capped, so a full-map BFS is a
+## few hundred Dictionary writes; a cache would buy nothing and would be one more thing M4a's
+## procedural regeneration has to remember to invalidate (see the _astar NOTE below).
+##
+## EDGE CASES: `max_travel <= 0` returns just {origin: 0} when the origin is walkable (a shout with no
+## reach still happens where it happened). A NON-WALKABLE origin returns an EMPTY Dictionary — a shout
+## from inside a wall is an upstream bug, and this mirrors the wall-sentinel treatment callers already
+## use for "that entity is gone".
+static func tiles_within_travel(origin: Vector2i, max_travel: int) -> Dictionary:
+	var reached: Dictionary = {}
+	if not is_walkable(origin):
+		return reached
+	reached[origin] = 0
+	if max_travel <= 0:
+		return reached
+	# Array-as-queue with a head index (no pop_front on a growing array): every tile is enqueued once,
+	# at its final distance, so the walk is O(reachable tiles).
+	var queue: Array[Vector2i] = [origin]
+	var head := 0
+	while head < queue.size():
+		var tile: Vector2i = queue[head]
+		head += 1
+		var dist: int = reached[tile]
+		if dist >= max_travel:
+			continue
+		for step in _NEIGHBOR_STEPS:
+			var next: Vector2i = tile + step
+			if reached.has(next) or not is_walkable(next):
+				continue
+			# The corner rule's wall half: refuse the diagonal only when BOTH flanks are walls.
+			if step.x != 0 and step.y != 0 \
+					and not is_walkable(Vector2i(tile.x + step.x, tile.y)) \
+					and not is_walkable(Vector2i(tile.x, tile.y + step.y)):
+				continue
+			reached[next] = dist + 1
+			queue.append(next)
+	return reached
+
+
 # Lazily-built A* over the room, shared by every caller (static, like everything here). Solids
 # come from is_wall only — OCCUPANCY IS DELIBERATELY NOT IN THIS GRID: bodies are volatile
 # (they move every step, and per the corner rule bodies don't block diagonal squeezes), so

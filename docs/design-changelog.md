@@ -9,6 +9,28 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.30.0 (2026-07-26) — JEFF'S FOURTH BATCH, PART TWO: PULL ONE GOBLIN AND THE ROOM ANSWERS — BUT
+  WALLS CONTAIN IT.** The "whole room fights us" rework, built the way Jon and Jeff chose it: emergence
+  over pack ids.
+  **A GOBLIN THAT ENTERS COMBAT NOW SHOUTS, AND THE SHOUT IS A SOUND.** It travels through open floor —
+  around corners, down a room's length — and **stops at walls.** Every goblin standing anywhere the
+  sound reaches joins the fight; goblins it wakes do NOT shout again (one hop, so one pull can never
+  chain the whole map awake — the walls now do the containing). Before this, the "rally" was a blind
+  3-5 tile circle: front goblins aggroed, the back row slept through the fight, and a big enough circle
+  would have pulled goblins through solid stone from the next room. Now the room is the fight because
+  the room's SHAPE says so — no authored "pack" lists, so the emergent moments survive: a wandering
+  goblin that happened into the room hears it; a shout CAN leak a few tiles through an open doorway
+  (that's a feature — the dial below handles over-pull).
+  **ONE DIAL: `rally travel` (ships 15,** debug panel or `/config rally_travel_tiles`, 0 = no shout**)**
+  — how far the sound travels through open floor. Verified live two-instance: a shaman 11 tiles from the
+  player (too far to notice on its own) joined the fight through a packmate's shout at travel 15, stayed
+  asleep at travel 5 (the old reach), and no other room engaged. This also finally SPLITS the shout from
+  the pace bubble — `tactical_radius_tiles` now only means "you're in the fight" slow-down, closing the
+  v0.23.0 Warren finding.
+  **ALL GOBLINS NOW NOTICE YOU AT 5 TILES** (was a mix of 3, 4 and 5 — Jon: normalize everything,
+  ambusher included). The Brute's old "slows you at 5 before noticing at 4" quirk is deliberately
+  retired with it.
+
 - **v0.29.0 (2026-07-26) — JEFF'S FOURTH BATCH, PART ONE: THE TWO-TILE HIT IS DEAD, AND YOU CAN SEE
   YOUR RECOVERY.** Five changes; the aggro/"whole room fights" rework is part two (v0.30.0).
   **YOU CAN NO LONGER BE HIT FROM TWO TILES AWAY — AND STICKY SWINGS ARE BACK ON.** Jon reported the
