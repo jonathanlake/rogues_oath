@@ -77,6 +77,16 @@ enum TargetMode { TILE, CREATURE }
 ## within a class's `active_abilities`.
 @export var display_name: String = ""
 
+## PROSE for the hotbar tooltip (v0.39.0), shown beneath the ability's name. PRESENTATION ONLY — no
+## referee reads it and it never crosses the wire.
+##
+## NUMBERS ARE DERIVED, PROSE IS AUTHORED (the same rule ItemType.description carries). The tooltip
+## appends a line built from whichever fields below are authored non-zero — damage, stun, root, reach,
+## cooldown, and the windup/recovery pair — so a `/ab` retune is reflected instantly and this text can
+## never quote a stale number. WRITE THE MECHANIC, NOT THE MATH: say that Kick stuns and sets up a Sneak
+## Attack; do not say how long it stuns for.
+@export_multiline var description: String = ""
+
 ## Hotbar icon cell (column, row) into assets/32rogues/items.png — 0-indexed, like an ItemType icon.
 @export var atlas_coords: Vector2i = Vector2i.ZERO
 

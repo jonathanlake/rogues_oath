@@ -4,6 +4,7 @@
 
 [resource]
 script = ExtResource("1_aa")
+description = "Boot an adjacent enemy back. Deals no damage — the stun is the point, and a stunned target is open to a Sneak Attack."
 display_name = "Kick"
 atlas_coords = Vector2i(1, 14)
 log_verb = "kicks"

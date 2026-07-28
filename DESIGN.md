@@ -975,7 +975,7 @@ late-join gear sync (v0.27.0)**.
 
 **Still envisioned:** drop tables + the designer `.tres`-only authoring gate (= milestone **M5**,
 which owns that bar — this track points at it, doesn't restate its Done=); the REST of the equipment slot
-model (the other eight sockets — head/gloves/boots/rings/amulet and the `[Off]`-hand shield §2.11 waits on
+model (the other seven sockets — head/gloves/boots/rings/amulet
 — plus the **weight-promotion rule**, which is a no-op while body is the only armor slot; armor items
 themselves and the body slot shipped in v0.27.0, §2.3.8, after v0.26.0's class-level phase 1); more
 item categories (buffs, keys, scrolls, throwables); the open v1 questions — item stacking,
@@ -984,6 +984,24 @@ drop/discard, numbers/cues (Feel=). Two known rough edges live with it: an item 
 a proximity scan was judged unjustified), and the cross-catalog `display_name` collision guard is a
 startup WARNING rather than a hard failure, so a name authored into both catalogs can misclassify
 (pre-existing — it already mis-routes equip-vs-use).
+
+**v0.39.0 — THE OFF-HAND IS A REAL SLOT, AND EVERY ITEM EXPLAINS ITSELF.** The `[Off]` socket stopped
+being a drawn rectangle: `Player.equipped_off_hand` + `PlayerClass.starting_off_hand` mirror the body
+slot's every path (spawn seed, `/class` reconciliation *including* the null-strips-you half, late-join
+sync, HUD paint). First tenant: the knight's **kite shield**.
+**IT ADJUDICATES NOTHING YET, deliberately.** No referee reads the off-hand, and `worn_armor_weight()`
+still reads the BODY slot alone, so a shield neither mitigates damage nor moves the wearer's weight band.
+Its tooltip claims to grant Shield Block; the CLASS grants it. That gap is named here rather than hidden
+because it is the whole content of ROADMAP's *equipment grants abilities* item — closing it needs an
+ability source beyond `PlayerClass.active_abilities`, which in turn needs a ruling on unequipping
+mid-cooldown and on whether abilities become losable with loot.
+**TOOLTIPS, and the rule that keeps them true:** every equipment socket, bag slot and ability slot carries
+one — name, then meaning. **NUMBERS ARE DERIVED, PROSE IS AUTHORED.** A `description` field on ItemType /
+ActiveAbility / WeaponType holds only what the data cannot say; the numeric line is built at paint time
+from the live resource, so a debug-panel retune moves the text with it and a `.tres` can never quote a
+stale figure. The armour line states the real two-term rule (§2.3.8) rather than half of it, reading the
+flat term through the same `GameConfig.armor_flat_for` the referee applies — one source for the number, so
+the explanation and the adjudication cannot drift.
 
 **Complete when** items are a full designer-authored system: drop tables, multiple categories that
 all *do* something (including equipment that equips), the `.tres`-only gate (M5) met. *(Stage

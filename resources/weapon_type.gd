@@ -37,6 +37,12 @@ enum DamageType { SLASHING, BLUNT, PIERCING }
 ## one-word so the knob token and the log read the same.
 @export var display_name: String = "longsword"
 
+## PROSE for the equipment tooltip (v0.39.0), shown beneath the weapon's name. PRESENTATION ONLY.
+## NUMBERS ARE DERIVED, PROSE IS AUTHORED — the tooltip builds its own line from damage_min/max, the
+## windup/recovery beats and (for a ranged weapon) range_tiles, so this field must never restate them.
+## Empty is fine and is the honest default: a longsword's numbers ARE its description.
+@export_multiline var description: String = ""
+
 # ── Gameplay (read HOST-side by CombatReferee; never the wire) ─────────────────
 
 ## RECOVERY BEATS after the strike/loose (renamed from `attack_beats`, v0.23.1 — Jon: the strike is

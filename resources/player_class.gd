@@ -75,6 +75,16 @@ extends Resource
 ## (LIGHT/0.10), knight → chainmail (MEDIUM/0.25) — v0.26.0's numbers, now on objects you can take off.
 @export var starting_body_armor: ItemType = null
 
+## The OFF-HAND item this class starts carrying (v0.39.0) — the twin of `starting_body_armor` above,
+## seeded / `/class`-reconciled / late-join-synced by the identical paths. Null (the default) means empty
+## hands, so no existing class needed touching. Shipped: knight → kite shield; everyone else null.
+##
+## THE SHIELD IS IDENTITY, NOT MECHANICS, TODAY. Its tooltip says it grants Shield Block; the knight's
+## class ability list is what actually grants it (Player.set_off_hand carries the full note, and the
+## parking-lot item that would close the gap). Nothing adjudicates from this slot yet — a shield neither
+## mitigates damage nor moves the wearer's armour weight band.
+@export var starting_off_hand: ItemType = null
+
 ## The class's WEAPON ROSTER (v0.17.0) — the loadout this class carries and Tab-cycles through. EMPTY (the
 ## default) = use the GLOBAL GameConfig.weapon_roster fallback (the shipped dagger↔longsword cycle); NON-EMPTY
 ## overrides it, so the swap validator cycles THIS list and a host-side set_class equips its FIRST entry. The

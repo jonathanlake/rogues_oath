@@ -235,6 +235,16 @@ rough per-milestone effort signal (session-or-few each).
 
 Not scheduled — pulled in when their moment comes:
 
+- **EQUIPMENT GRANTS ABILITIES** *(named 2026-07-27, Jon: "we may genuinely have the shield grant this
+  ability down the line")*. v0.39.0 put a real **kite shield** in the knight's off-hand with the tooltip
+  *"Grants Shield Block ability"* — but the ability still comes from `PlayerClass.active_abilities`, so the
+  tooltip describes what a knight experiences rather than what the wiring does: **unequipping the shield
+  would leave Shield Block in the bar.** Closing it means an ability SOURCE beyond the class list (DESIGN
+  §2.11 lists it as envisioned) and forces two questions worth deciding rather than discovering: what
+  happens to a slotted ability when you unequip it **mid-cooldown**, and does this make abilities
+  **losable** by dropping loot? Until then the gap is deliberate and documented at `Player.set_off_hand` —
+  do not "fix" the tooltip by wiring a source without that decision.
+
 - **UNIFY THE COMMITTED-ACTION RESOLVE SCAFFOLDING** *(named 2026-07-27, after the v0.29.0–v0.34.0
   run)*. Four near-parallel copies of "commit a window now, resolve it later" live in
   `CombatReferee`: the melee windup (`wind_up` / `_resolve_windup`), abilities

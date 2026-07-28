@@ -6,6 +6,7 @@
 script = ExtResource("1_aa")
 kind = 3
 target_mode = 1
+description = "Bind an enemy where it stands. It can still fight back, it just cannot walk. The cast locks onto the creature and follows it, so the way out is to get beyond your reach before it lands."
 display_name = "Entangling Roots"
 atlas_coords = Vector2i(2, 10)
 log_verb = "entangles"

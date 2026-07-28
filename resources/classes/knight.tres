@@ -1,9 +1,10 @@
-[gd_resource type="Resource" script_class="PlayerClass" load_steps=5 format=3]
+[gd_resource type="Resource" script_class="PlayerClass" load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://resources/player_class.gd" id="1_class"]
 [ext_resource type="Resource" path="res://resources/abilities/shield_bash.tres" id="2_bash"]
 [ext_resource type="Resource" path="res://resources/abilities/shield_block.tres" id="3_block"]
 [ext_resource type="Resource" path="res://resources/items/chainmail.tres" id="4_chain"]
+[ext_resource type="Resource" path="res://resources/items/kite_shield.tres" id="5_kite"]
 
 [resource]
 script = ExtResource("1_class")
@@ -11,3 +12,4 @@ display_name = "knight"
 atlas_coords = Vector2i(0, 1)
 active_abilities = Array[ActiveAbility]([ExtResource("2_bash"), ExtResource("3_block")])
 starting_body_armor = ExtResource("4_chain")
+starting_off_hand = ExtResource("5_kite")

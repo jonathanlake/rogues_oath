@@ -75,6 +75,12 @@ var inventory: Array[String] = []
 ## query. It is not a mirror of authoritative state; it IS the state on the host and a name-resolved copy
 ## everywhere else, which is the same contract equipped_weapon has carried since v0.9.3.
 var equipped_body: ItemType = null
+## The OFF-HAND item (v0.39.0, the knight's kite shield). Same contract as `equipped_body` above in every
+## respect — host-authoritative, name-resolved on every peer, written only through set_off_hand — with one
+## difference worth stating: NOTHING ADJUDICATES FROM IT YET. No referee reads the off-hand, and
+## `worn_armor_weight()` deliberately reads the BODY slot alone, so a shield can neither mitigate damage
+## nor move the wearer's weight band. Today it is identity and a tooltip; see set_off_hand for the rest.
+var equipped_off_hand: ItemType = null
 
 
 func _ready() -> void:
@@ -95,6 +101,11 @@ func _ready() -> void:
 	# starting armor (four of the six) leaves the slot empty.
 	if player_class != null and player_class.starting_body_armor != null:
 		set_body_armor(player_class.starting_body_armor)
+	# The OFF-HAND seeds by the identical rule (v0.39.0, the knight's kite shield) — same shared config,
+	# same "every peer derives it independently, no wire traffic" contract, same reason it lives here
+	# rather than in set_class. Only the knight authors one today; every other class leaves it empty.
+	if player_class != null and player_class.starting_off_hand != null:
+		set_off_hand(player_class.starting_off_hand)
 	# Nameplate is name-only, seeded from the pre-tree display_name; the HP readout rides its own
 	# label under the feet. max_hp is locally known everywhere (an Entity export), so the seed is
 	# correct on every peer with no query; the combat referee's attack events drive live updates via
@@ -196,6 +207,22 @@ func set_weapon(weapon: WeaponType) -> void:
 ## sprite layer, so unlike set_weapon this touches no rig.
 func set_body_armor(item: ItemType) -> void:
 	equipped_body = item
+
+
+## Adopt an OFF-HAND item (v0.39.0, the knight's kite shield) — the one write path for `equipped_off_hand`,
+## the exact twin of set_body_armor above and driven by the same four sources (spawn seed, `/class` loadout,
+## the late-join `sync_player_field "off_hand"` snap, and any future equip validator). `null` empties the
+## hand, which is a legal state. No presentation of its own: the HUD's Off socket repaints off the same
+## events, and there is no paper-doll layer, so this touches no rig.
+##
+## IT GRANTS NOTHING (v0.39.0, and this is deliberate). The kite shield's tooltip reads "Grants Shield
+## Block ability", but the ability still comes from PlayerClass.active_abilities exactly as before —
+## unequipping the shield would leave Shield Block in the bar. That gap is KNOWN and Jon's call for now;
+## making equipment a real ability source is the "abilities from gear" item in ROADMAP's parking lot
+## (DESIGN §2.11 lists it as envisioned). Do not "fix" the tooltip by wiring an ability source here
+## without that decision — it changes what happens to a slotted ability when you unequip mid-cooldown.
+func set_off_hand(item: ItemType) -> void:
+	equipped_off_hand = item
 
 
 ## THE armor WEIGHT BAND this player currently sits in (v0.27.1) — the ONE resolver, living beside

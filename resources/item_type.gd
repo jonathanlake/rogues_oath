@@ -50,6 +50,16 @@ enum EquipSlot { BODY, OFF_HAND, HEAD, HANDS, FEET, RING, AMULET }
 ## sides (host to adjudicate, client to render the log line / catalog the icon).
 @export var display_name: String = "health potion"
 
+## PROSE for the HUD tooltip (v0.39.0), shown beneath the item's name. PRESENTATION ONLY — no referee
+## reads it, and it never crosses the wire (every peer loads the same resource).
+##
+## THE DISCIPLINE, one line: NUMBERS ARE DERIVED, PROSE IS AUTHORED. Do NOT type a heal amount or an
+## armour percentage in here — the tooltip builder reads those off the fields themselves (hud.gd's
+## _item_tooltip), so the text can never disagree with a value someone just retuned in the debug panel.
+## This field is for what the numbers cannot say. Empty (the default) leaves the derived line standing
+## alone, which is the right answer for the potion and both armours.
+@export_multiline var description: String = ""
+
 # ── Taxonomy (read HOST-side for pickup rules; never the wire) ─────────────────
 
 ## What KIND of thing this is (v0.21.0). Before this, "what kind of thing is this" was inferred from WHICH

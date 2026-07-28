@@ -5,6 +5,7 @@
 [resource]
 script = ExtResource("1_aa")
 kind = 1
+description = "Raise your guard. The next hit that reaches you is turned aside completely. Holding it costs nothing — it is spent only when something lands."
 display_name = "Shield Block"
 atlas_coords = Vector2i(6, 11)
 log_verb = "blocks"

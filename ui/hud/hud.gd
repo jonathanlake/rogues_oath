@@ -177,18 +177,32 @@ var _own_weapon_atlas := AtlasTexture.new()
 # nine equipment sockets to hold a real item; the other eight stay cosmetic name labels.
 var _own_body_icon: TextureRect = null
 var _own_body_atlas := AtlasTexture.new()
+# OFF-HAND socket (v0.39.0, the knight's kite shield) — the SECOND equipment socket to hold a real item,
+# built exactly like Body's. Its icon covers the faint "Off" label while something is carried.
+var _own_off_hand_icon: TextureRect = null
+var _own_off_hand_atlas := AtlasTexture.new()
+# The three live equipment SOCKETS, held for their tooltip_text (v0.39.0) — a socket is the hoverable
+# control; its icon and label children are IGNORE and invisible to hit-testing.
+var _own_weapon_socket: Panel = null
+var _own_body_socket: Panel = null
+var _own_off_hand_socket: Panel = null
 # BAG item icons (v0.18.0 chunk B; renamed from _hotbar_* in v0.21.0, when "hotbar" became the bottom-center
 # ability bar): one TextureRect + its own AtlasTexture per REAL bag slot [0..inventory_slots-1], captured when
 # _build_inventory builds the grid so _refresh_bag can paint/hide them from the local player's inventory mirror.
 # Parallel arrays kept in slot order. Sockets drawn PAST capacity are decorative and are deliberately absent
 # from these arrays, so nothing can ever be written or painted past the authored capacity.
 var _bag_icons: Array[TextureRect] = []
+# The bag SOCKETS, parallel to _bag_icons (v0.39.0) — the hoverable control that carries tooltip_text.
+var _bag_slots: Array[Panel] = []
 var _bag_atlases: Array[AtlasTexture] = []
 # ABILITY bar icons (v0.20.3; moved out of the inventory grid into the bottom-center bar in v0.21.0): the
 # accented 1-5 boxes showing the local player's class active_abilities. Parallel arrays in slot order, captured
 # in _build_ability_bar, painted by _refresh_abilities from the class. The 1-5 KEYS fire them
 # (main._unhandled_input) — the sockets themselves are display-only (mouse IGNORE).
 var _ability_icons: Array[TextureRect] = []
+# The ability SOCKETS themselves (v0.39.0), parallel to _ability_icons. Held because the socket — not its
+# IGNORE icon child — is the hoverable control, so it is what carries tooltip_text.
+var _ability_sockets: Array[Panel] = []
 var _ability_atlases: Array[AtlasTexture] = []
 # COOLDOWN OVERLAYS (v0.26.0 instants experiment): one dark ColorRect per ability socket, drained bottom-up
 # over the host's stamped cooldown_sec by note_ability_cooldown. Parallel to the icon arrays. Purely LOCAL
@@ -405,6 +419,7 @@ func refresh_self() -> void:
 	# Body armor (v0.27.0): the same one-line repaint the weapon gets. Reached from the (re)spawn seed (so a
 	# fresh spawn shows its class's starting armor) and from every own gear/class change.
 	_set_body_icon(me.equipped_body)
+	_set_off_hand_icon(me.equipped_off_hand)
 	# Bag (v0.18.0 chunk B): repaint the inventory grid from the player's inventory mirror. Called here so the
 	# (re)spawn seed (_seed_self → refresh_self) shows an EMPTY bag on a fresh spawn — a freed+re-made player
 	# carries nothing — and any own class/weapon refresh re-paints it too (harmless, the mirror is unchanged then).
@@ -760,6 +775,7 @@ func _build_equipment() -> void:
 	hands.add_theme_constant_override("separation", 2)
 	vbox.add_child(hands)
 	var primary := _make_socket(true, "")
+	_own_weapon_socket = primary
 	_own_weapon_icon = TextureRect.new()
 	_own_weapon_icon.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_own_weapon_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -775,7 +791,22 @@ func _build_equipment() -> void:
 	_own_weapon_icon.visible = false
 	primary.add_child(_own_weapon_icon)
 	hands.add_child(primary)
-	hands.add_child(_make_socket(true, "Off"))
+	# OFF-HAND (v0.39.0): a real socket now, built exactly like Body's — icon over the faint "Off" label,
+	# so an empty hand still reads as the off-hand slot.
+	var offhand := _make_socket(true, "Off")
+	_own_off_hand_socket = offhand
+	_own_off_hand_icon = TextureRect.new()
+	_own_off_hand_icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_own_off_hand_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_own_off_hand_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_own_off_hand_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_own_off_hand_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_own_off_hand_atlas.atlas = ITEMS_TEX
+	_own_off_hand_atlas.region = WorldGrid.atlas_region(Vector2i.ZERO)
+	_own_off_hand_icon.texture = _own_off_hand_atlas
+	_own_off_hand_icon.visible = false
+	offhand.add_child(_own_off_hand_icon)
+	hands.add_child(offhand)
 	# 6px spacer before the armor grid (the hands→armor visual separation).
 	var spacer := Control.new()
 	spacer.custom_minimum_size = Vector2(0, 6)
@@ -794,6 +825,7 @@ func _build_equipment() -> void:
 		# label, built exactly like the primary hand's above. The faint "Body" label stays underneath and is
 		# simply covered while something is worn, so an empty slot still reads as the body slot.
 		if label_text == "Body":
+			_own_body_socket = socket
 			_own_body_icon = TextureRect.new()
 			_own_body_icon.set_anchors_preset(Control.PRESET_FULL_RECT)
 			_own_body_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -849,6 +881,10 @@ func _build_inventory() -> void:
 		slot.add_child(it_icon["rect"])
 		_bag_icons.append(it_icon["rect"])
 		_bag_atlases.append(it_icon["atlas"])
+		# Kept for its tooltip_text (v0.39.0), the same reason the ability sockets are kept.
+		_bag_slots.append(slot)
+		# STOP, not the PASS every other socket takes: these genuinely CONSUME their click (equip / use), so
+		# the event must stop here rather than bubble on to the world handler and also move the player.
 		slot.mouse_filter = Control.MOUSE_FILTER_STOP
 		slot.gui_input.connect(_on_slot_gui_input.bind(i))
 
@@ -858,8 +894,11 @@ func _build_inventory() -> void:
 ## and can never move the HUD zoom h; _relayout places it in HUD-LOCAL px on the world frame's bottom edge (see
 ## the header's ABILITY BAR note). An HBoxContainer laid out at exactly _ability_bar_size(), so the sockets sit
 ## on the same 2px gaps as every other slot block. Accent (gold) sockets — the visual signature the bag gave up.
-## MOUSE IGNORE on the bar AND every socket: ability slots are display-only (the 1-5 KEYS fire them via
-## main._unhandled_input), so a click here must pass straight through to move_input.gd's world handling.
+## MOUSE: the bar is IGNORE and every socket is PASS (v0.39.0, was IGNORE). Ability slots are still
+## display-only — the 1-5 KEYS fire them via main._unhandled_input — and a click here must still pass
+## straight through to move_input.gd's world handling, which PASS preserves: it takes hover (for the
+## tooltip) but lets an unhandled click bubble on out. This bar sits over the PLAY AREA, so that
+## distinction is load-bearing; STOP here would silently eat clicks in the middle of the screen.
 ## Clickable ability slots stay a DESIGN §2.11 future item.
 func _build_ability_bar() -> void:
 	var bar := HBoxContainer.new()
@@ -871,6 +910,9 @@ func _build_ability_bar() -> void:
 	for i in ABILITY_SLOTS:
 		var slot := _make_socket(true, "")
 		bar.add_child(slot)
+		# The SOCKET is kept (v0.39.0), not just its icon: the socket is the hoverable control, so it is
+		# what carries tooltip_text. The icon is IGNORE and invisible to hit-testing.
+		_ability_sockets.append(slot)
 		# ABILITY icon (v0.20.3): the class active_abilities[i] icon, painted by _refresh_abilities.
 		var a_icon := _make_slot_icon()
 		slot.add_child(a_icon["rect"])
@@ -936,6 +978,9 @@ func _refresh_passives(player_class: PlayerClass) -> void:
 ## Point the primary-hand icon at the equipped weapon's items.png region (the exact weapon_rig pattern).
 ## A null weapon hides the icon (bare hands). Refreshed by refresh_self, driven on spawn + on_weapon_swap.
 func _set_weapon_icon(weapon: WeaponType) -> void:
+	# Tooltip beside the icon (v0.39.0), on the SOCKET — set before the null return so bare hands clear it.
+	if _own_weapon_socket != null:
+		_own_weapon_socket.tooltip_text = _weapon_tooltip(weapon)
 	if weapon == null:
 		_own_weapon_icon.visible = false
 		return
@@ -947,6 +992,8 @@ func _set_weapon_icon(weapon: WeaponType) -> void:
 ## _set_weapon_icon above. A null item hides the icon, revealing the faint "Body" label again (unarmored).
 ## Refreshed by refresh_self, driven on spawn + on_gear_changed (the equip event / late-join snap).
 func _set_body_icon(item: ItemType) -> void:
+	if _own_body_socket != null:
+		_own_body_socket.tooltip_text = _item_tooltip(item)
 	if _own_body_icon == null:
 		return
 	if item == null:
@@ -954,6 +1001,20 @@ func _set_body_icon(item: ItemType) -> void:
 		return
 	_own_body_atlas.region = WorldGrid.atlas_region(item.atlas_coords)
 	_own_body_icon.visible = true
+
+
+## The OFF-HAND socket's icon + tooltip (v0.39.0) — the exact twin of _set_body_icon. A null item hides the
+## icon and reveals the faint "Off" label again. Driven by refresh_self off Player.equipped_off_hand.
+func _set_off_hand_icon(item: ItemType) -> void:
+	if _own_off_hand_socket != null:
+		_own_off_hand_socket.tooltip_text = _item_tooltip(item)
+	if _own_off_hand_icon == null:
+		return
+	if item == null:
+		_own_off_hand_icon.visible = false
+		return
+	_own_off_hand_atlas.region = WorldGrid.atlas_region(item.atlas_coords)
+	_own_off_hand_icon.visible = true
 
 
 ## Paint the ABILITY BAR (v0.20.3; bottom-center since v0.21.0) from the LOCAL player's class active_abilities —
@@ -964,13 +1025,18 @@ func _refresh_abilities(player_class: PlayerClass) -> void:
 	var abilities: Array = player_class.active_abilities if player_class != null else []
 	for i in _ability_icons.size():
 		var ability: ActiveAbility = abilities[i] if i < abilities.size() else null
+		# The TOOLTIP is set in the same breath as the icon (v0.39.0) — from the same resource, in the same
+		# branch — so the picture and the words can never describe different abilities. An empty slot is
+		# cleared to "", which Godot renders as no tooltip at all.
 		if ability != null:
 			_ability_atlases[i].region = WorldGrid.atlas_region(ability.atlas_coords)
 			_ability_icons[i].visible = true
 			_ability_names[i] = ability.display_name
+			_ability_sockets[i].tooltip_text = _ability_tooltip(ability)
 		else:
 			_ability_icons[i].visible = false
 			_ability_names[i] = ""
+			_ability_sockets[i].tooltip_text = ""
 		# A class change re-keys the sockets, so any overlay still draining belongs to the OLD loadout — clear
 		# it rather than leave a stale scrim over a different ability (v0.26.0). The referee's cooldown map is
 		# untouched by this: the cooldown is still charged, the eye just stops being told about the wrong socket.
@@ -990,7 +1056,11 @@ func _refresh_bag() -> void:
 	# in-capacity sockets, so a decorative filler socket can never be painted and an over-long mirror can never
 	# overrun the grid.
 	for i in _bag_icons.size():
-		var coords := _bag_icon_coords(str(bag[i])) if i < bag.size() else Vector2i(-1, -1)
+		var entry := str(bag[i]) if i < bag.size() else ""
+		var coords := _bag_icon_coords(entry) if not entry.is_empty() else Vector2i(-1, -1)
+		# Tooltip beside the icon, from the same NAME (v0.39.0) — an unresolvable entry yields "" from both,
+		# so a slot can never show a picture with no words or words with no picture.
+		_bag_slots[i].tooltip_text = _bag_tooltip(entry)
 		if coords.x >= 0:
 			_bag_atlases[i].region = WorldGrid.atlas_region(coords)
 			_bag_icons[i].visible = true
@@ -998,6 +1068,109 @@ func _refresh_bag() -> void:
 			# Empty slot OR an unresolvable name (absent from both catalogs) — clear back to a bare socket rather
 			# than leave a stale icon; the config-validation guards warn on a genuinely missing/ambiguous name.
 			_bag_icons[i].visible = false
+
+
+# ── Tooltips (v0.39.0) ────────────────────────────────────────────────────────
+#
+# THE ONE RULE, so every tooltip in the game reads the same way:
+#   NUMBERS ARE DERIVED, PROSE IS AUTHORED.
+# The derived line is built HERE from the resource's own live fields; the authored `description` follows
+# on its own line when non-empty and never replaces it. So retuning a heal, an armour percentage or an
+# ability's cooldown in the debug panel moves the tooltip in the same breath, and no `.tres` can ever
+# quote a stale figure — which is precisely why the numeric items are NOT hand-written.
+#
+# Presentation only. Nothing here adjudicates, and every peer resolves the same resources.
+
+
+## Assemble "NAME", a blank line, then whichever of the derived/authored parts exist. Godot renders a
+## multi-line tooltip as-is, which gives the name-on-top / meaning-underneath shape without a custom
+## tooltip Control. A nameless thing yields "" — and an empty tooltip_text shows no tooltip at all,
+## which is the right outcome for an empty socket.
+func _compose_tooltip(item_name: String, derived: String, prose: String) -> String:
+	if item_name.is_empty():
+		return ""
+	var body := ""
+	if not derived.is_empty():
+		body = derived
+	if not prose.is_empty():
+		body = prose if body.is_empty() else body + "\n" + prose
+	return item_name if body.is_empty() else "%s\n\n%s" % [item_name, body]
+
+
+## Trim a beats figure for display: 6.0 → "6", 2.5 → "2.5". Beats are authored as floats but are nearly
+## always whole, and "stuns for 6.0 beats" reads like a spreadsheet.
+func _beats(value: float) -> String:
+	return "%.0f" % value if is_equal_approx(value, roundf(value)) else "%.1f" % value
+
+
+## Tooltip for a consumable / worn ITEM.
+##
+## The ARMOUR line states the real two-term rule (DESIGN §2.3.8) rather than just the percentage, because
+## half a rule is a misleading rule. CAREFUL READING OF THE REFEREE, since this text is a promise to the
+## player: combat_referee applies `mini(pct_result, flat_result)` — the smaller resulting DAMAGE, which is
+## the LARGER reduction. So "whichever is greater" is correct even though the referee's operator is a min:
+## the tooltip speaks in reductions, the referee speaks in damage. The flat figure comes from
+## GameConfig.armor_flat_for, the same function the referee calls, so the two cannot disagree.
+##
+## GATED so a non-armour EQUIPMENT item (the kite shield: 0% and UNARMORED) prints no armour line at all,
+## rather than "0% or 0, whichever is greater" under its prose.
+func _item_tooltip(item: ItemType) -> String:
+	if item == null:
+		return ""
+	var derived := ""
+	if item.category == ItemType.Category.POTION or item.heal_amount > 0:
+		derived = "Heals %d HP." % item.heal_amount
+	elif item.phys_damage_reduction > 0.0 or item.armor_weight != ItemType.ArmorWeight.UNARMORED:
+		var flat := GameManager.config.armor_flat_for(item.armor_weight)
+		derived = "Reduces physical damage by %d%% or %d, whichever is greater." % [
+				int(round(item.phys_damage_reduction * 100.0)), flat]
+	return _compose_tooltip(item.display_name, derived, item.description)
+
+
+## Tooltip for an equipped WEAPON — its damage band and the two halves of its committed window, plus reach
+## for a ranged one. All live off the resource, so a `/w` retune is reflected immediately.
+func _weapon_tooltip(weapon: WeaponType) -> String:
+	if weapon == null:
+		return ""
+	var parts: Array[String] = ["%d-%d damage" % [weapon.damage_min, weapon.damage_max]]
+	if weapon.windup_beats > 0.0:
+		parts.append("%s beat windup" % _beats(weapon.windup_beats))
+	parts.append("%s beat recovery" % _beats(weapon.recovery_beats))
+	if weapon.range_tiles > 0:
+		parts.append("range %d" % weapon.range_tiles)
+	return _compose_tooltip(weapon.display_name, ", ".join(parts) + ".", weapon.description)
+
+
+## Tooltip for an ACTIVE ABILITY. The derived line lists only the terms this ability actually authors
+## non-zero, so Kick shows a stun and a cooldown with no damage, and Shield Block shows a cooldown alone —
+## an ability never advertises a number it does not have.
+func _ability_tooltip(ability: ActiveAbility) -> String:
+	if ability == null:
+		return ""
+	var parts: Array[String] = []
+	if ability.damage > 0:
+		parts.append("%d damage" % ability.damage)
+	if ability.stun_beats > 0.0:
+		parts.append("stuns %s beats" % _beats(ability.stun_beats))
+	if ability.root_beats > 0.0:
+		parts.append("roots %s beats" % _beats(ability.root_beats))
+	if ability.range_tiles > 1:
+		parts.append("range %d" % ability.range_tiles)
+	if ability.windup_beats + ability.recovery_beats > 0.0:
+		parts.append("%s beat cast" % _beats(ability.windup_beats + ability.recovery_beats))
+	if ability.cooldown_beats > 0.0:
+		parts.append("%s beat cooldown" % _beats(ability.cooldown_beats))
+	var derived := (", ".join(parts) + ".") if not parts.is_empty() else ""
+	return _compose_tooltip(ability.display_name, derived, ability.description)
+
+
+## Tooltip for a BAG entry by NAME — resolved consumable-first then weapon, the same order (and for the
+## same disjoint-catalogs reason) as _bag_icon_coords. An unresolvable name yields "" (no tooltip).
+func _bag_tooltip(name: String) -> String:
+	var it := GameManager.config.item_by_name(name)
+	if it != null:
+		return _item_tooltip(it)
+	return _weapon_tooltip(GameManager.config.weapon_by_name(name))
 
 
 ## The items.png cell for a bag entry NAME, resolving a consumable (item_catalog) first, then a looted weapon
@@ -1027,7 +1200,15 @@ func _on_slot_gui_input(event: InputEvent, slot: int) -> void:
 func _make_socket(accent: bool, label_text: String) -> Panel:
 	var socket := Panel.new()
 	socket.custom_minimum_size = Vector2(SLOT_PX, SLOT_PX)
-	socket.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# HOVERABLE, NOT CLICK-EATING (v0.39.0 tooltips). PASS, deliberately, not STOP: PASS receives mouse
+	# movement and the mouse_entered/exited signals — which is all a tooltip needs — while an unhandled
+	# click still bubbles up and out to the world handler. STOP would have worked for the right-edge
+	# equipment panel and been a REGRESSION for the ability bar, which sits bottom-CENTRE over the play
+	# area: every click there would have stopped reaching move_input. One filter serves both because the
+	# sockets are display-only; the bag slots keep STOP precisely because they DO consume their clicks.
+	# The socket's CHILDREN (label, icon, cooldown scrim) stay IGNORE, so hit-testing skips them and the
+	# hover resolves to exactly one control with exactly one tooltip.
+	socket.mouse_filter = Control.MOUSE_FILTER_PASS
 	socket.add_theme_stylebox_override("panel", _slot_style(accent))
 	if not label_text.is_empty():
 		var lbl := Label.new()

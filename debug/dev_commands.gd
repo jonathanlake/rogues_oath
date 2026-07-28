@@ -648,6 +648,21 @@ func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dic
 		}
 		if worn != null:
 			gear_data["discarded"] = worn.display_name
+		# OFF-HAND reconciled in the SAME breath and by the SAME rule (v0.39.0): applied UNCONDITIONALLY,
+		# including null, which empties the hand. Without the null half, switching knight → rogue would
+		# leave a kite shield floating in a rogue's hand forever — the exact asymmetry the body slot's
+		# "INCLUDING null, which STRIPS you" contract exists to prevent.
+		#
+		# IT RIDES THE EXISTING gear EVENT rather than only being set host-side (GLM diff review). The
+		# obvious-looking shortcut — set it locally and let the class_changed broadcast sort the rest out —
+		# is WRONG, and the reason is worth writing down: `set_class` only repaints the sprite and `_ready`
+		# fires once at spawn, so nothing re-seeds gear on a live class change. A CLIENT running `/class
+		# knight` would have had the shield set on the host's copy of its node and never on its own, so its
+		# own HUD (which reads its own node) would show an empty hand. A present-only field on the event the
+		# body slot already posts costs nothing, needs no new log line, and keeps both slots on one path.
+		var starting_off: ItemType = player_class.starting_off_hand
+		gear_data["off_hand"] = starting_off.display_name if starting_off != null else ""
+		player_node.set_off_hand(starting_off)
 		NetEvents.post_event("equip_item", gear_data, sender_peer_id)
 	# Deferred: the class_changed broadcast IS the outcome — suppress the generic dev_command broadcast
 	# (ok:true so it isn't a reject; deferred:true so NetEvents skips the broadcast + seq).

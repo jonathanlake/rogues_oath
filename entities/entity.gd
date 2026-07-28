@@ -352,8 +352,11 @@ func hide_blocking() -> void:
 func play_attack(dir: Vector2i, with_sound := true) -> void:
 	_bowstring(dir)
 	if with_sound:
-		# Reset the pitch a bow DRAW (play_draw) may have shifted down, so a following melee swing sounds
-		# normal — the draw/loose are the only callers that repitch this stream.
+		# Pitch stated explicitly rather than assumed (v0.39.0). Nothing re-pitches this stream any more —
+		# the bow draw was the only caller that did, and its sound is gone — so this is now the DEFAULT
+		# being declared at each play site, not a repair of someone else's shift. KEEP IT: the moment a
+		# future cue pitches $Attack, every other caller needs exactly this line to sound right, and
+		# rediscovering that is worse than three redundant assignments.
 		_attack_audio.pitch_scale = 1.0
 		_attack_audio.play()
 
@@ -483,8 +486,12 @@ func play_draw(dir: Vector2i, windup_sec: float, weapon: WeaponType = null) -> v
 	# repaints from it so a late-joiner still in the weapon-sync retry window draws the RIGHT art, not a stale
 	# cache. Defaulted null keeps the rig's cached _weapon (any non-event caller is unaffected).
 	_weapon_rig.play_draw(dir, windup_sec, weapon)
-	_attack_audio.pitch_scale = 0.7
-	_attack_audio.play()
+	# NO SOUND ON THE DRAW (v0.39.0, Jon). This used to play the $Attack whoosh pitched down to 0.7 as a
+	# "creaky draw" cue; it read as noise rather than information, especially once an archer goblin was
+	# drawing on you repeatedly. The LOOSE keeps its sound (play_loose) — the arrow leaving is the moment
+	# worth hearing — and the draw's telegraph is now purely visual: the rig's skyward raise and aim.
+	# Gated on `attack_style == "draw"` at the call site, so this covers any future draw weapon too; one
+	# that wants its own voice should author it rather than inherit a re-pitched melee whoosh.
 
 
 ## Melee WINDUP pose (v0.18.x, the goblin's club), driven by Main off the `windup` event for a melee
@@ -509,6 +516,8 @@ func play_loose(dir: Vector2i, weapon: WeaponType = null) -> void:
 	# Event-resolved weapon (v0.17.1 review #9): same as play_draw — a late-joiner paints the RIGHT release
 	# art from the launch event rather than a stale rig cache. Defaulted null keeps the cached _weapon.
 	_weapon_rig.play_loose(dir, weapon)
+	# The pitch is DECLARED, not reset — see play_attack. THIS is the ranged sound Jon kept when the draw
+	# went quiet in v0.39.0, so it is now the only thing an archer is heard to do.
 	_attack_audio.pitch_scale = 1.0
 	_attack_audio.play()
 

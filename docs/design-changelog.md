@@ -9,6 +9,34 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.39.0 (2026-07-27) — THE HUD EXPLAINS ITSELF, AND THE KNIGHT GETS A SHIELD.** First of two batches
+  from Jon's list (Insect Plague follows as v0.40.0, so the game's first damage-over-time gets its own
+  pass).
+  **HOVER ANYTHING AND IT TELLS YOU WHAT IT IS.** Weapons, armour, bag items and all five ability slots
+  now have tooltips: the name on top, what it does underneath. Potions say how much they heal, armour says
+  how much damage it turns aside, weapons list their damage and speed, and each ability gets a written
+  line plus its own numbers.
+  **The numbers are never typed in by hand** — they are read live off the same values the game plays from,
+  so retuning a heal or a cooldown in the debug panel moves the tooltip in the same instant. A tooltip in
+  this game cannot go stale, because it was never a copy.
+  **Hovering doesn't steal your clicks.** The ability bar sits over the middle of the screen, so its slots
+  take the hover but let a click fall through to the world exactly as before. Bag slots still consume
+  theirs, because those genuinely do something.
+  **THE KNIGHT NOW CARRIES A KITE SHIELD** in the off-hand — which meant building the off-hand slot, since
+  it existed as an empty square in the HUD and nothing else. It follows you across class changes and shows
+  up correctly for someone joining mid-session.
+  **Read this bit before you file a bug:** the shield's tooltip says *"Grants Shield Block ability"*, and
+  that is **not yet true of the wiring** — Shield Block still comes from the knight class, so taking the
+  shield off would leave the ability. Jon's call for now, and it's on the to-do list as its own piece of
+  work (it needs answers about what happens to an ability you unequip mid-cooldown). The shield also does
+  not block or reduce damage yet; it is identity, not armour.
+  **THE BOW IS QUIET WHEN YOU DRAW IT.** The creaky draw sound is gone at Jon's request; the arrow leaving
+  still sounds. Worth knowing: the draw's only remaining tell is now the raised bow itself.
+  **Verified:** boot check plus a two-instance join. One GLM red-team pass, which caught a real one — the
+  off-hand was being set only on the host, so a CLIENT switching to knight would never have seen its own
+  shield. `set_class` only repaints the sprite and the spawn seed runs once, so nothing re-seeded gear on a
+  live class change; the shield now rides the same event the armour does.
+
 - **v0.38.0 (2026-07-27) — ROOT GRABS THE ENEMY, NOT THE GROUND.** Jon's diagnosis from playtest:
   *"it can be a huge whiff of a cooldown if you click the tile and the goblin moves off it last second…
   it adds a level of depth, having to time where the goblin will be, but I'm uncertain if that becomes a

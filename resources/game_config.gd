@@ -539,6 +539,27 @@ extends Resource
 @export var armor_flat_reduction_medium: int = 2
 @export var armor_flat_reduction_heavy: int = 3
 
+
+## The FLAT reduction an armour-weight band is worth, resolved from the three dials above. THE one place
+## band → number is answered.
+##
+## It lives HERE rather than on the referee (v0.39.0) because there are now two readers with different
+## jobs: the referee APPLIES it to a specific hit, and the HUD tooltip EXPLAINS it with no hit in hand.
+## Both must quote the same number or the tooltip becomes a lie the first time a dial moves — which is the
+## whole point of deriving tooltip text instead of typing it. The referee keeps its own thin wrapper for
+## the unknown-band warning (a diagnostic about authoring, not about the number).
+##
+## An unknown/UNARMORED band is 0: not armour, no flat term.
+func armor_flat_for(weight: int) -> int:
+	match weight:
+		ItemType.ArmorWeight.LIGHT:
+			return armor_flat_reduction_light
+		ItemType.ArmorWeight.MEDIUM:
+			return armor_flat_reduction_medium
+		ItemType.ArmorWeight.HEAVY:
+			return armor_flat_reduction_heavy
+	return 0
+
 ## The MASTER ability catalog (v0.27.0) — every ActiveAbility a dev-command / panel token may resolve to,
 ## the mirror of weapon_catalog for abilities. `ability_by_name` resolves from THIS (by display_name slug),
 ## which is what makes `/ab kick cooldown_beats 30` and the panel's CLASSES section possible: an ability

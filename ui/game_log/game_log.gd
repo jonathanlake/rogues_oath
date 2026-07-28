@@ -302,9 +302,10 @@ func _on_event_received(event: Dictionary) -> void:
 		# which is exactly why the text could go.
 		#
 		# Four cases lose their line: the monster melee telegraph, the player's own melee windup, the
-		# ability-strike telegraph, and the bow draw. The bow draw is the likeliest to come back (its only
-		# remaining tells are the rig's skyward raise and the pitched-down draw sound); the cheap restore
-		# is a player-initiated-ONLY variant of the line, not this whole arm.
+		# ability-strike telegraph, and the bow draw. The bow draw is the likeliest to come back — and MORE
+		# so since v0.39.0, which removed its sound at Jon's request: its only remaining tell is now the
+		# rig's skyward raise, so a draw you cannot see is a draw you get no warning of at all. The cheap
+		# restore is a player-initiated-ONLY variant of the line, not this whole arm.
 		"died":
 			# Death line (§2.3.4). The dying entity's OWN client gets a second-person line so a
 			# player knows it was them (their node is already gone — this is the spectate placeholder,

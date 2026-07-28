@@ -1455,6 +1455,15 @@ func _handle_equip_item_event(event: Dictionary) -> void:
 	if player == null:
 		return
 	if is_gear:
+		# OFF-HAND (v0.39.0), PRESENT-ONLY: carried by the `/class` reconciliation, which is the only
+		# producer, so a bag-equip gear event is byte-identical to before. An empty string is MEANINGFUL and
+		# is the common case — it means the new class carries nothing, which must clear the hand rather than
+		# be skipped as an unresolvable name (the body slot's rule, for the body slot's reason). Applied on
+		# EVERY peer, which is the whole point: it is how a client that changed its own class learns what is
+		# now in its hand, since set_class repaints only the sprite and _ready fires once.
+		if data.has("off_hand"):
+			var off_name := str(data["off_hand"])
+			player.set_off_hand(GameManager.config.item_by_name(off_name) if not off_name.is_empty() else null)
 		if equipped_name.is_empty():
 			# STRIP (v0.27.1): /class reconciled the body slot to a class that wears nothing, so the slot
 			# CLEARS. An empty `equipped` is the wire form of "unarmored" — null is a legal body-slot state
@@ -2991,6 +3000,16 @@ func peer_ready(p_name: String, client_version: String) -> void:
 				var worn_body: String = worn.display_name if worn != null else ""
 				if worn_body != seeded_body:
 					sync_player_field.rpc_id(peer_id, existing.entity_id, "body_armor", worn_body)
+				# OFF-HAND (v0.39.0), the identical shape. Comparing against the CLASS SEED rather than a
+				# last-sent value is correct and load-bearing: the joiner runs the same seed itself in
+				# Player._ready, so "worn == seeded" means it already has the right answer locally and a
+				# push would be noise. Any divergence — including an emptied hand, which sends "" — pushes.
+				var seeded_off: ItemType = slot_class.starting_off_hand
+				var seeded_off_name: String = seeded_off.display_name if seeded_off != null else ""
+				var worn_off: ItemType = existing.equipped_off_hand
+				var worn_off_name: String = worn_off.display_name if worn_off != null else ""
+				if worn_off_name != seeded_off_name:
+					sync_player_field.rpc_id(peer_id, existing.entity_id, "off_hand", worn_off_name)
 	else:
 		# Symmetric with the version branch: host-side visibility before the refusal, so a full-server
 		# rejection shows in the host's log/console too (not just on the refused client's menu).
@@ -3061,6 +3080,17 @@ func sync_player_field(entity_id: int, kind: String, value_name: String, is_retr
 			# No HUD fan-out: the sync loop skips the joiner's OWN player, so this can only ever repaint
 			# somebody else's gear, which nothing on screen shows (there is no paper-doll layer and the
 			# equipment panel is own-player only).
+		"off_hand":
+			# v0.39.0, byte-for-byte the body_armor arm above INCLUDING the empty case: an empty value_name
+			# means "this player carries nothing", which is a real state a joiner must adopt, so it clears
+			# the hand rather than being discarded as unresolvable. That branch is what makes an UNEQUIP
+			# reach a late joiner at all. Same no-HUD-fan-out reasoning as body armour.
+			if value_name.is_empty():
+				player.set_off_hand(null)
+			else:
+				var off_hand := GameManager.config.item_by_name(value_name)
+				if off_hand != null:
+					player.set_off_hand(off_hand)
 		"class":
 			var player_class := GameManager.config.class_by_name(value_name)
 			if player_class != null:

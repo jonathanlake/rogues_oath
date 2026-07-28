@@ -4,6 +4,7 @@
 
 [resource]
 script = ExtResource("1_aa")
+description = "Slam an adjacent enemy with your shield: solid damage and a stun, so it opens a window as well as closing one."
 display_name = "Shield Bash"
 atlas_coords = Vector2i(1, 11)
 log_verb = "bashes"

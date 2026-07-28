@@ -5,6 +5,7 @@
 [resource]
 script = ExtResource("1_aa")
 kind = 2
+description = "Blink one tile back, away from whatever you are facing. It interrupts your own action to do it, and it breaks a root — teleporting is not stepping."
 display_name = "Shadow Step"
 atlas_coords = Vector2i(2, 14)
 log_verb = "blinks"

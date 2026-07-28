@@ -29,6 +29,10 @@ extends Node
 # Sentinel for "no entity on this tile" from _entity_at / MoveReferee.entity_at. 0 is never a real
 # entity id (peer ids are > 0, monster ids < 0).
 const _NO_ENTITY := 0
+## Every ArmorWeight ordinal the flat-reduction table knows about (v0.39.0). Used ONLY by the
+## unknown-band diagnostic in _armor_flat_of — the numbers themselves live on GameConfig.
+const _KNOWN_ARMOR_BANDS := [ItemType.ArmorWeight.UNARMORED, ItemType.ArmorWeight.LIGHT,
+	ItemType.ArmorWeight.MEDIUM, ItemType.ArmorWeight.HEAVY]
 
 # Authoritative HIT POINTS: entity id -> current HP. THE combat truth; a node's nameplate is only
 # presentation. Seeded from each entity's authored max as it enters its container (players from the
@@ -2924,20 +2928,19 @@ func _armor_weight_of(node: Node) -> int:
 ## this, UNARMORED and a hypothetical future 4th band shared the silent `return 0` default — so adding a
 ## band to the enum and forgetting this table would have shipped it as "no flat reduction at all" with no
 ## signal anywhere. The default is still the safe number; it is just no longer silent.
+## v0.39.0: the band → number lookup MOVED to GameConfig.armor_flat_for, because the HUD tooltip now has
+## to quote the same figure this seam applies and a second copy would drift the moment a dial changed.
+## What stays here is the DIAGNOSTIC half — the unknown-band warning — which is about authoring rather
+## than about the number, and which needs this referee's per-band latch to avoid firing once per hit.
+## The warning tests whether the band is KNOWN, never whether its number is zero (GLM diff review). Those
+## are different claims: a designer setting `armor_flat_reduction_light` to 0 is a legitimate tuning
+## choice, and inferring "unhandled band" from a 0 result would nag once per band forever while pointing
+## at a function that handles it perfectly well.
 func _armor_flat_of(weight: int) -> int:
-	match weight:
-		ItemType.ArmorWeight.UNARMORED:
-			return 0
-		ItemType.ArmorWeight.LIGHT:
-			return GameManager.config.armor_flat_reduction_light
-		ItemType.ArmorWeight.MEDIUM:
-			return GameManager.config.armor_flat_reduction_medium
-		ItemType.ArmorWeight.HEAVY:
-			return GameManager.config.armor_flat_reduction_heavy
-	if not _warned_armor_bands.has(weight):
+	if not (weight in _KNOWN_ARMOR_BANDS) and not _warned_armor_bands.has(weight):
 		_warned_armor_bands[weight] = true
-		push_warning("[CombatReferee] armor weight band %d has no flat-reduction arm — treating it as UNARMORED (flat 0). Add it to _armor_flat_of." % weight)
-	return 0
+		push_warning("[CombatReferee] armor weight band %d is not a known ArmorWeight — treating it as UNARMORED (flat 0). Add it to the enum and to GameConfig.armor_flat_for." % weight)
+	return GameManager.config.armor_flat_for(weight)
 
 
 ## Is this damage `kind` PHYSICAL — i.e. does armor apply to it (v0.26.0)? Everything is physical
