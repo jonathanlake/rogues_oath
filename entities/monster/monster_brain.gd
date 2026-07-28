@@ -592,10 +592,22 @@ func _act_as_kiter(my_tile: Vector2i, targets: Array) -> void:
 	# fire is on-brand); the guard is about not shooting your own front line in the back, not about safety.
 	# Range read off the authored MonsterType.weapon (the same resource seeded onto equipped_weapon at spawn,
 	# which is what the referee re-reads host-side to adjudicate) — the brain only decides, never adjudicates.
+	# Set when the target is nominally IN RANGE but there is no firing line to it and no sidestep that
+	# makes one — a corner or a wall between us. Read by the APPROACH rung at the bottom, which is the
+	# only rung that can fix it: the geometry has to change, and walking is what changes it. Without this
+	# the archer would hold and re-decide the same blocked picture forever, which is the v0.35.0 freeze in
+	# a new costume.
+	var no_firing_line := false
 	if _monster_type.weapon != null and _monster_type.weapon.range_tiles > 0 and not _recovery_locks_actions():
 		if nearest_dist <= _monster_type.weapon.range_tiles:
 			# (2a) CLEAN LANE — loose. Unchanged from v0.33.0.
-			var lane_clear: bool = _combat.is_lane_clear(_entity_id, nearest)
+			#
+			# THREE ANSWERS, NOT TWO (v0.41.0, fixing my v0.35.0 bug). The old boolean made "an ally is in
+			# the way" and "there is no shot at all" indistinguishable, and the reckless roll below fired on
+			# both — so an archer down a corridor put arrow after arrow into the wall. ALLY_BLOCKED is a bad
+			# shot you may choose to take; NO_SHOT is not a shot, and no roll may turn it into one.
+			var lane: String = _combat.lane_state_from(_entity_id, my_tile, nearest)
+			var lane_clear: bool = lane == "clear"
 			# (2b) BLOCKED LANE → REPOSITION (v0.35.0, Jon's playtest). This rung is the whole fix for "the
 			# archer completely stops doing anything when he can't find a clean shot". v0.33.0 skipped the
 			# shoot rung outright on a blocked lane and fell to smite/hold — and the bow goblin authors no
@@ -609,12 +621,21 @@ func _act_as_kiter(my_tile: Vector2i, targets: Array) -> void:
 			# plan would be a commitment the world invalidates before it finishes.
 			if not lane_clear and _reposition_step(my_tile, nearest):
 				return
-			# (2c) STILL BLOCKED, NOWHERE TO GO → maybe loose ANYWAY, through the packmate
+			# Sidestepping failed. If the reason we can't shoot is that there is NO LINE (wall, corner),
+			# remember it for the approach rung — that is the one rung that can change the geometry.
+			if lane == "no_shot":
+				no_firing_line = true
+			# (2c) PACKMATE IN THE WAY, NOWHERE TO STEP → maybe loose ANYWAY, through them
 			# (GameConfig.archer_reckless_shot_chance). A penned-in archer that can neither clear its lane
 			# nor step aside has to do SOMETHING, and "shoot your mate in the back" is the funny answer as
 			# well as the on-brand one (friendly fire is intended emergence, and the FF banter hangs off it).
 			# Rolled ONCE per think, so a failed roll just holds and asks again next cadence.
-			if not lane_clear and randf() < GameManager.config.archer_reckless_shot_chance:
+			#
+			# GATED ON ALLY_BLOCKED SPECIFICALLY (v0.41.0) — this rung exists to shoot THROUGH SOMEBODY, and
+			# it can now only reach the case where there is somebody to shoot through. On NO_SHOT it does
+			# not run at all, because there is nothing out there and the arrow would simply hit a wall.
+			if lane == "ally_blocked" \
+					and randf() < GameManager.config.archer_reckless_shot_chance:
 				lane_clear = true
 			if lane_clear:
 				var shot_wait: float = _combat.commit_monster_shot(_entity_id, nearest)
@@ -658,8 +679,12 @@ func _act_as_kiter(my_tile: Vector2i, targets: Array) -> void:
 	# this ladder, so this can only fire for a target we are already legitimately engaged with. Past the leash
 	# the brain de-aggros and rung (4) holds — which is the CORRECT idle, not the bug: a monster that has lost
 	# you is supposed to stop.
+	# TWO REASONS TO WALK (v0.41.0): the target is beyond our reach, OR it is within reach but there is no
+	# firing line to it and no sidestep that makes one — a wall or a corner in between. The second case used
+	# to end in the reckless roll firing an arrow into stone; now it walks, because closing the distance is
+	# the only thing that can turn a blocked corridor into a shot.
 	if _monster_type.weapon != null and _monster_type.weapon.range_tiles > 0 \
-			and nearest_dist > _monster_type.weapon.range_tiles and not _is_rooted():
+			and (nearest_dist > _monster_type.weapon.range_tiles or no_firing_line) and not _is_rooted():
 		var approach := _first_step_toward(my_tile, targets)
 		# ON SUCCESS ONLY (the _step_toward_targets contract): a refused submit must leave the flag showing the
 		# CURRENT still-gliding step's shape, or the busy gate's settle backstop is computed from a step that

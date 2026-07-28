@@ -9,6 +9,34 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.41.0 (2026-07-27) — SIX FIXES FROM PLAYTEST.** Three of them mine, from the last two versions.
+  **THE ARCHER STOPS SHOOTING WALLS.** My v0.35.0 bug: the "shoot through your packmate anyway" roll
+  fired whenever the lane wasn't clear — but that covered *an ally in the way*, *a wall*, and *no line at
+  all* equally, so down a corridor it put arrows into stone. The lane now answers three ways instead of
+  two, and the reckless roll can only reach the case it was written for. If there's genuinely no shot, the
+  archer sidesteps for one — and if it can't, it now **walks**, because closing the distance is the only
+  thing that turns a blocked corridor into a firing line. (Standing still there would have been the old
+  freeze wearing a hat.)
+  **THE PLAGUE STOPPED LOOKING AND SOUNDING LIKE A SWORD.** The druid was lunging and playing a slash on
+  every tick. Same fault as the club-swing bug last version, at its sibling site — another list of
+  exceptions that quietly adopts each new damage type. Inverted, like the last one. What's left is the
+  victim's own thud, pitched down so a tick reads as something sickly rather than as being hit.
+  **A SPELL ON COOLDOWN NO LONGER OPENS ITS RANGE RING.** It says so in the log instead, so the keypress
+  isn't a silent nothing.
+  **TOOLTIPS ARE MUCH SMALLER** — chat-window size. The cause was that this project has no UI theme at
+  all, so tooltips were falling back to Godot's default font while everything else runs 6-13px. Your
+  observation that the potion one sat nicely bottom-right was the giveaway: they all sit there once
+  they're small enough to fit.
+  **AND THEY SPEAK ENGLISH NOW.** "Beats" is gone from anything a player reads — spells show real seconds
+  ("holds for 7.5s", "10s cooldown"), and weapons show **Attack speed: fast / normal / slow** on its own
+  line under the damage. Dagger fast, longsword and club normal, bow slow. Beats stay in the debug panel,
+  which is where they belong.
+  **Verified:** an archer with the reckless dial pinned to 1 — the setting that used to guarantee wall
+  shots — fired five arrows and hit five times, sidestepping around the pillar first. Melee still swings,
+  the plague still ticks four times. One GLM pass, which caught that suppressing the slash streak by
+  passing a zero direction doesn't actually suppress it (it just picks a default angle) — now an explicit
+  flag.
+
 - **v0.40.0 (2026-07-27) — INSECT PLAGUE: THE GAME'S FIRST DAMAGE-OVER-TIME.** The druid's second spell,
   and the second half of Jon's five-item batch.
   **CALL A SWARM DOWN ON ONE ENEMY AND IT KEEPS EATING.** 2 damage every 6 beats, four times — 8 in total.

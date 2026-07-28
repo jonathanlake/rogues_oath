@@ -210,6 +210,11 @@ var _ability_atlases: Array[AtlasTexture] = []
 # missing overlay can never grant or deny an ability (it only ever misinforms the eye, never the rules).
 var _ability_cooldown_fills: Array[ColorRect] = []
 var _ability_cooldown_tweens: Array[Tween] = []
+# Slot index -> the msec at which that ability is ready again (v0.41.0). Written beside the fill tween and
+# read by ability_cooldown_remaining, which Main uses to refuse ARMING a targeting cursor for a spell that
+# cannot be cast. LOCAL MIRROR, never authority: the host owns cooldowns and adjudicates every press that
+# does reach it; this only stops the client offering a ring it knows will be refused.
+var _ability_ready_at_msec: Dictionary = {}
 # The ability display_name painted into each socket, in slot order (v0.26.0). The `ability_used` /
 # `ability_cooldown` events carry a NAME (not an index — the wire never assumes both peers order a class's
 # abilities identically), so this is how a name maps back to the socket that has to darken. Repainted with the
@@ -236,6 +241,7 @@ func _ready() -> void:
 	# content_scale_factor settle still rides the one-shot process_frame inside _relayout (no signal fires for it).
 	get_viewport().size_changed.connect(_relayout)
 	_root.resized.connect(_relayout)
+	_apply_tooltip_theme()
 	_relayout.call_deferred()
 
 
@@ -332,6 +338,11 @@ func note_ability_cooldown(entity_id: int, ability_name: String, cooldown_sec: f
 	_clear_ability_cooldown(idx)
 	if cooldown_sec <= 0.0:
 		return
+	# READY-AT STAMP beside the visual (v0.41.0), so "is this still cooling?" is answerable without
+	# introspecting a Tween. The host tells us a TOTAL here, and recovering "remaining" from tween progress
+	# would mean re-deriving something the event already stated — brittle, and it would silently follow any
+	# future change to how the fill animates. Same shape the referee's own _ability_ready_at_msec uses.
+	_ability_ready_at_msec[idx] = Time.get_ticks_msec() + int(cooldown_sec * 1000.0)
 	var fill := _ability_cooldown_fills[idx]
 	fill.size = Vector2(SLOT_PX, SLOT_PX)
 	fill.visible = true
@@ -351,6 +362,21 @@ func _clear_ability_cooldown(idx: int) -> void:
 		tween.kill()
 	_ability_cooldown_tweens[idx] = null
 	_ability_cooldown_fills[idx].visible = false
+	# Drop the stamp with the visual, so a class change (which re-keys every socket) can never leave slot 2
+	# reading "still cooling" from the previous loadout's ability.
+	_ability_ready_at_msec.erase(idx)
+
+
+## Seconds remaining on slot `index`'s cooldown, or 0.0 when it is ready (v0.41.0). Main gates ARMING a
+## targeting cursor on this: a spell you cannot cast should not open a range ring you cannot use.
+##
+## LOCAL AND ADVISORY. The host owns cooldowns; this mirrors the last `ability_cooldown` event it sent us.
+## That makes it a §2.2.9 client-side ROUTING convenience, exactly like the shoot-target predicate — a
+## stale mirror at worst sends a press the host refuses on its own terms, which is the pre-v0.41.0
+## behaviour and still perfectly safe. It must never be read as authority for anything.
+func ability_cooldown_remaining(index: int) -> float:
+	var ready_at: int = int(_ability_ready_at_msec.get(index, 0))
+	return maxf(0.0, float(ready_at - Time.get_ticks_msec()) / 1000.0)
 
 
 ## A player died (fanned out by main.gd): if it is OUR OWN player, read the bar "DEAD". A respawn re-seeds
@@ -1070,7 +1096,39 @@ func _refresh_bag() -> void:
 			_bag_icons[i].visible = false
 
 
-# ── Tooltips (v0.39.0) ────────────────────────────────────────────────────────
+# ── Tooltips (v0.39.0; sized + de-jargoned v0.41.0) ───────────────────────────
+#
+## Tooltip text size, matching the chat log's authored font (v0.41.0, Jon: "quite a bit smaller… the same
+## size as the font in the chat window"). THE ROOT CAUSE of v0.39.0's huge tooltips was that this project
+## has NO project theme at all — nothing sets `gui/theme/custom` and no theme resource exists — so
+## tooltips fell back to Godot's DEFAULT theme at its default font size while the rest of the UI runs
+## 6-13px.
+##
+## Size is what fixes the POSITION too, which is why Jon's "the potion one looks right, bottom-right of the
+## cursor" was the clue rather than a second request: Godot places a tooltip at the cursor and only shoves
+## it elsewhere when it would run off-screen. Shrink them all and they all sit where the potion's does.
+const TOOLTIP_FONT_PX := 6
+
+
+## Build + attach the tooltip theme (v0.41.0). Per the 4.7 class reference (Control.xml), the default
+## tooltip is a PopupPanel + Label themed through the "TooltipPanel" and "TooltipLabel" theme types, and a
+## Control's theme propagates to the tooltips its subtree owns — so one assignment on the HUD root covers
+## every tooltip in the game (all tooltip-bearing controls are HUD sockets and bag slots).
+func _apply_tooltip_theme() -> void:
+	var theme := Theme.new()
+	theme.set_font_size("font_size", "TooltipLabel", TOOLTIP_FONT_PX)
+	# A tight, opaque panel: the default stylebox is padded for 16px type and looks like a dialog around
+	# 6px text. Matches the debug panel's dark backing so the two read as one UI.
+	var box := StyleBoxFlat.new()
+	box.bg_color = Color(0.09, 0.10, 0.13, 0.96)
+	box.border_color = Color(0.30, 0.32, 0.40, 0.9)
+	box.set_border_width_all(1)
+	box.content_margin_left = 3.0
+	box.content_margin_right = 3.0
+	box.content_margin_top = 2.0
+	box.content_margin_bottom = 2.0
+	theme.set_stylebox("panel", "TooltipPanel", box)
+	_root.theme = theme
 #
 # THE ONE RULE, so every tooltip in the game reads the same way:
 #   NUMBERS ARE DERIVED, PROSE IS AUTHORED.
@@ -1097,10 +1155,34 @@ func _compose_tooltip(item_name: String, derived: String, prose: String) -> Stri
 	return item_name if body.is_empty() else "%s\n\n%s" % [item_name, body]
 
 
-## Trim a beats figure for display: 6.0 → "6", 2.5 → "2.5". Beats are authored as floats but are nearly
-## always whole, and "stuns for 6.0 beats" reads like a spreadsheet.
-func _beats(value: float) -> String:
-	return "%.0f" % value if is_equal_approx(value, roundf(value)) else "%.1f" % value
+## BEATS ARE A DEV UNIT AND NEVER APPEAR IN A TOOLTIP (v0.41.0, Jon). Converts an authored beat count into
+## the seconds a player actually experiences, trimmed: 7.5 → "7.5s", 10.0 → "10s".
+##
+## Uses the TACTICAL beat — the fight tempo, and the one every ability was tuned against. Out of combat the
+## explore beat is slower, so a root really does hold longer than the tooltip says; quoting the fight
+## number is the honest simplification because casting is a fight activity, and nothing in the UI shows a
+## victim a countdown that could contradict it. Read live, so a `/config tactical_beat_sec` retune moves
+## every tooltip with it.
+func _secs(beats: float) -> String:
+	var s := beats * GameManager.tactical_beat_sec
+	return "%.0fs" % s if is_equal_approx(s, roundf(s)) else "%.1fs" % s
+
+
+## Weapon speed as a WORD rather than a number (v0.41.0, Jon's bands). Reads the weapon's TOTAL committed
+## beats — windup plus recovery — because that is what "how fast is this weapon" actually means: the whole
+## window you are locked into per swing, not either half. It is also the only reading that separates the
+## shipped roster (dagger 6 fast, longsword 7 normal, club 7 normal, bow 11 slow); recovery-only or
+## windup-only collapse three or four of them into a single bucket and the label stops saying anything.
+##
+## The bands encode an opinion about the CURRENT four weapons, not a general law — retune them here when
+## the roster grows.
+const _SPEED_FAST_BELOW := 7.0
+const _SPEED_NORMAL_MAX := 10.0
+
+func _attack_speed_word(total_beats: float) -> String:
+	if total_beats < _SPEED_FAST_BELOW:
+		return "fast"
+	return "normal" if total_beats <= _SPEED_NORMAL_MAX else "slow"
 
 
 ## Tooltip for a consumable / worn ITEM.
@@ -1129,16 +1211,17 @@ func _item_tooltip(item: ItemType) -> String:
 
 ## Tooltip for an equipped WEAPON — its damage band and the two halves of its committed window, plus reach
 ## for a ranged one. All live off the resource, so a `/w` retune is reflected immediately.
+## Tooltip for an equipped WEAPON. TWO LINES since v0.41.0, per Jon: damage, then attack speed underneath.
+## The raw windup/recovery beats are gone from the player's view — they are a dev unit, and the debug panel
+## keeps them. Everything is still read live off the resource, so a `/w` retune moves the text.
 func _weapon_tooltip(weapon: WeaponType) -> String:
 	if weapon == null:
 		return ""
-	var parts: Array[String] = ["%d-%d damage" % [weapon.damage_min, weapon.damage_max]]
-	if weapon.windup_beats > 0.0:
-		parts.append("%s beat windup" % _beats(weapon.windup_beats))
-	parts.append("%s beat recovery" % _beats(weapon.recovery_beats))
+	var lines: Array[String] = ["%d-%d damage" % [weapon.damage_min, weapon.damage_max]]
+	lines.append("Attack speed: %s" % _attack_speed_word(weapon.windup_beats + weapon.recovery_beats))
 	if weapon.range_tiles > 0:
-		parts.append("range %d" % weapon.range_tiles)
-	return _compose_tooltip(weapon.display_name, ", ".join(parts) + ".", weapon.description)
+		lines.append("Range: %d tiles" % weapon.range_tiles)
+	return _compose_tooltip(weapon.display_name, "\n".join(lines), weapon.description)
 
 
 ## Tooltip for an ACTIVE ABILITY. The derived line lists only the terms this ability actually authors
@@ -1147,19 +1230,32 @@ func _weapon_tooltip(weapon: WeaponType) -> String:
 func _ability_tooltip(ability: ActiveAbility) -> String:
 	if ability == null:
 		return ""
+	# SECONDS, never beats (v0.41.0). Every duration converts through _secs; only damage, reach and tick
+	# COUNT stay as bare numbers, because those are already the units a player thinks in.
 	var parts: Array[String] = []
 	if ability.damage > 0:
 		parts.append("%d damage" % ability.damage)
+	if ability.dot_damage > 0 and ability.dot_ticks > 0:
+		# The DoT reads as its whole story rather than three separate numbers: what it does, how often,
+		# how many times. "2 damage every 1.5s, 4 times" is a sentence; "dot_interval 6" is a field name.
+		# TWO DEGENERATE SHAPES the phrasing must not mangle (GLM diff review): a SINGLE tick has no
+		# "every", and neither does a zero interval — is_valid_ability refuses a multi-tick DoT authored
+		# without one, so this is the single-tick case and a misauthoring both landing on the same branch.
+		if ability.dot_ticks == 1 or ability.dot_interval_beats <= 0.0:
+			parts.append("%d damage over time" % ability.dot_damage)
+		else:
+			parts.append("%d damage every %s, %d times" % [
+					ability.dot_damage, _secs(ability.dot_interval_beats), ability.dot_ticks])
 	if ability.stun_beats > 0.0:
-		parts.append("stuns %s beats" % _beats(ability.stun_beats))
+		parts.append("stuns for %s" % _secs(ability.stun_beats))
 	if ability.root_beats > 0.0:
-		parts.append("roots %s beats" % _beats(ability.root_beats))
+		parts.append("holds for %s" % _secs(ability.root_beats))
 	if ability.range_tiles > 1:
-		parts.append("range %d" % ability.range_tiles)
+		parts.append("range %d tiles" % ability.range_tiles)
 	if ability.windup_beats + ability.recovery_beats > 0.0:
-		parts.append("%s beat cast" % _beats(ability.windup_beats + ability.recovery_beats))
+		parts.append("%s cast" % _secs(ability.windup_beats + ability.recovery_beats))
 	if ability.cooldown_beats > 0.0:
-		parts.append("%s beat cooldown" % _beats(ability.cooldown_beats))
+		parts.append("%s cooldown" % _secs(ability.cooldown_beats))
 	var derived := (", ".join(parts) + ".") if not parts.is_empty() else ""
 	return _compose_tooltip(ability.display_name, derived, ability.description)
 

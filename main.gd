@@ -143,6 +143,17 @@ const SOUTHEAST_PACK_SPAWNS: Array[Dictionary] = [
 # Sentinel for _pick_room_spawn_tile (F6 summon): out-of-bounds, so it can never collide with a real
 # free tile. Returned when a room has no free walkable tile at all, so the validator refuses cleanly.
 const _NO_SPAWN_TILE := Vector2i(-1, -1)
+## The attack kinds where the ATTACKER physically lunged at its target, and so the only ones that play the
+## attacker-side lunge + swing sound (v0.41.0).
+##
+## DELIBERATELY NOT the same set as CombatReferee._WEAPON_SWING_KINDS, and the difference is the point: a
+## shield bash or a kick DOES lunge (the lunge is its melee cue, v0.20.0) while carrying no weapon, so a
+## shared list would either mute the bash or hand the bow a sword arc. Two questions, two lists.
+##
+## Excluded, each for its own reason: "arrow" — the shooter's cue was the draw and release, and a lunge as
+## the remote arrow lands is a wrong double-cue; "smite" — its cue was the channel tell; "plague" — a
+## disease tick is nobody swinging at anybody; "admin" — a `/mi` debug poke is not a blow.
+const _LUNGE_KINDS := ["bump", "windup", "free", "ability", "kick"]
 
 # Room presentation. The $Room TileMapLayer is painted at runtime FROM WorldGrid (the logical
 # truth) — no authored TileSet .tres, since the room is a disposable prototype fixture. Atlas
@@ -836,6 +847,21 @@ func _press_ability_slot(index: int) -> void:
 		return
 	var ability := _ability_in_slot(me, index)
 	if ability != null and ability.kind == ActiveAbility.Kind.TARGETED:
+		# DON'T OFFER A RING YOU CAN'T USE (v0.41.0, Jon). Arming a cursor for a spell on cooldown led the
+		# player through the whole ritual — ring, aim, click — to a host refusal at the end. Refusing to arm
+		# is free: arming is pre-commit, so nothing is being taken back (§2.2.8's commitment begins at the
+		# verdict), and this is client-side ROUTING in the §2.2.9 sense, the same shape as the bow's
+		# shoot-target predicate. The host still adjudicates any press that does reach it, so a stale mirror
+		# costs nothing but the old behaviour.
+		#
+		# AND IT SAYS SO. Not arming means nothing crosses the wire, so there is no reject bonk to hear —
+		# and a keypress that produces no ring, no packet and no sound is exactly the "did my input
+		# register?" ambiguity §2.2.8 forbids. The local line IS the feedback.
+		var cooling: float = _hud.ability_cooldown_remaining(index)
+		if cooling > 0.0:
+			if is_instance_valid(_game_log):
+				_game_log.add_line("%s — on cooldown (%.1fs)." % [ability.display_name, cooling])
+			return
 		me.arm_targeting(index)
 		_range_overlay.set_targeting(me.tile, ability.range_tiles)
 		# Feedback rule (§2.3.4): arming is a state change, so it says so — and names BOTH ways out, because
@@ -1148,10 +1174,13 @@ func _handle_attack_event(event: Dictionary) -> void:
 		# Arrow HIT (v0.17.0): SUPPRESS the attacker-side lunge/swing here. The shooter's cue was the draw +
 		# release (windup / projectile_launched) when it loosed — a lunge now, as the remote arrow lands,
 		# would be a wrong double-cue (§2.3.4). Only the TARGET's hurt + popup play (below) for an arrow.
-		if attacker != null and kind != "arrow" and kind != "smite":
-			# SMITE (v0.19.10) suppresses this melee lunge too — its cue was the channel tell, not a swing.
-			# Swing sound RESTORED (v0.6.2, Jon: attack must be audible AND distinct from the hit —
-			# swing = high short whoosh, impact = low thud; pitch-separated in the scenes).
+		# ALLOWLIST, NOT A DENYLIST (v0.41.0) — see _LUNGE_KINDS. This was `kind != "arrow" and kind !=
+		# "smite"`, and the plague inherited a lunge and a sword-slash whoosh on every DoT tick because
+		# nobody had added it to the list of exceptions. Same failure as v0.40.0's weapon stamp, at its
+		# sibling site: a denylist fails OPEN, so each new damage kind silently claims cues nobody wrote
+		# for it. Swing sound rides the same call (v0.6.2, Jon: an attack must be audible AND distinct
+		# from the hit — swing = high whoosh, impact = low thud, pitch-separated in the scenes).
+		if attacker != null and kind in _LUNGE_KINDS:
 			attacker.play_attack(dir, true)
 		if target != null:
 			# dir passed through so the victim's slash streak reads directional (v0.6.3), derived
@@ -1159,7 +1188,16 @@ func _handle_attack_event(event: Dictionary) -> void:
 			if not godded and not blocked:
 				# On a sneak attack the impact SFX is pitched UP a step (placeholder audio grammar, §2.3.4)
 				# so the sharper hit is audibly distinct from a normal blow — same stream, per-peer local.
-				target.play_hurt(dir, 1.5 if sneak else 1.0)
+				#
+				# A PLAGUE TICK IS THE OPPOSITE (v0.41.0, Jon: the DoT "sounds like a sword slash"). With the
+				# attacker's whoosh gone above, the victim's thud is all that remains — which is the subtler
+				# cue he asked for rather than silence, and silence would leave four ticks of HP loss with no
+				# audio tell at all. Pitched DOWN so it reads as something sickly rather than as being hit.
+				# NO SLASH STREAK either: a streak on a disease is the same wrong-cue-inherited-by-a-new-kind
+				# mistake as the lunge, one layer down. Suppressed EXPLICITLY rather than by passing a zero
+				# direction — SlashFx shows itself regardless and would just pick a default angle.
+				var plague_tick := kind == "plague"
+				target.play_hurt(dir, 0.7 if plague_tick else (1.5 if sneak else 1.0), not plague_tick)
 			# HP readout still refreshes on a godded hit (harmless — the value is unchanged).
 			target.set_hp_display(int(data.get("hp_after", 0)), int(data.get("target_max", 0)))
 			# Party-frame HP mirror (v0.12.0): fan the running HP out to the HUD. A player target (positive

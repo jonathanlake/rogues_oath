@@ -1943,16 +1943,49 @@ func is_lane_clear(shooter_id: int, target_tile: Vector2i) -> bool:
 ## `from_tile` is NOT validated as walkable or free: this answers a geometry question only. The caller vets
 ## the tile and the move referee owns the verdict on actually going there.
 func lane_clear_from(shooter_id: int, from_tile: Vector2i, target_tile: Vector2i) -> bool:
+	return lane_state_from(shooter_id, from_tile, target_tile) == LANE_CLEAR
+
+
+## WHY THE LANE HAS THREE ANSWERS AND NOT TWO (v0.41.0, fixing a v0.35.0 bug of mine).
+##
+## The boolean above collapses two completely different situations into one `false`:
+##   - an ALLY is the first body on the line — there IS a shot, it just hits your own side, and whether to
+##     take it is a judgement call (that is what `archer_reckless_shot_chance` is for);
+##   - a WALL clipped the flight, or nothing is on the line at all — there is NO shot, and no amount of
+##     recklessness makes one.
+## The reckless roll was written against the boolean, so it fired on both — and an archer down a corridor
+## cheerfully put arrow after arrow into stone. A caller that may CHOOSE to shoot anyway has to be able to
+## tell "bad shot" from "no shot".
+##
+## "no_shot" MEANS NEVER FIRE. If you add a ranged caller, that is the contract: "clear" may fire,
+## "ally_blocked" may fire if it accepts the friendly fire, "no_shot" may not fire at all — it means the
+## arrow would meet a wall or empty air. The boolean wrappers exist for callers that genuinely only need
+## "can I shoot from here" (`_reposition_step`); do not use them to decide whether to loose anyway.
+##
+## STRINGS, not an enum, for one reason: this script has no `class_name`, so a caller in another file
+## cannot name a `CombatReferee.LaneState` enum. Bare string constants are how this codebase already
+## couples across files for closed sets — damage kinds ("arrow", "plague"), condition names ("rooted"),
+## status names — so this follows the existing idiom rather than registering a global type for three
+## values. MonsterBrain compares the literals; keep the two in step if a fourth state is ever added.
+const LANE_CLEAR := "clear"
+const LANE_ALLY_BLOCKED := "ally_blocked"
+const LANE_NO_SHOT := "no_shot"
+
+
+## The lane's full answer from a HYPOTHETICAL origin. Walks the EXACT tiles `_loose_arrow` will fly (the
+## same `_build_arrow_path` — extension to the weapon's full range, then the wall clip — and the same
+## `_is_stoppable` rule), and reports what the arrow would meet FIRST.
+func lane_state_from(shooter_id: int, from_tile: Vector2i, target_tile: Vector2i) -> String:
 	var shooter := _node_of_id(shooter_id)
 	# Same ranged discriminator the shot gate uses: no weapon / a melee weapon has no lane to clear.
 	var weapon: WeaponType = shooter.equipped_weapon if shooter is Entity else null
 	if weapon == null or weapon.range_tiles <= 0:
-		return false
+		return LANE_NO_SHOT
 	var shooter_tile: Vector2i = from_tile
 	# A zero-length aim builds no path (line_tiles from == to is empty); refuse it here so the loop below
 	# can't be handed a degenerate line the commit would reject a moment later anyway.
 	if target_tile == shooter_tile:
-		return false
+		return LANE_NO_SHOT
 	var clip := _build_arrow_path(shooter_tile, target_tile, weapon.range_tiles)
 	var path: Array[Vector2i] = clip["path"]
 	for tile in path:
@@ -1961,9 +1994,11 @@ func lane_clear_from(shooter_id: int, from_tile: Vector2i, target_tile: Vector2i
 		# first thing the arrow meets — keep walking, exactly as _arrow_step does.
 		if occ_id == _NO_ENTITY or not _is_stoppable(occ_id, shooter_id):
 			continue
-		# THE first stoppable body: the shot is worth taking only if it is an enemy.
-		return _is_hostile_pair(shooter_id, occ_id)
-	return false
+		# THE first stoppable body decides it: an enemy is a real shot, anything else is your own side.
+		return LANE_CLEAR if _is_hostile_pair(shooter_id, occ_id) else LANE_ALLY_BLOCKED
+	# Walked the whole flight and met nothing stoppable — the wall clip cut it short, or the target simply
+	# isn't on the extended line. Either way there is nothing out there to hit.
+	return LANE_NO_SHOT
 
 
 # ── Private methods ───────────────────────────────────────────────────────────

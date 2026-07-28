@@ -374,11 +374,16 @@ func play_attack(dir: Vector2i, with_sound := true) -> void:
 ## `pitch` scales the impact SFX playback (v0.11.0): 1.0 is the normal thud; a backstab passes it up a
 ## step (main.gd) so the sharper hit is audibly distinct (§2.3.4), reusing this one stream rather than a
 ## second clip. Set every call (default 1.0 restores normal pitch), so a prior pitched hit never lingers.
-func play_hurt(dir: Vector2i = Vector2i.ZERO, pitch: float = 1.0) -> void:
+## `with_streak` (v0.41.0): false suppresses the directional SLASH STREAK while keeping the flash and the
+## impact sound. Added for the plague tick, where the streak is a lie — nobody slashed anybody, the damage
+## arrived on its own clock. Passing Vector2i.ZERO does NOT do this: SlashFx.show_streak makes itself
+## visible regardless and simply resolves a zero direction to its default angle, so a "no direction" caller
+## would still paint a streak pointing somewhere arbitrary (GLM diff review caught exactly that).
+func play_hurt(dir: Vector2i = Vector2i.ZERO, pitch: float = 1.0, with_streak := true) -> void:
 	_flash(_HURT_FLASH_COLOR)
 	_hit_audio.pitch_scale = pitch
 	_hit_audio.play()
-	if _slash_fx != null:
+	if _slash_fx != null and with_streak:
 		_slash_fx.show_streak(dir)
 
 
