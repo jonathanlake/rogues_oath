@@ -486,7 +486,10 @@ func refresh_self() -> void:
 		return
 	if me.player_class != null:
 		_own_class_label.text = me.player_class.display_name
-		_refresh_passives(me.player_class)
+	# v0.45.0: the trait list is the UNION of the class's and this player's GRANTED ones, so it repaints
+	# from the PLAYER rather than the class — a granted trait belongs to the body, not the role. Runs even
+	# for a null class, since a classless player can still have been granted something.
+	_refresh_passives(me)
 	# Ability bar (v0.20.3; bottom-center since v0.21.0): repaint the 1-5 boxes from the class's active_abilities.
 	# Handles a null class (hides all). A /class change re-enters here (on_class_changed → refresh_self), so the
 	# bar swaps with the class.
@@ -1078,7 +1081,8 @@ func _make_slot_icon() -> Dictionary:
 	return { "rect": icon, "atlas": atlas }
 
 
-## Rebuild the own-player TRAIT list from its class (one label per trait that has a display name).
+## Rebuild the own-player TRAIT list from the PLAYER (v0.45.0) — its class's traits plus any granted to
+## it specifically, one label per trait that has a display name.
 ##
 ## "TRAITS" IS THE PLAYER-FACING NAME (v0.43.0, Jon). The code keeps `PassiveAbility` / `PlayerClass.passives`
 ## / `resources/passives/` — renaming those is a `.tres` schema break, and this repo has a written precedent
@@ -1089,30 +1093,41 @@ func _make_slot_icon() -> Dictionary:
 ## The header is built HERE rather than in `_build_char_info` so it can be hidden for the four trait-less
 ## classes — a heading over nothing is worse than no heading. Hidden means zero height, so those classes'
 ## columns measure exactly as before.
-func _refresh_passives(player_class: PlayerClass) -> void:
+func _refresh_passives(player: Player) -> void:
 	for child in _own_passives_box.get_children():
 		child.queue_free()
+	# CLASS FIRST, THEN GRANTED — the same order CombatReferee._passives_of runs them in, so the panel
+	# lists traits in the sequence they actually chain. A list that disagreed with the referee about order
+	# would mislead precisely when two multipliers meet, which is the only time order is visible.
+	var class_list: Array = player.player_class.passives if player.player_class != null else []
 	var any := false
-	for passive in player_class.passives:
-		if passive == null or passive.display_name.is_empty():
-			continue
-		if not any:
-			any = true
-			var header := _make_label(7)
-			header.text = "Traits"
-			header.add_theme_color_override("font_color", Color(0.62, 0.68, 0.85, 0.75))
-			_own_passives_box.add_child(header)
-		var label := _make_label(7)
-		label.text = "• %s" % passive.display_name
-		label.add_theme_color_override("font_color", Color(0.75, 0.8, 0.95, 0.9))
-		# HOVERABLE (v0.43.0): _make_label hardcodes IGNORE per the HUD discipline, which is right for every
-		# other label in this panel but is exactly what stopped traits from ever having a tooltip. PASS (not
-		# STOP) so the label answers a hover without eating a click — the char-info panel sits over nothing
-		# clickable, but PASS is the honest filter for "I want hover, not input". The IGNORE on the parent
-		# boxes does NOT block this: an IGNORE parent still lets its children be hit-tested.
-		label.mouse_filter = Control.MOUSE_FILTER_PASS
-		label.tooltip_text = _passive_tooltip(passive)
-		_own_passives_box.add_child(label)
+	for entry in [{ "list": class_list, "granted": false },
+			{ "list": player.granted_traits, "granted": true }]:
+		for passive in entry["list"]:
+			if passive == null or passive.display_name.is_empty():
+				continue
+			if not any:
+				any = true
+				var header := _make_label(7)
+				header.text = "Traits"
+				header.add_theme_color_override("font_color", Color(0.62, 0.68, 0.85, 0.75))
+				_own_passives_box.add_child(header)
+			var label := _make_label(7)
+			# GRANTED TRAITS READ AS EARNED (v0.45.0): a different bullet and a warmer colour, because
+			# "what my class gives me" and "what I was given" are different facts about a character and the
+			# panel is the only place either is stated. Deliberately not a separate section — they chain
+			# together in one order, so listing them apart would imply an independence they do not have.
+			var granted: bool = bool(entry["granted"])
+			label.text = ("+ %s" if granted else "• %s") % passive.display_name
+			label.add_theme_color_override("font_color",
+					Color(0.95, 0.86, 0.6, 0.95) if granted else Color(0.75, 0.8, 0.95, 0.9))
+			# HOVERABLE (v0.43.0): _make_label hardcodes IGNORE per the HUD discipline, which is right for
+			# every other label in this panel but is exactly what stopped traits from ever having a tooltip.
+			# PASS (not STOP) so the label answers a hover without eating a click. The IGNORE on the parent
+			# boxes does NOT block this: an IGNORE parent still lets its children be hit-tested.
+			label.mouse_filter = Control.MOUSE_FILTER_PASS
+			label.tooltip_text = _passive_tooltip(passive)
+			_own_passives_box.add_child(label)
 
 
 ## Point the primary-hand icon at the equipped weapon's items.png region (the exact weapon_rig pattern).

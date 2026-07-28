@@ -590,6 +590,25 @@ func armor_flat_for(weight: int) -> int:
 ## with every other beats dial. 0 = no lockout (refill on every explore edge; the exploit is then live).
 @export var mana_refill_lockout_beats: float = 20.0
 
+## The MASTER TRAIT catalog (v0.45.0) — every PassiveAbility a name may resolve to. The fourth catalog,
+## and the one that finally makes a trait a first-class object rather than a property of a class.
+##
+## WHY IT DID NOT EXIST BEFORE, and why it has to now: through v0.44.0 a trait was reachable from exactly
+## one place — `PlayerClass.passives` — and its NAME never travelled anywhere, because a peer resolved a
+## player's traits implicitly by resolving their CLASS. v0.45.0 lets a trait be GRANTED to an individual,
+## so the name now crosses the wire and gets typed at a command prompt, and both of those need a
+## name → resource lookup. That is what this array is.
+##
+## NOT AN AUTHORITY FOR GAMEPLAY, exactly like `ability_catalog`: the referee reads the player's own class
+## list plus their granted list when it runs the combat hooks, never this array. This is the resolution
+## index and the tuning surface. Designer-editable — add a trait here to make it name-resolvable and
+## grantable.
+##
+## KEEP EVERY CLASS TRAIT IN IT. `validate_class_traits_catalogued()` warns at startup if a class carries a
+## trait this array cannot resolve, which is the guard `ability_catalog` never got (ROADMAP's split-index
+## note: a panel that "looks tunable and isn't"). The two shipped traits are here from day one.
+@export var passive_catalog: Array[PassiveAbility] = []
+
 ## The MASTER ability catalog (v0.27.0) — every ActiveAbility a dev-command / panel token may resolve to,
 ## the mirror of weapon_catalog for abilities. `ability_by_name` resolves from THIS (by display_name slug),
 ## which is what makes `/ab kick cooldown_beats 30` and the panel's CLASSES section possible: an ability
@@ -642,6 +661,24 @@ func ability_by_name(token: String) -> ActiveAbility:
 	for a in ability_catalog:
 		if a != null and a.display_name.to_lower().replace(" ", "_") == want:
 			return a
+	return null
+
+
+## Resolve a TRAIT by a SLUG of its display_name through passive_catalog (v0.45.0), or null.
+##
+## SLUG, copying `ability_by_name` rather than the exact-match weapon/item form, and it serves BOTH callers
+## for the price of one. A typed `/trait sneak_attack` arrives lowercased with spaces already split into
+## separate args (dev_commands lowercases every arg), so the command surface needs normalization; the WIRE
+## carries a host-produced `display_name` ("Sneak Attack"), which normalizes to the same slug. One function,
+## both directions, no chance of the two disagreeing about what a name means.
+##
+## First-hit resolution like the other three — `validate_catalogs()` warns on a duplicate display_name,
+## since a shadowed second entry would be silently unreachable.
+func passive_by_name(token: String) -> PassiveAbility:
+	var want := token.to_lower().replace(" ", "_")
+	for p in passive_catalog:
+		if p != null and p.display_name.to_lower().replace(" ", "_") == want:
+			return p
 	return null
 
 
@@ -701,6 +738,29 @@ func validate_catalog_covers_rosters() -> void:
 				push_warning("[GameConfig] weapon '%s' is in a roster but NOT in weapon_catalog — it will resolve to null on peers and desync a swap/equip. Add it to weapon_catalog." % w.display_name)
 
 
+## Class-trait coverage guard (v0.45.0) — the trait twin of validate_catalog_covers_rosters above, called
+## beside it host-side at session start. Walks every class's `passives` and warns for any trait
+## `passive_by_name` cannot resolve.
+##
+## THIS EXISTS TO NOT REPEAT A KNOWN TRAP. ROADMAP records the same hazard on abilities: `/ab` resolves
+## through `ability_catalog` while the debug panel enumerates abilities off `class_roster`, so an ability
+## on a class but missing from the catalog renders tunable rows whose every edit rejects "unknown ability"
+## — a GUI that looks like it works and doesn't. Traits are about to grow the identical split (the panel
+## and `/pa` will read the catalog; the referee reads the class list), so the guard ships WITH the catalog
+## rather than after someone loses an evening to it.
+##
+## It also covers the grant path: a class trait absent from the catalog could be worn but never granted,
+## removed or named on the wire, which would read as "granting is broken" rather than "authoring is".
+## Pure diagnostic — mutates nothing.
+func validate_class_traits_catalogued() -> void:
+	for c in class_roster:
+		if c == null:
+			continue
+		for p in c.passives:
+			if p != null and passive_by_name(p.display_name) == null:
+				push_warning("[GameConfig] trait '%s' is on class '%s' but NOT in passive_catalog — it cannot be named on the wire, granted, removed or tuned. Add it to passive_catalog." % [p.display_name, c.display_name])
+
+
 ## Duplicate-name guard (v0.18.0), the sibling of validate_catalog_covers_rosters called beside it host-side
 ## at session start. Both catalogs resolve by FIRST-HIT display_name (weapon_by_name / item_by_name walk the
 ## array and return the first match), so a SECOND entry sharing a display_name silently SHADOWS the first —
@@ -710,6 +770,17 @@ func validate_catalog_covers_rosters() -> void:
 func validate_catalogs() -> void:
 	_warn_duplicate_names(weapon_catalog, "weapon_catalog")
 	_warn_duplicate_names(item_catalog, "item_catalog")
+	# v0.45.0: the trait catalog joins the duplicate scan. `passive_by_name` is first-hit like the others,
+	# so a second entry sharing a display_name is permanently unreachable — and since a trait's name is now
+	# what a `/trait` grant and its wire event carry, an unreachable one means a grant that silently
+	# resolves to the WRONG trait. The existing helper is generic over any Resource with a display_name, so
+	# this is a call, not a new scanner.
+	#
+	# DELIBERATELY NOT ADDED TO _warn_cross_catalog_collisions: that guard exists because a BAG ENTRY is one
+	# string resolved against two catalogs, so a shared name mis-routes equip-vs-use. A trait is never a bag
+	# entry and never resolved against another catalog, so a trait sharing a weapon's display_name is
+	# harmless. Stated here so nobody "completes the set" later and adds a warning for a non-problem.
+	_warn_duplicate_names(passive_catalog, "passive_catalog")
 	_warn_cross_catalog_collisions()
 	_warn_inverted_damage_bands()
 

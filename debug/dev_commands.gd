@@ -151,6 +151,10 @@ func validate(sender_peer_id: int, data: Dictionary) -> Dictionary:
 			return _dev_cmd_monster(args, by)
 		"ab":
 			return _dev_cmd_ability(args, by)
+		"pa":
+			return _dev_cmd_passive(args, by)
+		"trait":
+			return _dev_cmd_trait(sender_peer_id, args, by)
 		"god":
 			return _dev_cmd_god(sender_peer_id, by)
 		"class":
@@ -271,7 +275,106 @@ func _dev_cmd_ability(args: Array[String], by: String) -> Dictionary:
 			GameManager.DEV_ABILITY_CLAMPS, args.slice(1), by, ability.display_name)
 
 
-## The ONE tune pipeline for /w, /m and /ab (v0.10.1 dedup). `args` is the tokens after the resource name:
+## /pa <trait> <field> <value|reset> — tune a TRAIT (v0.45.0). The fourth caller of the shared tune
+## pipeline, resolving through the new `passive_catalog`. The mutation lands on the SHARED loaded resource
+## host-side, which every wearer's class list (and every granted copy) points at, so a retune reaches
+## everyone who has that trait at once and is read live at the next combat hook.
+##
+## THE ONE EXTRA GATE its three siblings do not need: a trait's fields live on its SUBCLASS, so
+## `DEV_PASSIVE_FIELDS` is a union and a given field may not exist on the trait you named. Godot's
+## `Object.set()` on a missing property is a SILENT no-op, so without this check
+## `/pa backstab windup_beats_delta 2` would report success and change nothing. Checked BEFORE the shared
+## pipeline runs, because that pipeline's allowlist can only answer "is this field tunable at all", not "on
+## this resource".
+func _dev_cmd_passive(args: Array[String], by: String) -> Dictionary:
+	if args.size() < 2:
+		return { "ok": false, "reason": "usage: /pa <trait> <field> <value|reset>" }
+	var trait_res := _resolve_trait(args[0])
+	if trait_res == null:
+		return { "ok": false, "reason": "unknown trait '%s'" % args[0] }
+	var rest := args.slice(1)
+	# A trailing "reset" is the pipeline's whole-resource restore and names no field — let it through.
+	if rest[rest.size() - 1] != "reset":
+		var field: String = rest[0]
+		if field in GameManager.DEV_PASSIVE_FIELDS and not _resource_has_property(trait_res, field):
+			return { "ok": false, "reason": "'%s' has no %s" % [trait_res.display_name, field] }
+	return _dev_tune_resource(trait_res, GameManager.DEV_PASSIVE_FIELDS,
+			GameManager.DEV_PASSIVE_INT_FIELDS, GameManager.DEV_PASSIVE_CLAMPS, rest, by,
+			trait_res.display_name)
+
+
+## Does this resource actually declare `field`? A property-list check rather than `res.get(field) == null`,
+## because a field authored to 0 / 0.0 is present and tunable while `get` on a MISSING property also returns
+## null — the two cases must not collapse into one answer.
+func _resource_has_property(res: Resource, field: String) -> bool:
+	for prop in res.get_property_list():
+		if str(prop.get("name", "")) == field:
+			return true
+	return false
+
+
+## /trait <name> [remove] — GRANT a trait to the sender, or take it back (v0.45.0). Host-adjudicated.
+##
+## THIS IS THE POINT OF THE VERSION: a trait used to be a property of a CLASS and nothing else, so "give
+## this player Archery" had no expression at all. It lands on the sender's own `granted_traits`, never on
+## `player_class.passives` — that array is a SHARED resource, and appending to it would grant the trait to
+## every player of that class on every peer (the `/w longsword` retune hazard, one level worse because it
+## would look like it had worked).
+##
+## SENDER-ONLY, like `/class` and `/god`: an admin grants to themselves. Granting to someone else would need
+## a target-resolution surface these commands do not have.
+##
+## A DUPLICATE GRANT IS REFUSED, not stacked — two copies in the union would run the trait's `modify_damage`
+## twice and silently SQUARE its multiplier. Refusing says so rather than quietly doing the wrong thing, and
+## a removal of something never granted is refused for the mirror reason: "you never had it" and "it is gone
+## now" are different outcomes, and a no-op reporting success is how a command gets filed as broken.
+func _dev_cmd_trait(sender_peer_id: int, args: Array[String], by: String) -> Dictionary:
+	if args.is_empty():
+		return { "ok": false, "reason": "usage: /trait <name> [remove]" }
+	var removing: bool = args.size() > 1 and args[args.size() - 1] == "remove"
+	var name_tokens := args.slice(0, args.size() - 1) if removing else args
+	if name_tokens.is_empty():
+		return { "ok": false, "reason": "usage: /trait <name> [remove]" }
+	var wanted := " ".join(name_tokens)
+	var trait_res := _resolve_trait(wanted)
+	if trait_res == null:
+		return { "ok": false, "reason": "unknown trait '%s'" % wanted }
+	var player_node := _players.get_node_or_null(str(sender_peer_id)) as Player
+	if player_node == null:
+		return { "ok": false, "reason": "not in session" }
+	# THE CLASS COUNTS AS HOLDING IT (GLM diff review, reproduced): checking `granted_traits` alone let a
+	# ranger be granted the Archery its own class already gives, and the union then ran Archery's hook
+	# twice — a measured 1.25s bow tail against the correct 1.5s. The referee dedupes as the real guard;
+	# this refusal exists so the command can SAY why rather than silently doing nothing.
+	var from_class: bool = player_node.player_class != null 			and trait_res in player_node.player_class.passives
+	var held: bool = trait_res in player_node.granted_traits
+	if not removing and from_class:
+		return { "ok": false, "reason": "%s already has %s from their class" % [by, trait_res.display_name] }
+	if removing and from_class and not held:
+		# A class trait cannot be taken away by /trait — it is not in the granted list to remove, and
+		# stripping a class of its own identity is a different feature (edit the class .tres).
+		return { "ok": false, "reason": "%s is %s's class trait — not granted, so not removable" % [trait_res.display_name, by] }
+	if removing and not held:
+		return { "ok": false, "reason": "%s was not granted %s" % [by, trait_res.display_name] }
+	if not removing and held:
+		return { "ok": false, "reason": "%s already has %s" % [by, trait_res.display_name] }
+	# Apply HOST-SIDE first (authoritative), then broadcast — the /class and swap_weapon shape. The
+	# call_local re-apply on the host is idempotent: the handler assigns from the same name-resolved
+	# resource, so applying it twice reaches the same array.
+	if removing:
+		player_node.granted_traits.erase(trait_res)
+	else:
+		player_node.granted_traits.append(trait_res)
+	NetEvents.post_event("trait_removed" if removing else "trait_granted", {
+		"entity_id": sender_peer_id,
+		"name": player_node.display_name,
+		"trait": trait_res.display_name,
+		"by": by,
+	})
+	return { "ok": true, "deferred": true }
+
+
+## The ONE tune pipeline for /w, /m, /ab and /pa (v0.10.1 dedup). `args` is the tokens after the resource name:
 ## a shape whose LAST token is "reset" restores every allowlisted field from disk; otherwise it is
 ## [field, value]. Validates the field against the allowlist, parses the value as a number, and REJECTS
 ## (naming the range — never silently clamps) any value outside the field's clamp table before mutating
@@ -960,6 +1063,34 @@ func _row_kind_label(kind: String) -> String:
 ## Resolve a weapon by lowercase name (v0.10.0 /w): GameConfig.weapon_by_name FIRST (catalog display_name),
 ## else a filename load guarded by ResourceLoader.exists — so a weapon not in the player roster (e.g. the
 ## goblin's club) is still reachable by its filename (= its display_name). Null if neither resolves. Host-side.
+## Resolve a TRAIT by catalog display_name slug, falling back to its .tres FILENAME (v0.45.0) — the exact
+## shape `_resolve_weapon` below uses, and for a sharper reason here.
+##
+## THE TWO NAMES GENUINELY DIVERGE for the shipped traits, permanently and on purpose: the rogue's file is
+## `backstab.tres` while its display_name is "Sneak Attack" (v0.27.0 renamed the concept and deliberately
+## kept the filename, because renaming a `.tres` breaks loads through Godot's uid cache — a known landmine
+## in this repo, recorded at backstab.gd's header). So a dev reading the resources folder types
+## `/trait backstab` and a dev reading the HUD types `/trait sneak_attack`, and BOTH are the obvious thing
+## to type. Refusing either would be the command being pedantic about an inconsistency the codebase chose.
+##
+## Catalog FIRST so the authored name always wins; the filename is the convenience path.
+func _resolve_trait(name: String) -> PassiveAbility:
+	var p := GameManager.config.passive_by_name(name)
+	if p != null:
+		return p
+	# The token becomes part of a path, so it must be a bare filename (GLM diff review). A dev command is a
+	# trusted surface and the `as PassiveAbility` cast already fails a wrong-type load safely, but building
+	# a path out of unvalidated text is the kind of thing that stops being harmless when someone reuses the
+	# helper somewhere less trusted. Refuse separators outright rather than sanitizing them away.
+	var file := name.to_lower().replace(" ", "_")
+	if file.contains("/") or file.contains("\\") or file.contains(".."):
+		return null
+	var path := "res://resources/passives/%s.tres" % file
+	if ResourceLoader.exists(path):
+		return load(path) as PassiveAbility
+	return null
+
+
 func _resolve_weapon(name: String) -> WeaponType:
 	var w := GameManager.config.weapon_by_name(name)
 	if w != null:

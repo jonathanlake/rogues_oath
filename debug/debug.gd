@@ -1115,6 +1115,9 @@ func _log_net_event(event: Dictionary) -> void:
 			# `missile_volley` is pure FX and carries no adjudication, but it is the cheapest proof that a
 			# volley resolved at all, distinct from the three `attack` events it precedes.
 			"mana", "self_cast", "missile_volley",
+			# v0.45.0: a granted trait is otherwise INVISIBLE in a trace — it changes no HP and posts no
+			# other event, so "did the grant land" and "did the hook fire" would both be unanswerable.
+			"trait_granted", "trait_removed",
 			"projectile_launched", "projectile_ended",
 			"dev_snapshot"]):
 		return

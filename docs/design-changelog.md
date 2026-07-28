@@ -9,6 +9,36 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.45.0 (2026-07-28) — TRAITS ARE OBJECTS NOW, AND YOU CAN BE GIVEN ONE.** Jon asked whether a trait
+  could move between classes, or be handed to someone outside their class. The first was already free; the
+  second was not possible at all. Now both are.
+  **A trait was a property of a CLASS and nothing else.** One code path read them —
+  `player_class.passives` — and there was no catalog, so a trait's name could not be typed at a prompt,
+  sent over the wire, or tuned. Weapons, items and abilities all had one; traits were the gap.
+  **THE TRAIT CATALOG.** The fourth catalog, with the same duplicate-name guard the others get and one
+  they do not: a startup check that every class trait is registered. That guard exists because the
+  ability catalog has a known trap — an ability on a class but missing from the catalog renders tunable
+  rows whose every edit rejects — and traits were about to grow the identical split. It ships with the
+  catalog rather than after someone loses an evening to it. **Proven by removing a trait from the catalog
+  and watching it warn.**
+  **`/trait <name>` GRANTS a trait to you**, `/trait <name> remove` takes it back. It lands on a per-player
+  list, never on the class resource — appending there would hand the trait to every player of that class,
+  the same way retuning a longsword retunes it for everyone holding one.
+  **Swapping a trait between classes stays a pure data edit** — move the `.tres` reference from one class
+  to another, no code. Worth knowing: traits gate on what you are HOLDING, not who you are, so Sneak
+  Attack given to a knight does nothing until he picks up a dagger. That is the trait's own rule, and it is
+  why they transplant cleanly.
+  **`/pa <trait> <field> <value>` tunes them live**, like `/w` does weapons. It rejects a field the named
+  trait does not have rather than appearing to work — trait fields live on their own scripts, and Godot
+  silently ignores setting a property that isn't there.
+  **Granted traits show in the panel with a `+` and a warmer colour**, because "what my class gives me" and
+  "what I was given" are different facts about a character.
+  **Verified, and one real bug caught in review:** a rogue granted Archery shot with a 1.5s tail against
+  the un-granted 1.75s — the hook fires for a class that has no such trait. Granting a trait your class
+  ALREADY gives you used to stack it: a ranger granted Archery shot at 1.25s, applying the bonus twice.
+  Now refused with a reason, and the referee de-duplicates as the real guard since the event and late-join
+  paths could introduce a double too. Permadeath confirmed: a respawned player's granted list is empty.
+
 - **v0.44.0 (2026-07-28) — THE DEBUG PANEL'S EXPAND BUTTON NOW ACTUALLY MAKES IT BIGGER.** Press expand and
   the panel fills the play area instead of growing sideways.
   **It was doing the opposite of what it looked like.** The zoom doubled every glyph *and halved the rect*

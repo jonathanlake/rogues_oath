@@ -56,6 +56,26 @@ var spawn_index: int = 0
 ## loop to tell the joiner our current class. Presentation on the node; never adjudication truth.
 var player_class: PlayerClass = null
 
+## TRAITS GRANTED TO THIS PLAYER SPECIFICALLY (v0.45.0) — the ones they were given, as opposed to the ones
+## their CLASS carries (`player_class.passives`). Traits became plug-and-play this version: a trait is a
+## catalogued object now, so it can belong to a body rather than only to a role.
+##
+## THIS FIELD IS WHY A PER-PLAYER LIST WAS NEEDED AT ALL. `player_class` is a SHARED loaded resource — every
+## wizard in the session points at the same `wizard.tres` — so granting by appending to `player_class.passives`
+## would hand the trait to everyone of that class, the same way `/w longsword` retunes the longsword for
+## every wielder. Granting has to live beside the class list, never inside it.
+##
+## Replicated as NAMES, never resources: the host's `trait_granted` / `trait_removed` events and the
+## late-join `sync_player_field` RPC carry a display_name each peer resolves through
+## `GameConfig.passive_by_name` — the codebase-wide name-resolution model. Host-authoritative: the referee
+## reads the union of this and the class list, and only the `/trait` validator writes it.
+##
+## DIES WITH THE PLAYER (permadeath, §2 — the bag already works this way), and it needs NO teardown code to
+## do it: this array is state on the NODE, and death, disconnect and the F5 reset all free the node. A
+## respawn builds a fresh Player whose array is empty, so a new life starts with only what its class gives
+## it. Nothing to erase means nothing that can be forgotten in one of the three paths.
+var granted_traits: Array[PassiveAbility] = []
+
 ## Client-side inventory MIRROR (v0.18.0 chunk B): the item display_names this player carries, adopted from
 ## the host's item_picked_up events (main.gd appends here, in slot order). PRESENTATION TRUTH ONLY — the
 ## authoritative bag lives in the host's InventoryReferee._inventories; this exists so every peer's HUD hotbar

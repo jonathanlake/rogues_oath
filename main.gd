@@ -1103,6 +1103,12 @@ func _on_net_event(event: Dictionary) -> void:
 			# A caster's mana pool changed (v0.43.0, host-authored: a spend, an explore refill, or a class
 			# reconcile). Own-player HUD renders the blue bar; a max of 0 takes the bar down entirely.
 			_handle_mana_event(event)
+		"trait_granted", "trait_removed":
+			# A trait was given to (or taken from) one player specifically (v0.45.0). Every peer updates
+			# that player's granted list from the trait NAME — the codebase-wide name-resolution model —
+			# and repaints the character panel if it is our own. One handler: the two events differ by
+			# exactly one bool, and splitting them would duplicate the resolve and the repaint.
+			_handle_trait_event(event)
 		"self_cast":
 			# A PLAYER's SELF cast channel starting (v0.43.0 — the wizard's Blink). A tell over the caster
 			# for the committed window; the LAND is the later `blink` event (or its `fizzled` twin).
@@ -1981,6 +1987,46 @@ func _handle_class_changed_event(event: Dictionary) -> void:
 	# Party-frame + char-panel repaint (v0.12.0): the frame portrait re-reads the new class; if it's our
 	# own player the character-info panel refreshes too. Fanned out after the node adopts the class.
 	_hud.on_class_changed(int(data.get("entity_id", 0)))
+
+
+## All peers: a trait was GRANTED to, or REMOVED from, one player specifically (v0.45.0).
+##
+## The event carries the trait's NAME and every peer resolves it through `GameConfig.passive_by_name` — the
+## same model the class, weapon and item events use, and the reason the trait catalog had to exist before
+## granting could. The resource itself never crosses the wire.
+##
+## Reads its own action rather than taking a bool, because the dispatch matches on an inline expression and
+## has no action variable to hand down. An unresolvable name is a stale mirror or config drift: warn loudly
+## rather than silently leaving this peer's copy of the player wrong, which is the kind of desync that only
+## shows up as "why did that hit for double".
+##
+## The GRANT is idempotent and the REMOVE is tolerant, so a replayed or duplicated event cannot stack a
+## trait (which would run its damage hook twice) or error on one already gone. The host refuses both cases
+## up front; this is the belt.
+func _handle_trait_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var entity_id := int(data.get("entity_id", 0))
+	var player := _players.get_node_or_null(str(entity_id)) as Player
+	if player == null:
+		return
+	var trait_name := str(data.get("trait", ""))
+	var trait_res := GameManager.config.passive_by_name(trait_name)
+	if trait_res == null:
+		push_warning("[Main] trait event names '%s', which passive_catalog cannot resolve — this peer's copy of player %d is now WRONG (config drift)." % [trait_name, entity_id])
+		return
+	# BOTH ARMS ARE EXPLICIT (GLM diff review): an `else` that erases would make every future event routed
+	# here — or one whose action key went missing — silently strip a trait. Neither arm is a fallback.
+	var action := str(event.get("action", ""))
+	if action == "trait_granted":
+		if not (trait_res in player.granted_traits):
+			player.granted_traits.append(trait_res)
+	elif action == "trait_removed":
+		player.granted_traits.erase(trait_res)
+	else:
+		return
+	# Repaint the character panel through the class hook — it rebuilds the Traits list wholesale from the
+	# union, so it needs no trait-specific entry point. Own-player filtered inside, like every HUD fan-out.
+	_hud.on_class_changed(entity_id)
 
 
 ## All peers: adopt a host-resolved pace flip (Tactical Zones v1, §2.8.7). Mirrors EVERY player's pace
@@ -3149,6 +3195,13 @@ func peer_ready(p_name: String, client_version: String) -> void:
 				var slot_default: String = roster[existing.spawn_index % roster.size()].display_name
 				if existing.player_class.display_name != slot_default:
 					sync_player_field.rpc_id(peer_id, existing.entity_id, "class", existing.player_class.display_name)
+			# GRANTED TRAITS (v0.45.0) — one call each. No "differs from the seeded default" filter like the
+			# three fields around it, and none is possible: a joiner seeds NO granted traits (a fresh Player
+			# starts with an empty array), so every entry here differs by construction and every entry has
+			# to travel. Class traits need nothing — they ride the class name above.
+			for granted_trait in existing.granted_traits:
+				if granted_trait != null:
+					sync_player_field.rpc_id(peer_id, existing.entity_id, "trait", granted_trait.display_name)
 			# BODY ARMOR (v0.27.0 equipment phase 2), the same filter logic one field over: the joiner's copy
 			# of this player seeds its body from the SLOT-DEFAULT class's starting_body_armor in Player._ready
 			# (the class sync above repaints the sprite but deliberately never touches gear), so only a
@@ -3230,6 +3283,19 @@ func sync_player_field(entity_id: int, kind: String, value_name: String, is_retr
 			var weapon := GameManager.config.weapon_by_name(value_name)
 			if weapon != null:
 				player.set_weapon(weapon)
+		"trait":
+			# v0.45.0. ONE CALL PER GRANTED TRAIT, unlike the single-valued kinds around it: a player can
+			# hold several, and a joined string would need an escape rule the moment a trait name contains
+			# the separator. Repeated calls also make the branch idempotent for free, which matters because
+			# the RPC RETRIES itself when the node has not replicated yet (above) — a retry that appended
+			# blindly would double the trait and silently run its damage hook twice.
+			#
+			# CLASS TRAITS ARE NOT SYNCED and never were: they ride the class name through the "class" arm
+			# below, since every peer resolves the same class resource. Only the granted ones are per-player
+			# state a joiner cannot derive.
+			var granted := GameManager.config.passive_by_name(value_name)
+			if granted != null and not (granted in player.granted_traits):
+				player.granted_traits.append(granted)
 		"body_armor":
 			# v0.27.0 equipment phase 2. An EMPTY value_name is MEANINGFUL — it means "this player wears
 			# nothing", which is a real state a joiner must adopt (someone stripped their starting armor), so

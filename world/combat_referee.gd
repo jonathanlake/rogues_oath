@@ -220,6 +220,10 @@ func activate(players: Node2D, monsters: Node2D, move_referee: Node, pace: Node,
 	# desyncs a swap/equip SILENTLY at runtime. Runs here (not _ready) because activate is host-only and fires
 	# after GameManager.config is loaded, so the catalog/rosters are guaranteed present and authoritative.
 	GameManager.config.validate_catalog_covers_rosters()
+	# v0.45.0: the same shape for TRAITS — every class trait must be in passive_catalog, or it can be worn
+	# but never granted, removed, named on the wire or tuned. Runs here for the identical reason: activate
+	# is host-only and fires after the config is loaded and authoritative.
+	GameManager.config.validate_class_traits_catalogued()
 	# Sibling guard (v0.18.0): warn on duplicate display_names within weapon_catalog / item_catalog — a
 	# first-hit-resolution dupe silently shadows the later entry. Same host-only, once-at-startup contract.
 	GameManager.config.validate_catalogs()
@@ -3184,14 +3188,43 @@ func _on_entity_exiting(node: Node) -> void:
 ## crashes on a node lacking `player_class` (get returns null for a missing property); a Player exposes
 ## player_class (its PlayerClass), whose `passives` array is the list. Monsters can own passives later by
 ## feeding this same accessor from MonsterType — the dispatch sites don't care where the array comes from.
+## v0.45.0: this returns the UNION of the class's traits and the ones granted to this player specifically.
+##
+## CLASS FIRST, THEN GRANTED, and the order is load-bearing rather than arbitrary: `modify_damage` chains in
+## array order with each trait receiving the previous one's output, so with two multipliers the result
+## depends on which runs first. Class-first is the decision — a class's own identity prices the blow, and
+## anything you were given modifies that. (For the two shipped traits it cannot matter: one is a multiplier
+## and the other is a timing hook. It will matter the first time two multipliers meet.)
+##
+## The class list is copied rather than appended to, because `pc.passives` is a SHARED resource array —
+## appending would permanently give the class whatever this one player was granted, on every peer's copy.
+## That is the same hazard `Player.granted_traits` exists to avoid, one level down; the bug it would cause
+## is silent and permanent, so the copy is not an optimization to remove later.
 func _passives_of(node) -> Array:
 	if node == null:
 		return []
+	var granted = node.get("granted_traits")
 	var pc = node.get("player_class")
-	if pc == null:
-		return []
-	var passives = pc.get("passives")
-	return passives if passives != null else []
+	var class_list = pc.get("passives") if pc != null else null
+	if granted == null or granted.is_empty():
+		return class_list if class_list != null else []
+	var out: Array = []
+	if class_list != null:
+		out.assign(class_list)
+	# DEDUPED, and this is the load-bearing guard rather than a tidiness pass (GLM diff review, reproduced:
+	# a ranger granted the Archery its class already gives shot with a 1.25s tail instead of 1.5s — the -1
+	# beat delta applied TWICE). A trait appearing twice in this array runs its hook twice, which squares a
+	# multiplier and doubles a delta, silently.
+	#
+	# IT LIVES HERE because this is the single seam every hook reads through, and there are three ways a
+	# duplicate can arrive: the `/trait` command, the `trait_granted` event handler, and the late-join sync.
+	# Guarding only the command would leave the other two, and the failure is invisible — no error, just
+	# wrong numbers. The command guards too, but for the FEEDBACK (it can say why); this guards for the
+	# CORRECTNESS.
+	for t in granted:
+		if t != null and not (t in out):
+			out.append(t)
+	return out
 
 
 ## Build the modify_damage / after_attack context dict (v0.11.0). Authoritative throughout: tiles and

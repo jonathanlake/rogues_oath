@@ -432,6 +432,14 @@ func _on_event_received(event: Dictionary) -> void:
 			# flows through add_line's sink escape like every line.
 			if int(data.get("entity_id", 0)) == multiplayer.get_unique_id():
 				add_line("a %s lies here — press G to pick up" % str(data.get("item", "item")))
+		"trait_granted":
+			# v0.45.0. Party-wide, like class_changed: who someone IS is everyone's business in a co-op
+			# party, and a teammate suddenly hitting harder should have a line explaining it.
+			add_line("%s gains the %s trait." % [str(data.get("name", "Someone")),
+					str(data.get("trait", "trait"))])
+		"trait_removed":
+			add_line("%s loses the %s trait." % [str(data.get("name", "Someone")),
+					str(data.get("trait", "trait"))])
 		"item_used":
 			# A committed item use (v0.18.0 chunk C, §2.3.4 — the telegraph line). Party-wide: everyone sees
 			# who drank what, at COMMIT (the heal, if any, lands on its own `heal` event when the window ends —

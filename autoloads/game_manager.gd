@@ -76,6 +76,31 @@ const DEV_ABILITY_CLAMPS := {
 	"blink_travel_tiles": [0, 20],
 }
 
+## TRAIT (PassiveAbility) tuning allowlist (v0.45.0) — the fourth `_dev_tune_resource` caller, reached by
+## `/pa <trait> <field> <value>` and the panel's TRAITS section. Traits became catalogued objects this
+## version, which is what makes tuning them possible at all: before, a trait had no name a command could
+## resolve.
+##
+## THIS LIST IS A UNION ACROSS SUBCLASSES, and that is the one way it differs from its three siblings. A
+## weapon's fields all live on `WeaponType`; a trait's live on its own script (`Backstab.damage_multiplier`,
+## `Archery.windup_beats_delta`), so no single trait has all of these. Godot's `Object.set()` on a property
+## that does not exist is a SILENT no-op, so `_dev_cmd_passive` checks the field exists on THIS trait before
+## tuning and rejects if not — otherwise `/pa backstab windup_beats_delta 2` would report success and change
+## nothing, which is exactly the "GUI that looks like it works" failure the catalog guard exists to prevent.
+const DEV_PASSIVE_FIELDS := ["damage_multiplier", "windup_beats_delta", "recovery_beats_delta"]
+## No int fields today — every trait number is a multiplier or a beats delta.
+const DEV_PASSIVE_INT_FIELDS := []
+const DEV_PASSIVE_CLAMPS := {
+	# 0 disables the bonus outright (a 0x sneak attack deals nothing, which is a legitimate "off"); 10x is
+	# far past any real design and still refuses a runaway.
+	"damage_multiplier": [0.0, 10.0],
+	# SIGNED, like the monster bonus dials: negative shortens (the shipped -1 draw), positive lengthens, so
+	# a future "heavy draw" trait authors +1 against the same field. The referee re-floors the chained
+	# result at 0, so an over-generous delta yields an instant action rather than a negative one.
+	"windup_beats_delta": [-30.0, 30.0],
+	"recovery_beats_delta": [-30.0, 30.0],
+}
+
 const DEV_MONSTER_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles",
 	"bonus_windup_beats", "bonus_recovery_beats", "bonus_damage",
 	# Spell-casting params (v0.19.10) — ALL live-tunable via /m, not just the heal (Jon's ask).
