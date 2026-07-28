@@ -127,24 +127,36 @@ var _painting: bool = false
 var _snapshot: Dictionary = {}
 
 var _root: PanelContainer = null
+
+## The dock's collapsed ON-SCREEN width in canvas units — the number v0.31.0 grew from 422 to 502 to pay
+## for its +2 font bump. Named now (v0.44.0) rather than written twice as the literal pair -510/502, which
+## is how two comments elsewhere in this file spent three releases reasoning from the pre-v0.31.0 422
+## (both corrected in the same pass).
+const _DOCK_W := 502.0
+## The narrowest the rect may ever be authored. Horizontal scrolling is DISABLED, so the widest row's
+## minimum propagates: go under it and min-size beats the rect and the dock bleeds LEFT (the original
+## screenshot bug). The widest row today is a GAME paired row at 150 + 100 + 100 + separations ≈ 358.
+const _MIN_RECT_W := 360.0
+
 # EXPAND (v0.37.0, Jon: "some of us are getting older and our eyesight isn't what it used to be") — the
-# multiplier applied on top of the counter-scale in _sync_width. 1.0 = the authored size, 2.0 = double.
+# GLYPH multiplier. 1.0 = the authored size, 2.0 = double. Applied as a SCALE on the dock root rather than
+# a font/size restyle, because scaling the whole node means the layout never reflows: every row, label and
+# spin box grows in lockstep, where a font-size sweep would have to re-derive every explicit per-control
+# override in this file and would still change wrapping.
 #
-# WHAT IT ACTUALLY DOES, stated precisely because the obvious phrasing is wrong: at 2.0 every glyph and
-# widget doubles and the dock doubles in WIDTH, but its on-screen HEIGHT is unchanged — it already spans
-# the window top to bottom, and there is nowhere taller to grow. So you see the same column twice as
-# large, showing about half as many rows, and you scroll for the rest. That IS the legibility ask (Jon's
-# "4x the size and double the font" reads as one wish: make it bigger; only the width has room to obey).
-#
-# ONE NUMBER, applied as a SCALE on the dock root rather than as a font/size restyle, because scaling the
-# whole node means the layout never reflows — every row, label and spin box grows in lockstep, and a
-# font-size sweep would instead have to re-derive every explicit per-control override in this file and
-# would still change wrapping.
+# v0.44.0 SPLIT ITS SECOND JOB OFF. It used to divide the rect as well as multiply the glyphs, so
+# expanding doubled the text and halved the rect — you got bigger words and about a quarter of the rows.
+# It is now purely the glyph scale; the dock's on-screen SIZE is chosen separately in _sync_geometry.
+# Changing this number no longer changes how much you can see, only how big it is.
 #
 # SESSION-ONLY by Jon's call (2026-07-27): persisting it needs a prefs store the project does not have
-# (no ConfigFile, no user:// write anywhere), which was a third of the remaining budget for this batch.
+# (no ConfigFile, no user:// write anywhere), which was a third of the remaining budget for that batch.
 # Parked in the plan, not forgotten.
 var _zoom: float = 1.0
+# The PLAY AREA in canvas units, pushed by main.gd off the HUD's world_frame_changed (v0.44.0). The
+# expanded dock fills it. A ZERO rect means "not pushed yet" — a real state on a peer whose HUD has not
+# had its first deferred layout — and _sync_geometry falls back to the full canvas for it.
+var _play_area: Rect2 = Rect2()
 var _expand_button: Button = null
 # LOCAL section (v0.31.0) — the one non-intent widget set; see the carve-out in the header block.
 var _local_box: VBoxContainer = null
@@ -212,10 +224,11 @@ func _input(event: InputEvent) -> void:
 
 func _build() -> void:
 	_root = PanelContainer.new()
-	# Right-side dock: anchored to the viewport's right edge, full height, fixed SCREEN width.
-	# HORIZONTAL extent + the top edge only. The VERTICAL extent (anchor_bottom / offset_bottom) is owned
-	# entirely by _sync_width since v0.37.0, because the rect's height now depends on the zoom — setting a
-	# constant here too would be dead on arrival and would read as the authority when it isn't.
+	# Right-anchored dock. ONLY THE ANCHORS ARE AUTHORED HERE (v0.44.0): every offset — left, top, right,
+	# bottom — plus the scale and pivot are owned entirely by _sync_geometry, which runs immediately after
+	# this and on every resize/zoom/play-area change. The two offsets below are seeded purely so the node
+	# is well-formed for one frame; treating them as the authority is what let the old width/pivot pair
+	# drift out of step.
 	_root.anchor_left = 1.0
 	_root.anchor_right = 1.0
 	_root.offset_top = 8.0
@@ -235,7 +248,7 @@ func _build() -> void:
 	# default_font_size (screenshot bugs #2/#3) — so this theme overrides font_size per type too.
 	# 11 → 13 in v0.31.0 (Jon: the inspector was legible but squint-y). Every per-control override
 	# further down moved by the same +2, and the dock widened to -510 to keep the rows' minimum sizes
-	# inside the rect — the two must move TOGETHER or the bleed-left bug returns (see _sync_width).
+	# inside the rect — the two must move TOGETHER or the bleed-left bug returns (see _sync_geometry).
 	var panel_theme := Theme.new()
 	panel_theme.default_font_size = 13
 	for control_type in ["Label", "Button", "CheckBox", "LineEdit", "OptionButton", "SpinBox"]:
@@ -245,8 +258,8 @@ func _build() -> void:
 	# CANVAS-PX vs SCREEN-PX (the v0.16.0 windowed-HUD lesson): offsets are canvas units, which the
 	# window's content_scale_factor multiplies on screen — a fixed -400 reads as 800 screen px at
 	# scale 2. Divide by the live factor (re-synced on resize) so the dock occupies ~420 SCREEN px.
-	_sync_width()
-	get_window().size_changed.connect(_sync_width)
+	_sync_geometry()
+	get_window().size_changed.connect(_sync_geometry)
 	var outer := VBoxContainer.new()
 	outer.add_theme_constant_override("separation", 4)
 	_root.add_child(outer)
@@ -311,30 +324,51 @@ func _build() -> void:
 	# Weapons / types / instances build on the first snapshot (their sets are data-driven).
 
 
-## Keep the dock ~510 SCREEN pixels wide whatever the window's content scale factor is: the rect
-## stays a fixed 502 canvas units (so the rows' minimum sizes always fit — an offset-shrunk rect
-## loses to min-size and bleeds left, the first screenshot's bug), and the ROOT is counter-scaled
-## by 1/factor, pivoted top-right so the shrink hugs the dock edge. Net visual width = rect px.
+## Lay the dock out: its rect, its counter-scale, its pivot and its height. Rewritten v0.44.0 (renamed
+## from `_sync_width`, which owned all four of those and had not been only about width since v0.37.0).
 ##
-## THE TWO NUMBERS MOVE TOGETHER: pivot_offset.x is always (dock width − 8), the rect width left
-## after the stylebox's 8-unit left content margin. v0.31.0 grew both (430/422 → 510/502) to pay for
-## the +2 font bump — a wider font makes every row's MINIMUM wider, and min-size beating the rect is
-## exactly what produces the bleed. Widen here rather than trimming a row.
+## THE MODEL, in one sentence: pick the size the dock should occupy ON SCREEN, then divide by the glyph
+## scale to get the rect that produces it.
 ##
-## ZOOM (v0.37.0) rides the SAME scale, as a plain multiplier: `_zoom / scale_factor`. That is the whole
-## expand feature — one multiply on a number this function already computes — and it is why the DPI work
-## makes this cheap rather than expensive.
+## THE BUG THIS REPLACES. `_zoom` used to be BOTH the glyph multiplier and the rect divisor — the scale
+## multiplied by it and the height divided by it in the same breath — so expanding doubled every glyph
+## while HALVING the rect. Net effect: the dock kept its on-screen height and showed about a quarter as
+## many rows. The old comment here claimed the dock "already spans the window top to bottom, and there is
+## nowhere taller to grow"; that was simply wrong, and its own worked number gave it away — "~172 units at
+## zoom 2 on the 360-unit base canvas" is 48% of the window, not all of it. On-screen height was
+## `visible_height / scale_factor`: the `_zoom` cancelled (correct — height should be zoom-invariant) but
+## the counter-scale did not. Roughly half the window was unclaimed the whole time.
 ##
-## THE HEIGHT MUST BE DIVIDED BY THE ZOOM IN THE SAME BREATH. The pivot is (502, 0) — the rect's TOP —
-## so scaling 2x grows the dock DOWNWARD, and a rect that already spans the window would end up half its
-## height off the bottom of the screen. So the rect is authored at `visible_height / _zoom` and the scale
-## multiplies it back to full: the net on-screen height is the window, at any zoom.
+## THE TWO SIZES ARE NOW SEPARATE NUMBERS:
+##   `glyph_scale` — `_zoom / scale_factor`, UNCHANGED and still the whole expand feature. It is what makes
+##     text bigger, and v0.44.0 does not touch the font at either setting (Jon: keep the expanded size).
+##   `target` — the on-screen extent in CANVAS units, chosen per zoom state and divided by `glyph_scale`
+##     to author the rect. Collapsed asks for exactly what it occupied before; expanded asks for the play
+##     area.
 ##
-## That is why offset_bottom is now anchored to the TOP (anchor_bottom 0) and computed, where it used to
-## be a constant -8 against anchor_bottom 1. AT _zoom == 1 THE TWO ARE ARITHMETICALLY IDENTICAL — old:
-## top 8, bottom (canvas_height - 8), height canvas_height - 16; new: top 8, bottom 8 + (canvas_height -
-## 16), same height, same place. So the unexpanded dock is provably unchanged by this refactor.
-func _sync_width() -> void:
+## COLLAPSED IS PROVABLY UNCHANGED, the same proof the v0.37.0 refactor used. At `_zoom == 1`,
+## `glyph_scale == 1/scale_factor`, and the collapsed target is `502/scale_factor` wide by
+## `(canvas.y-16)/scale_factor` tall — so `rect = target / glyph_scale` is 502 by `canvas.y-16`, which is
+## the old constant width and the old `visible_height / 1` height, at the same offsets. Byte-identical.
+##
+## EXPANDED FILLS THE PLAY AREA (Jon, 2026-07-28), with the width FLOORED at the 502 it already had. The
+## floor is not defensive padding — at the 1280×720 dev window the play area is only 460 canvas units
+## wide while the dock is 502, so obeying "fill the play area" literally would make expanding NARROWER
+## there. Flooring keeps the small-window case at today's width and full height (2× the rows), while a
+## 1920×1080 session gets the real win: 780×524 against the old 502×262, a little over 3× the area.
+##
+## THE PIVOT INVARIANT is now structural instead of hand-maintained: `pivot.x == rect_w` and
+## `offset_left == offset_right - rect_w`, both derived from the one `rect_w`. They used to be two hand-
+## written constants (-510 / 502) that had to be edited together, which is exactly the kind of pair that
+## drifts — two comments in this file had been reasoning from the pre-v0.31.0 422 for three releases.
+##
+## THE RECT CANNOT CLIP THE CONTENT, unchanged and still because of the ScrollContainer: scaling a node
+## does not shrink its children's minimum sizes, so a rect smaller than the content would be the classic
+## min-size-beats-the-rect trap — except the body's vertical scroll is ENABLED, and an enabled scroll axis
+## contributes no minimum on that axis. The fixed chrome (title row, toggles, status ≈ 60 units) is the
+## whole vertical minimum. Horizontal scrolling is DISABLED, so the widest row's minimum DOES propagate —
+## which is why `_MIN_RECT_W` exists below.
+func _sync_geometry() -> void:
 	if _root == null:
 		return
 	# The EFFECTIVE canvas→screen multiplier is window px over visible canvas units — under the
@@ -343,30 +377,78 @@ func _sync_width() -> void:
 	var canvas: Vector2 = get_viewport().get_visible_rect().size
 	var canvas_width: float = maxf(canvas.x, 1.0)
 	var scale_factor: float = maxf(float(get_window().size.x) / canvas_width, 0.01)
-	_root.offset_left = -510.0
-	_root.scale = Vector2(_zoom / scale_factor, _zoom / scale_factor)
-	_root.pivot_offset = Vector2(502.0, 0.0)
-	# Height in CANVAS units the scaled dock should end up occupying: the visible height minus the 8-unit
-	# margin top and bottom, exactly as the old constant offsets expressed it.
+	var glyph_scale: float = maxf(_zoom / scale_factor, 0.01)
+	# The on-screen extent we want, in canvas units, and where its top-right corner goes. The corner is
+	# what positioning reduces to: the pivot is the rect's top-RIGHT, so scaling leaves that corner fixed
+	# and the dock grows left and down from it.
+	var target_w: float = _DOCK_W / scale_factor
+	var target_h: float = maxf(canvas.y - 16.0, 1.0) / scale_factor
+	# Collapsed corner = the canvas's top-right inset by the 8-unit margin, i.e. the v0.43.0 constants.
+	var corner_right: float = -8.0
+	var corner_top: float = 8.0
+	if _zoom > 1.0:
+		# EXPANDED: the play area — its POSITION as well as its size (GLM diff review). Size alone was not
+		# enough and the difference is visible: the dock is right-anchored while the play area starts at the
+		# canvas origin with the HUD column to its right, so a play-area-SIZED dock pinned to the canvas edge
+		# covers the whole HUD column and only part of the play area. Aligning the corner to the play area's
+		# own top-right makes "fills the play area" true rather than approximate, and leaves the HUD readable
+		# while you tune — which is the point of sacrificing the play area specifically.
+		#
+		# The FALLBACK is the COLLAPSED size, not the whole canvas (GLM diff review). A peer that expands
+		# before the HUD's first deferred layout should get the dock it already had, not a full-screen
+		# obstruction that self-corrects a frame later.
+		if _play_area.size.x > 0.0 and _play_area.size.y > 0.0:
+			# Both axes lose the 8-unit margin at each end, so the dock sits INSIDE the play area rather
+			# than flush against its edges — symmetric with the collapsed state's own 8-unit insets.
+			target_w = maxf(_play_area.size.x - 16.0, _DOCK_W)
+			target_h = maxf(_play_area.size.y - 16.0, 1.0)
+			corner_right = (_play_area.position.x + _play_area.size.x) - canvas.x - 8.0
+			corner_top = _play_area.position.y + 8.0
+		else:
+			target_w = _DOCK_W
+			target_h = maxf(canvas.y - 16.0, 1.0)
+	# Author the rect that produces that extent, never narrower than the widest row's minimum (below it
+	# the disabled horizontal scroll lets min-size beat the rect and the dock bleeds LEFT — the original
+	# screenshot bug, and the reason v0.31.0's font bump had to widen the dock rather than trim a row).
 	#
-	# THE SHRUNK RECT CANNOT CLIP THE CONTENT, and the reason is the ScrollContainer. Scaling the node does
-	# NOT shrink its children's minimum sizes (those stay in canvas units), so halving the rect at zoom 2
-	# would be the classic min-size-beats-the-rect trap — except the body lives in a ScrollContainer whose
-	# vertical scroll is enabled, and an enabled scroll axis contributes NO minimum on that axis. So the
-	# fixed chrome (title row, toggles, status label ≈ 60 units) is the entire vertical minimum, against
-	# ~172 units at zoom 2 on the 360-unit base canvas. Overflow scrolls, which is already how the dock
-	# behaves unexpanded on a short window. Disabling vertical scrolling here would reintroduce the trap.
-	var visible_height: float = maxf(canvas.y - 16.0, 1.0)
+	# NOTE the floor can legitimately make the expanded dock WIDER than the play area on a small window
+	# (play area 460 against _DOCK_W 502), so it overhangs the play area's left edge by the difference.
+	# That is the trade the floor exists to make: overhanging is strictly better than expanding into
+	# something narrower than the dock you started from.
+	var rect_w: float = maxf(target_w / glyph_scale, _MIN_RECT_W)
+	_root.offset_top = corner_top
+	_root.offset_right = corner_right
+	_root.offset_left = _root.offset_right - rect_w
+	_root.pivot_offset = Vector2(rect_w, 0.0)
+	_root.scale = Vector2(glyph_scale, glyph_scale)
 	_root.anchor_bottom = 0.0
-	_root.offset_bottom = _root.offset_top + visible_height / _zoom
+	_root.offset_bottom = _root.offset_top + target_h / glyph_scale
 
 
-## Flip the dock between authored size and 2x (v0.37.0). Everything lives in _sync_width — this just moves
+## Adopt the play-area rect (v0.44.0), pushed by main.gd from the HUD's `world_frame_changed`. The panel
+## never reaches up for it — a component takes what it is given (CLAUDE.md's component rule), and this is
+## the same one-line-per-consumer fan-out the F3 label and the hurt vignette already ride.
+##
+## A ZERO rect is a legitimate state, not an error: it is what a peer has before the HUD's first deferred
+## layout, and `_sync_geometry` falls back to the full canvas for it. So this can be called early, often,
+## or never, and the dock is sensible in all three cases.
+func set_play_area_rect(rect: Rect2) -> void:
+	if rect.size == _play_area.size and rect.position == _play_area.position:
+		return
+	_play_area = rect
+	# Only the EXPANDED dock reads this, so a collapsed panel caches the value and skips the re-layout
+	# (GLM diff review) — the HUD emits this every layout pass on every peer, and recomputing offsets for
+	# a state that never consults them is work for nothing. Expanding later reads the cached value.
+	if _zoom > 1.0:
+		_sync_geometry()
+
+
+## Flip the dock between authored size and expanded (v0.37.0). Everything lives in _sync_geometry — this just moves
 ## the number and asks for a re-layout, so the expand path and the resize path can never diverge.
 func _toggle_expand() -> void:
 	_zoom = 2.0 if _zoom == 1.0 else 1.0
 	_sync_expand_button()
-	_sync_width()
+	_sync_geometry()
 
 
 ## The toggle's label states what a PRESS WILL DO, not the current state — "expand 2x" while small,
@@ -515,7 +597,7 @@ func _apply_snapshot(data: Dictionary) -> void:
 	# Re-sync the counter-scale here too: the HUD's zoom system may change the window's
 	# content_scale_factor without a size_changed signal (factor-only writes), and every panel
 	# open lands a snapshot — so this hook keeps the dock width honest at all times.
-	_sync_width()
+	_sync_geometry()
 	_snapshot = data
 	_painting = true
 	# EDIT-IN-PROGRESS guard (self-review find): a repaint landing 0.9s after your last keystroke
@@ -559,8 +641,8 @@ func _paint_weapons(weapons: Dictionary) -> void:
 			var head := _label(str(weapon_name), 150)
 			_weapons_box.add_child(head)
 			# TWO fields per row (v0.26.1). Damage became a min/max BAND, so the old single row would carry
-			# four (label, spin) pairs — MEASURED at 470 units minimum, which overflows the dock's fixed 422
-			# and makes the root lose to min-size and bleed left (the bug _sync_width's comment records).
+			# four (label, spin) pairs — MEASURED at 470 units minimum, which overflows the dock's collapsed 502
+			# and makes the root lose to min-size and bleed left (the bug _sync_geometry's comment records).
 			# A SpinBox's own minimum is ~68 units whatever custom_minimum_size says, so no label trim gets
 			# four pairs inside the budget; pairing them is what fits (2 × (62 + 68) + separations ≈ 271)
 			# AND keeps the labels spelled out. Vertical cost is one extra row per weapon.
@@ -625,7 +707,7 @@ func _paint_classes(classes: Dictionary) -> void:
 
 ## Rebuild the selected class's ability editors from the last snapshot. One sub-label per ability, then a
 ## 2-column (label 170 + spin 80) grid of its five fields — the same widths the MONSTER TYPES grid uses, so
-## the rows are known to fit the dock's fixed 422 units.
+## the rows are known to fit the dock's collapsed 502 units (_DOCK_W).
 func _rebuild_class_grid() -> void:
 	if _class_abilities_box == null or _class_selector == null or _class_selector.selected < 0:
 		return

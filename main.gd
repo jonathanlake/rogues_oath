@@ -285,6 +285,11 @@ var _game_log: Node = null
 # the events it already receives (component pattern: the parent wires the children).
 var _hud: Node = null
 
+# The backtick DEBUG TUNING PANEL (v0.25.0), held since v0.44.0 so the world-frame fan-out can push it the
+# play-area rect — its EXPANDED size is that rect, and only the HUD knows it. Held as Node (its script has
+# no class_name, like _hud) so the call resolves dynamically. Presentation only, on every peer.
+var _debug_panel: Node = null
+
 # Host-only: peer_id -> spawn slot index, so a disconnect frees the slot for reuse.
 var _slots: Dictionary = {}
 # Host-only reset roster (v0.5.4 dev key): peer_id -> player_name, captured at each spawn site (the
@@ -386,7 +391,12 @@ func _ready() -> void:
 	# presentation surface over the dev_command intent pipe, so host and client get the identical
 	# panel — multiplayer-first). Path preload: the file is new this version (uid lands on the
 	# next editor import; the string path is the sanctioned bootstrap form).
-	add_child(preload("res://ui/debug_panel/debug_panel.gd").new())
+	# v0.44.0: the reference is KEPT now (it was fire-and-forget before). The panel's EXPANDED size is
+	# derived from the play area, which only the HUD knows, so main has to be able to push it the rect —
+	# the same one-consumer-per-line fan-out _on_world_frame_changed already does for the F3 label and the
+	# hurt vignette. The panel stays a pure presentation surface; this is a push, never a query.
+	_debug_panel = preload("res://ui/debug_panel/debug_panel.gd").new()
+	add_child(_debug_panel)
 
 	# Paint the room first, on EVERY peer, so players spawn onto a visible floor. Deterministic
 	# presentation of the logical grid — same input (WorldGrid) everywhere, so it can't diverge.
@@ -2253,6 +2263,11 @@ func _set_tactical_border(active: bool) -> void:
 ## border). Wired in _ready + seeded once.
 func _on_world_frame_changed(rect: Rect2) -> void:
 	$DebugOverlay.set_world_frame_rect(rect)
+	# Third consumer (v0.44.0): the debug panel's EXPANDED size is the play area. Pushed rather than
+	# queried, like the two below — the panel never reaches up to the HUD, and a peer whose HUD has not
+	# laid out yet simply hasn't been pushed a rect, which its own fallback covers.
+	if _debug_panel != null:
+		_debug_panel.set_play_area_rect(rect)
 	_hurt_vignette.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	_hurt_vignette.position = rect.position
 	_hurt_vignette.size = rect.size

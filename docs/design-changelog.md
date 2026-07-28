@@ -9,6 +9,29 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.44.0 (2026-07-28) — THE DEBUG PANEL'S EXPAND BUTTON NOW ACTUALLY MAKES IT BIGGER.** Press expand and
+  the panel fills the play area instead of growing sideways.
+  **It was doing the opposite of what it looked like.** The zoom doubled every glyph *and halved the rect*
+  in the same breath, so expanding took you from about ten visible rows down to four — bigger text, a
+  quarter of the content. Three comments in the file (and this project's own dev-commands doc) claimed the
+  dock "already spans the window top to bottom, and there is nowhere taller to grow." It never did. It was
+  about 48% of the window height, and the code's own worked number — "~172 units on the 360-unit base
+  canvas" — said so three lines below the claim. Roughly half the screen had been sitting unclaimed since
+  v0.37.0.
+  **The fix is one conflated number pulled apart.** The zoom is now purely the glyph scale; the dock's size
+  is chosen separately. **The font at either setting is exactly what it was** — only the room changed.
+  **Expanded fills the play area, and it means it:** position as well as size, so the panel sits inside the
+  play area with even margins and **your HUD stays readable while you tune**. Sizing alone would have left
+  it pinned to the window edge, covering the whole HUD column and only part of the play area.
+  **1920x1080: 764x524 against the old 502x262 — just over 3x the area.** At the smaller 1280x720 window
+  it is 534x344 against 502x172, so the height doubles. The expanded width is floored at the docked 502 so
+  a small window can never expand to something *narrower* than it started from.
+  **The collapsed panel is untouched, and that is provable** rather than asserted: measured at both
+  resolutions, its rect, offsets and pivot come out byte-identical to v0.43.0.
+  **Verified:** a probe captured the real computed geometry at 1280x720 and 1920x1080 in both states —
+  collapsed identical, expanded inside the play area on all four edges, glyph scale unchanged. One GLM
+  pass, which caught that "fills the play area" was only honouring the size and not the position.
+
 - **v0.43.0 (2026-07-28) — MANA, THE WIZARD'S FIRST TWO SPELLS, AND TRAITS.** The wizard was eight lines
   of `.tres` — a name and a sprite — and casting had no cost at all. Both fixed.
   **MANA.** A blue bar under your health, and only if your class has one: wizard and priest 15, druid 10,

@@ -112,12 +112,18 @@ players column vs monsters column), WEAPONS, **CLASSES** (ability `.tres` = `/ab
 (shared `.tres` tuning = `/m`), LIVE INSTANCES (per-monster hp/stamina/stun/kill and per-instance stat
 forks = `/mi`).
 
-**EXPAND (v0.37.0, top-right of the title row)** — toggles the whole dock between authored size and
-**2×**: every glyph, row and spin box doubles, and the dock doubles in WIDTH. Its on-screen HEIGHT does
-not change — it already spans the window top to bottom, so there is nowhere taller to grow; you get the
-same column at twice the size showing about half as many rows, and you scroll for the rest. Implemented
-as a scale on the dock root inside `_sync_width` (one multiply on the counter-scale that function already
-computes), so the layout never reflows and the DPI/stretch handling is shared with the unexpanded path.
+**EXPAND (v0.37.0; rebuilt v0.44.0, top-right of the title row)** — toggles the dock between its docked
+size and **filling the play area**. Every glyph, row and spin box doubles *and* the dock grows to the
+whole play area, so you see the bigger text AND far more of it at once (1920x1080: 780x524 against the
+old 502x262, a little over 3x the area).
+
+*What it used to do, since the old text here was wrong:* through v0.43.0 the zoom doubled the glyphs but
+**halved the rect**, so expanding took you from ~10 visible rows to ~4 — and this doc, plus three comments
+in the panel, claimed the dock "already spans the window top to bottom". It never did; it was ~48% of the
+window height, and roughly half the screen was unclaimed. v0.44.0 split the glyph scale from the dock's
+size (`_sync_geometry`): the font at either setting is exactly what it was, only the room changed. The
+expanded width is floored at the docked 502 so a small window can never come out *narrower* than before,
+and the collapsed state is arithmetically identical to v0.43.0's.
 **Session-only** — like everything else in LOCAL below, it resets to normal size on each launch.
 
 The CHAT/COMBAT LOG has its own expand button (its top-right, v0.37.0) on different multipliers: the box
