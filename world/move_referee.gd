@@ -969,14 +969,10 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# it (rest defaults 0 in v0.8.0, so the action window equals the glide term). slide_sec is the
 	# VISIBLE tween that rides the broadcast — slide_fraction of the GLIDE TERM, never of glide+rest;
 	# the settle (action − slide) is the on-tile grid tell and exists even at rest 0.
-	var glide_sec := _step_duration(mover, dir, sender_peer_id)  # GLIDE term (tier beats × PACE beat × mult)
-	# Exhausted CRAWL override (v0.24.1): a 0-stamina tactical step commits at exhausted_step_beats
-	# per tile instead of the mover's tier — same stamp-and-bake, same diagonal multiplier, so the
-	# busy window and visible slide below scale with it automatically.
-	if exhausted_crawl:
-		glide_sec = _exhausted_step_beats_of(sender_peer_id) * PaceReferee.beat_or_explore(_pace, sender_peer_id)
-		if dir.x != 0 and dir.y != 0:
-			glide_sec *= GameManager.config.diagonal_step_multiplier
+	# ONE call resolves every rule that can slow this step — tier, rough terrain, the exhausted crawl —
+	# and the slowest wins. The crawl used to be an override written out here; it moved inside so a
+	# second rule could never be appended in the same overwrite style. See _step_duration.
+	var glide_sec := _step_duration(mover, dir, sender_peer_id, to, exhausted_crawl)
 	var busy_sec := glide_sec + _rest_duration(sender_peer_id)   # ACTION window (rest default 0 in v0.8.0)
 	var slide_sec := _slide_fraction() * glide_sec        # visible tween: fraction of the glide term
 
@@ -1060,15 +1056,39 @@ func _clear_arriving(entity_id: int, token: int) -> void:
 ## replaces the final glide seconds BEFORE the multiplier so a diagonal debug step still stamps override
 ## × multiplier — the exact mirror of the beat product it stands in for. `mover` is untyped: a Player or
 ## a Monster, both of which expose glide_speed (the referee reads only that); mover_id keys the pace resolve.
-func _step_duration(mover, dir: Vector2i, mover_id: int) -> float:
-	var glide_beats := fallback_glide_beats
+## EVERY RULE THAT CAN SLOW ONE STEP RESOLVES HERE (v0.48.0), as an ORDERED CHAIN followed by a MAX:
+##   1. the mover's authored TIER (or the warned fallback),
+##   2. the ROUGH-TERRAIN cost if the DESTINATION is rough — keyed on `to`, so the penalty is for crossing
+##      ONTO the tile, which is the rule Jon asked for,
+##   3. the TRAIT pass (v0.49.0) will slot in HERE, seeing the rough candidate and whether the tile is
+##      rough, so a trait can cancel exactly the terrain penalty and nothing else,
+##   4. the exhausted CRAWL if this is a 0-stamina tactical step,
+##   5. the SLOWEST of the three candidates.
+##
+## WHY A MAX RATHER THAN A LATER BRANCH OVERWRITING THE VALUE, which is how the crawl worked when it was
+## alone: the moment two dials differ, an overwrite means being exhausted ON rough can come out FASTER
+## than being exhausted on clean floor. A max cannot produce a speed-up. It also cannot compound, which is
+## the deliberate ruling — rough and the crawl both say "you are reduced to a crawl", so the slowest wins
+## rather than the two stacking to ten beats a tile (GameConfig.rough_step_beats carries the reasoning).
+##
+## WHY THE TRAIT WILL SEE THE ROUGH CANDIDATE AND NOT THE FINAL NUMBER: handed one already-merged value a
+## trait cannot tell which rule produced it, so "ignore rough" would silently cancel the crawl too.
+func _step_duration(mover, dir: Vector2i, mover_id: int, to: Vector2i,
+		exhausted_crawl: bool = false) -> float:
+	var tier_beats := fallback_glide_beats
 	if mover.glide_speed == null:
 		if not _warned_null_speed:
 			push_warning("[MoveReferee] mover has no GlideSpeed — using fallback %.1f beat(s)" % fallback_glide_beats)
 			_warned_null_speed = true
 	else:
-		glide_beats = mover.glide_speed.glide_beats
-	var base := glide_beats * PaceReferee.beat_or_explore(_pace, mover_id)
+		tier_beats = mover.glide_speed.glide_beats
+	var rough_beats := tier_beats
+	if WorldGrid.is_rough(to):
+		rough_beats = maxf(0.0, GameManager.config.rough_step_beats)
+	var crawl_beats := tier_beats
+	if exhausted_crawl:
+		crawl_beats = _exhausted_step_beats_of(mover_id)
+	var base := maxf(tier_beats, maxf(rough_beats, crawl_beats)) 			* PaceReferee.beat_or_explore(_pace, mover_id)
 	if GameManager.debug_glide_override_sec > 0.0:
 		base = GameManager.debug_glide_override_sec
 	if dir.x != 0 and dir.y != 0:

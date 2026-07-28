@@ -9,6 +9,29 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.48.0 (2026-07-28) - ROUGH TERRAIN.** Some ground is slow to cross.
+  **A patch of it in the room to the right of where you start** - seven tiles together plus a couple of
+  strays, deliberately off the corridor so crossing between rooms never forces a slow step. The patch is
+  something you choose to cross, or choose to fight beside.
+  **Stepping ONTO a rough tile costs five beats instead of one**, which is the same "sliding through a tile
+  very slowly" you used to get at zero stamina - Jon asked for that mechanic back, and this is it, on its
+  own dial so the two tune apart. `/config rough_step_beats N` moves it live.
+  **It slows everyone.** Monsters pay it too, which is what makes a patch terrain rather than a tax - you
+  can put it between you and something chasing you, and it can do the same to you.
+  **The one subtle bit: the slowest applicable rule wins, and they do not stack.** Rough and the exhausted
+  crawl both mean "you are reduced to a crawl", so being exhausted on rough costs the same as being
+  exhausted anywhere else. Written as a max rather than as one rule overwriting another, because an
+  overwrite means that the moment the two dials differ, being exhausted ON rough could come out *faster*
+  than being exhausted on clean floor. A max cannot produce that.
+  **Rough is a map glyph, not a list of coordinates.** The map is authored as an ASCII picture, and the
+  wall test is an equality against `#`, so a new character is automatically floor - pathfinding, spawns,
+  the shout fill and every walkable check needed no change at all.
+  **Known and deliberate:** the pathfinder does not know rough is slow, so monsters route through it
+  blindly. That is terrain you can exploit and they cannot, which seems like the right first answer.
+  **Verified:** stepping onto a patch tile took 0.875s against 0.175s for the clean tile beside it -
+  exactly five times. Negative control: with the dial turned down to the normal step cost, the step stays
+  normal rather than becoming faster.
+
 - **v0.47.0 (2026-07-28) - ABILITIES CAN BE GIVEN TO ANYONE.** The same treatment traits got two versions
   ago, applied to the hotbar. Classes still start with the abilities they always had; now any of them can
   be handed to anybody.

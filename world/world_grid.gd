@@ -14,7 +14,8 @@ extends RefCounted
 ## Pixels per tile edge (square). Matches the 32rogues tileset cell size.
 const TILE_PX := 32
 
-## 48 columns × 28 rows. '#' = wall, '.' = floor. Read as ROOM_LAYOUT[row][col], i.e.
+## 48 columns × 28 rows. '#' = wall, '.' = floor, ',' = ROUGH floor (v0.48.0 — walkable, but a step ONTO
+## it costs GameConfig.rough_step_beats instead of the mover's tier). Read as ROOM_LAYOUT[row][col], i.e.
 ## ROOM_LAYOUT[tile.y][tile.x]. Disposable multi-room fixture (M3.5 — the screen-size /
 ## camera question; M4a's procedural generation replaces it). Five rooms joined by corridors —
 ## ALL 2 tiles wide since v0.24.9 (Jon: "like the south tunnel to room D"; no 1-wide tunnels):
@@ -31,16 +32,19 @@ const TILE_PX := 32
 ##  - one diagonal-gate in B: walls at (40,5) and (41,4) touch only at a corner, with their
 ##    flanking tiles (40,4) and (41,5) left as floor — the corner rule rejects a diagonal
 ##    squeeze between the two walls even though both endpoints are floor.
+##  - a ROUGH-TERRAIN patch in B (v0.48.0): a 7-tile blob at cols 35-37 / rows 6-8 plus two strays at
+##    (34,3) and (42,7). Deliberately OFF the rows 4-5 A↔B corridor, so crossing between rooms never
+##    forces a slow step — the patch is something you choose to cross, or choose to fight beside.
 const ROOM_LAYOUT: Array[String] = [
 	"################################################",  # row 0  — border
 	"################################################",  # row 1
 	"##............##################..............##",  # row 2
-	"##............##################..............##",  # row 3
+	"##............##################..,...........##",  # row 3
 	"##........#..............................#....##",  # row 4  — A↔B corridor (2-wide with row 5); A pillar (10,4); gate wall (41,4) stands
 	"##......................................#.....##",  # row 5  — A↔B corridor; gate wall (40,5)
-	"##............###########..#####..............##",  # row 6  — ↕C corridor cols 25-26
-	"##............###########..#####..............##",  # row 7
-	"##............###########..#####..............##",  # row 8
+	"##............###########..#####...,,,........##",  # row 6  — ↕C corridor cols 25-26
+	"##............###########..#####...,,,....,...##",  # row 7
+	"##............###########..#####....,.........##",  # row 8
 	"#######..################..#####..............##",  # row 9  — A↔D corridor cols 7-8; ↕C cols 25-26
 	"#######..################..#####################",  # row 10
 	"#######..################..#####################",  # row 11
@@ -107,6 +111,20 @@ static func is_wall(tile: Vector2i) -> bool:
 
 
 ## True if a body may occupy this tile: in-bounds AND not a wall.
+## Is this tile ROUGH GROUND (v0.48.0)? Walkable like any floor — a step onto it simply costs
+## GameConfig.rough_step_beats instead of the mover's own tier (MoveReferee stamps it).
+##
+## WHY A LAYOUT GLYPH RATHER THAN A SIDE TABLE: `is_wall` above tests `== "#"`, an equality rather than
+## `!= "."`, so a NEW GLYPH IS AUTOMATICALLY FLOOR. Every other reader in the project — is_walkable, the
+## A* solid map, tiles_within_travel, every spawn filter — goes through is_wall and needed no edit at all.
+## A parallel `const ROUGH_TILES` would instead be a second source of truth to hand-sync against the
+## picture above, and M4a's procedural generator would have to learn to emit two things instead of one.
+##
+## OUT OF BOUNDS IS NOT ROUGH (it is wall, per is_wall), so this can be asked about any tile safely.
+static func is_rough(tile: Vector2i) -> bool:
+	return in_bounds(tile) and ROOM_LAYOUT[tile.y][tile.x] == ","
+
+
 static func is_walkable(tile: Vector2i) -> bool:
 	return in_bounds(tile) and not is_wall(tile)
 

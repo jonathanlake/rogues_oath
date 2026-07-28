@@ -161,6 +161,15 @@ const _LUNGE_KINDS := ["bump", "windup", "free", "ability", "kick"]
 const ROOM_TILES: Texture2D = preload("res://assets/32rogues/tiles.png")
 const FLOOR_ATLAS := Vector2i(0, 6)  # tiles.txt row 7a — "blank floor (dark grey)"
 const WALL_ATLAS := Vector2i(0, 1)   # tiles.txt row 2a — "rough stone wall (top)"
+## ROUGH TERRAIN (v0.48.0) — tiles.txt row 10b, "stone floor 1": a textured, OPAQUE cell that reads as
+## different ground at a glance against the flat dark floor.
+##
+## Deliberately NOT the "large rock" cells (row 19a/b): a rock reads as an obstacle you cannot enter, and
+## rough terrain is ground you CAN cross — slowly. A cue that implies the wrong rule is worse than a plain
+## one. Equally deliberately not the e/f/g columns of rows 7-12, which are the transparent "no bg" overlay
+## variants — $Room is a single TileMapLayer painting exactly one tile per cell, so one of those would cut
+## a hole through to the backdrop.
+const ROUGH_ATLAS := Vector2i(1, 9)
 
 # Client-side join-handshake retry. peer_ready is fire-and-forget over RPC; if the host's
 # main.tscn hasn't finished loading when it arrives (same-frame localhost joins), Godot drops
@@ -2888,9 +2897,10 @@ func _build_room() -> void:
 	var atlas := TileSetAtlasSource.new()
 	atlas.texture = ROOM_TILES
 	atlas.texture_region_size = Vector2i(WorldGrid.TILE_PX, WorldGrid.TILE_PX)
-	# One floor tile, one wall tile — the only two glyphs ROOM_LAYOUT uses.
+	# One floor tile, one wall tile, one rough tile — the three glyphs ROOM_LAYOUT uses (v0.48.0).
 	atlas.create_tile(FLOOR_ATLAS)
 	atlas.create_tile(WALL_ATLAS)
+	atlas.create_tile(ROUGH_ATLAS)
 	# A second FLOOR variant for the checkerboard: same texture region, tinted darker via TileData
 	# modulate. An alternative tile costs nothing per-frame (it's authored into the source) and adds
 	# no new nodes — the paint loop just picks it for the odd cells below.
@@ -2908,6 +2918,12 @@ func _build_room() -> void:
 			var cell := Vector2i(x, y)
 			if WorldGrid.is_wall(cell):
 				$Room.set_cell(cell, source_id, WALL_ATLAS)
+			elif WorldGrid.is_rough(cell):
+				# TESTED BEFORE THE FLOOR BRANCH, not after — the checkerboard below is an ALTERNATIVE of
+				# the floor cell, so a rough tile falling through to it would come out chequered. It also
+				# gets no alternative of its own: a uniform patch reads as one piece of terrain, which is
+				# the whole point of a patch.
+				$Room.set_cell(cell, source_id, ROUGH_ATLAS)
 			else:
 				# Checkerboard: odd (x+y) floor cells get the darker alternative tile, even cells
 				# the default (alt id 0). Walls are never checkered.

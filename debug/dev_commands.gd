@@ -89,6 +89,10 @@ const _GAME_FIELD_SPECS := {
 	# RAISING IT PAST 5 GIVES SOCKETS WITH NO KEYS until the input map gains matching `use_slot_N` actions
 	# (see the GameConfig field). That is a real limitation of the dial, not a bug in it.
 	"ability_slots": { "min": 1, "max": 12, "int": true },
+	# v0.48.0 — ROUGH TERRAIN cost per tile, in beats. Same band as the exhausted crawl it echoes, so the
+	# two can be compared directly while tuning. 1.0 floor: below the tier it would be a speed-up the max
+	# discards anyway, so offering it would be a dial that visibly does nothing.
+	"rough_step_beats": { "min": 1.0, "max": 100.0 },
 	# v0.34.0 conditions — does damage BREAK the ROOTED condition? Ships OFF: a root runs its authored beats
 	# and your own party focusing the held target does not free it. ON turns the root into a setup you spend.
 	# The A/B switch for that feel question; read live at the apply_damage seam.

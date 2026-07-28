@@ -92,6 +92,22 @@ extends Resource
 ## Read HOST-side by MoveReferee when it stamps a step's busy window.
 @export var move_rest_beats: float = 0.0
 
+## ROUGH TERRAIN cost in BEATS per tile (v0.48.0, DESIGN §2.2 movement). A step whose DESTINATION is a
+## rough tile (WorldGrid.is_rough) costs this instead of the mover's authored glide tier — so a patch is
+## something you plan around rather than walk through. Applies to EVERYONE (Jon, 2026-07-28): monsters pay
+## it too, which is what makes a patch tactical terrain rather than a tax on the party.
+##
+## DEFAULTS TO THE EXHAUSTED CRAWL'S 5.0 ON PURPOSE — Jon asked for rough terrain to bring back exactly
+## that "sliding through a tile very slowly" feel — but it is its OWN dial so the two can be tuned apart.
+##
+## THEY DO NOT COMPOUND. Both dials express the same idea (you are reduced to a crawl), so the stamp takes
+## the SLOWEST applicable rule rather than adding them: an exhausted mover on rough pays the same as an
+## exhausted mover on clean floor. Ten beats a tile is not a state worth modelling, and a max can never
+## produce the alternative bug — a speed-up from being doubly penalised.
+##
+## Read HOST-side at the one glide stamp; the client only ever plays back the stamped seconds.
+@export var rough_step_beats: float = 5.0
+
 ## Fraction of a step's ACTION window that the visible slide occupies; the remainder the avatar
 ## stands SETTLED on the destination tile — the grid "snap" tell (DESIGN §2.8, v0.8.0). Unitless,
 ## so it scales with any tier's glide_beats and the diagonal multiplier automatically and can
