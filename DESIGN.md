@@ -1086,6 +1086,30 @@ by stepping off, interrupt-gen guarded since a PLAYER caster can be blinked mid-
 **The DRUID** is the seventh class: the 32rogues druid sprite, leather armor, club, Entangling
 Roots. Backstab treating ROOTED as a compromised state (the §2.3 note) stays FUTURE — not wired.
 
+**v0.40.0 — DAMAGE OVER TIME, AND A TARGETED CAST'S EFFECT BECOMES DATA.** The druid's second spell,
+**Insect Plague**, is the game's first DoT: 2 damage every 6 beats, 4 ticks (Jon's numbers, halved from a
+12-beat interval because 48 beats outlasts most fights and the last ticks would never land). **The first
+tick lands the instant the cast resolves** — a spell that visibly does nothing for six beats reads as a
+spell that failed — so a run spans `(ticks − 1) × interval`.
+**THE EFFECT IS AUTHORED DATA, NOT A NEW `Kind`.** A TARGETED cast applies whatever its `.tres` carries:
+a root if `root_beats > 0`, a DoT if the three `dot_*` fields are set, BOTH if both are. A future
+"entangling swarm" is therefore a resource edit rather than a referee edit — the same reasoning that made
+cooldowns a field in v0.27.0 instead of a second config table.
+**IT RIDES THE CONDITION REGISTRY** for state, cue and generation, which buys refresh-not-stack (a second
+cast supersedes the first), self-ending chains on death or despawn, and immunity to id reuse, with no new
+bookkeeping. The run's chain ends its own condition rather than racing a timer set to the same instant —
+the first headless run caught exactly that race, with the swarm dispersing one beat before its final bite.
+**TWO RULINGS, both decided before building rather than discovered in play (Jon):**
+- **A DoT tick never breaks a root.** `root_breaks_on_damage` means "your party FOCUSING the held target
+  frees it" — a blow somebody chose to land. A lingering plague is not that, and without the exemption the
+  druid's own two spells would fight each other the moment the dial went on.
+- **Plague is not physical**, so armour does not apply. At 2 a tick, the flat term would not reduce the
+  plague, it would erase it — and a disease is not stopped by mail.
+**PRESENTATION BRANCHES ON A DERIVED `effect`, NEVER THE ABILITY'S NAME.** The channel event (renamed
+`root_cast` → `targeted_cast`, since it now carries two spells) stamps an effect the host derives from the
+authored payload, so renaming a spell cannot silently make it draw and read as the other one. §2.3.4's
+one-cue-per-outcome rule reaches naming as well as colour.
+
 **v0.38.0 — A TARGETED CAST NAMES A TILE *OR* A CREATURE (`ActiveAbility.TargetMode`).** v0.34.0 gave
 every targeted cast the smite's model: commit to a SQUARE, and whoever stands on it at the end gets hit.
 Jon played it and found the failure mode — *"it can be a huge whiff of a cooldown if you click the tile

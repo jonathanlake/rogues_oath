@@ -9,6 +9,36 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.40.0 (2026-07-27) — INSECT PLAGUE: THE GAME'S FIRST DAMAGE-OVER-TIME.** The druid's second spell,
+  and the second half of Jon's five-item batch.
+  **CALL A SWARM DOWN ON ONE ENEMY AND IT KEEPS EATING.** 2 damage every 6 beats, four times — 8 in total.
+  It targets a creature the same way Entangling Roots does (lock on, and it escapes if it outruns your
+  range before the cast lands), but after that the damage arrives on its own whether you stay, run, or go
+  fight something else. **The first bite lands the moment the cast finishes**, so the spell visibly does
+  something instead of looking like it fizzled.
+  **Jon's numbers, with one change he approved:** he first suggested a 12-beat gap, which would have
+  spread the run over ~12 seconds — longer than most fights last, so the last ticks would rarely have
+  landed. Halved to 6, same total damage, and now it resolves inside a fight.
+  **Two rules decided up front rather than discovered mid-playtest:**
+  **The plague never breaks your own root.** With `root breaks on damage` turned on, a plague tick would
+  otherwise snap a root you just cast — the druid's two spells fighting each other. That dial means "your
+  party focusing the held target frees it"; a lingering disease isn't somebody choosing to strike.
+  **Armour doesn't stop it.** At 2 a tick, chainmail's flat reduction wouldn't soften the plague, it would
+  delete it. It's a disease, not a sword.
+  **You can tune all of it live** — `/ab insect_plague dot_damage 3` and friends, or the debug panel — so
+  the "is this balanced?" question is answerable in play rather than by rebuilding.
+  **A sickly swarm orbits anything infected**, deliberately not green and deliberately not at the feet, so
+  a goblin that's both rooted and plagued reads as two separate problems.
+  **Also fixed, found by testing this:** the druid was **swinging their club on every plague tick** — the
+  same class of bug as the shaman's smite in v0.36.0. The list of "things that aren't a weapon swing" had
+  been growing one exception at a time; it's now an explicit list of the four things that ARE, so the next
+  new damage type can't quietly inherit a sword swing. (One deliberate consequence: the `/mi` debug damage
+  poke no longer animates a swing either. It never should have.)
+  **Verified headless:** four ticks landing 2 each, the swarm cue ending exactly with the last one, roots
+  still working, and melee still swinging. One GLM red-team pass, which caught that a mis-authored zero
+  interval would fire the whole run in a single frame, and that keying the spell's colour and log line off
+  its *name* meant renaming it would silently make it draw as roots — both closed.
+
 - **v0.39.0 (2026-07-27) — THE HUD EXPLAINS ITSELF, AND THE KNIGHT GETS A SHIELD.** First of two batches
   from Jon's list (Insect Plague follows as v0.40.0, so the game's first damage-over-time gets its own
   pass).

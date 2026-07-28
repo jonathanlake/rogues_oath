@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="ActiveAbility" format=3]
+
+[ext_resource type="Script" path="res://resources/active_ability.gd" id="1_aa"]
+
+[resource]
+script = ExtResource("1_aa")
+kind = 3
+target_mode = 1
+description = "Calls a swarm down on one enemy. It gnaws away at them for a while after the cast — the damage keeps coming whether you stay or run, and armour is no help against it."
+display_name = "Insect Plague"
+atlas_coords = Vector2i(3, 10)
+log_verb = "swarms"
+damage = 0
+stun_beats = 0.0
+windup_beats = 2.0
+recovery_beats = 2.0
+range_tiles = 6
+dot_damage = 2
+dot_ticks = 4
+dot_interval_beats = 6.0
+cooldown_beats = 40.0
+root_beats = 0.0

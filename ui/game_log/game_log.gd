@@ -491,6 +491,11 @@ func _on_event_received(event: Dictionary) -> void:
 					# exactly as legible-worthy as a stun, and the overhead tendrils alone would leave a
 					# player wondering why the goblin stopped chasing.
 					add_line("%s is rooted!" % str(data.get("name", "Someone")))
+				"plagued":
+					# v0.40.0. Its own sentence for the same reason the root has one: the damage arrives
+					# later and on its own clock, so without a line naming the moment it started, a player
+					# watching HP tick down has nothing to attribute it to.
+					add_line("%s is swarmed by insects!" % str(data.get("name", "Someone")))
 		"smite_cast":
 			# A monster's SMITE channel starting (§2.3.4, v0.19.10 — the offensive twin of the heal channel). The
 			# RED danger tile is the real telegraph; this line names whoever's standing on it at cast start (empty
@@ -511,17 +516,40 @@ func _on_event_received(event: Dictionary) -> void:
 			match str(data.get("status", "")):
 				"rooted":
 					add_line("The roots release %s." % str(data.get("name", "Someone")))
-		"root_cast":
+				"plagued":
+					add_line("The swarm around %s disperses." % str(data.get("name", "Someone")))
+		"targeted_cast":
 			# A player's ENTANGLING-ROOTS channel starting (§2.3.4, v0.34.0 — the control twin of the smite
 			# channel, phrased so it can never be read as damage). The GREEN ground tile is the real
 			# telegraph; this line names whoever stands on it at cast start (empty = bare ground, which is a
 			# legal and sometimes deliberate cast — you can root the tile someone is fleeing toward). The
 			# LAND is the "X is rooted!" line; a dodge is the generic whiff line.
-			var root_victim := str(data.get("target_name", ""))
-			if root_victim != "":
-				add_line("%s begins entangling %s..." % [str(data.get("caster_name", "Someone")), root_victim])
-			else:
-				add_line("%s calls the roots — the ground writhes..." % str(data.get("caster_name", "Someone")))
+			# v0.40.0: the channel carries TWO spells now, so the sentence is chosen by the ability the
+			# referee named. A generic "begins casting" for both would throw away the one line that tells
+			# the party WHICH thing is about to land on whom — and roots and plague call for completely
+			# different reactions. An unknown ability falls back to a neutral cast line rather than
+			# mislabelling itself as roots.
+			# Branch on `effect` (host-derived from the ability's payload), never on the display name — a
+			# renamed spell must not silently start narrating itself as the other one. The NAME is still
+			# what a future line would print; the EFFECT is what it is safe to switch on.
+			var cast_victim := str(data.get("target_name", ""))
+			var caster_name := str(data.get("caster_name", "Someone"))
+			match str(data.get("effect", "")):
+				"plague":
+					if cast_victim != "":
+						add_line("%s calls a swarm down on %s..." % [caster_name, cast_victim])
+					else:
+						add_line("%s calls a swarm — the air starts to hum..." % caster_name)
+				"root":
+					if cast_victim != "":
+						add_line("%s begins entangling %s..." % [caster_name, cast_victim])
+					else:
+						add_line("%s calls the roots — the ground writhes..." % caster_name)
+				_:
+					if cast_victim != "":
+						add_line("%s begins casting at %s..." % [caster_name, cast_victim])
+					else:
+						add_line("%s begins casting..." % caster_name)
 
 
 ## Compose the combat-log line for one `attack` event, one distinct phrasing per outcome (§2.3.4):

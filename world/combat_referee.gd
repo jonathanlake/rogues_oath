@@ -33,6 +33,15 @@ const _NO_ENTITY := 0
 ## unknown-band diagnostic in _armor_flat_of — the numbers themselves live on GameConfig.
 const _KNOWN_ARMOR_BANDS := [ItemType.ArmorWeight.UNARMORED, ItemType.ArmorWeight.LIGHT,
 	ItemType.ArmorWeight.MEDIUM, ItemType.ArmorWeight.HEAVY]
+## The attack kinds where THE WEAPON IS WHAT STRUCK, and therefore the only ones whose `attack` event
+## carries a `weapon` (and `damage_type`) field for peers to swing the rig from (v0.40.0 — see the stamp in
+## _build_attack_data for why this is an allowlist and not the denylist it replaced).
+##
+## The full kind vocabulary is bump / windup / free / arrow / kick / ability / smite / admin / plague. The
+## four here are the weapon's own blows; the other five are, in order, a ranged wielder's desperation
+## poke, a class ability, a ground-target spell, a debug poke, and a disease. ADD A KIND HERE ONLY IF the
+## thing that dealt the damage is the object in the attacker's hands.
+const _WEAPON_SWING_KINDS := ["bump", "windup", "free", "arrow"]
 
 # Authoritative HIT POINTS: entity id -> current HP. THE combat truth; a node's nameplate is only
 # presentation. Seeded from each entity's authored max as it enters its container (players from the
@@ -323,6 +332,76 @@ func apply_condition(target_id: int, name: String, beats: float) -> void:
 	get_tree().create_timer(duration_sec).timeout.connect(_expire_condition.bind(target_id, name, gen))
 
 
+## Apply a DAMAGE-OVER-TIME run to a target (v0.40.0, the game's first — the druid's Insect Plague).
+## Host-only. `damage` per tick, `ticks` times, `interval_beats` apart, attributed to `source_id`.
+##
+## THE FIRST TICK LANDS NOW, synchronously, and the rest are chained: a spell that visibly does nothing for
+## six beats reads as a spell that failed. So the run spans (ticks - 1) × interval, not ticks × interval.
+##
+## IT RIDES THE CONDITION REGISTRY for its state and its generation — `apply_condition("plagued", …)` gives
+## the target an entry, an overhead cue window and a status_applied/expired pair for free, and its
+## MONOTONIC generation is what this chain guards on. That single choice buys three correctness properties
+## with no new bookkeeping:
+##   - RE-CASTING REPLACES rather than stacks. A second plague bumps the generation, so the older chain's
+##     next tick finds a newer number and stops. Same refresh semantics re-rooting already has.
+##   - A DEAD or DESPAWNED target drops its whole registry entry, so the chain ends on its own.
+##   - An F5 reset / disconnect cannot leave a tick chain running against a recycled id, because
+##     _condition_gen is never erased (it is the anti-reuse guard — see its declaration).
+##
+## Damage goes through apply_damage like everything else, so a tick inherits the aggro wake, the death
+## path, the popup and the log line at no cost. Kind "plague" is what makes it non-physical (armour does
+## not apply) and what exempts it from the root-break dial — see both gates in apply_damage.
+func apply_dot(target_id: int, source_id: int, damage: int, ticks: int, interval_beats: float) -> void:
+	if damage <= 0 or ticks <= 0 or not is_alive(target_id):
+		return
+	# THE CONDITION IS ARMED LONG AND ENDED BY THE CHAIN, not timed to match it. Arming it for exactly the
+	# run's length (interval × (ticks-1)) put its expiry timer and the final tick's timer on the SAME
+	# instant, and the first headless run showed the race losing: `status_expired` posted BEFORE the last
+	# tick, so the swarm vanished a beat before its final bite. Giving the condition a full extra interval
+	# of headroom and having the chain clear it on completion makes the ordering deterministic — the cue
+	# ends exactly when the damage does, because the same code says so.
+	apply_condition(target_id, "plagued", interval_beats * float(ticks))
+	# -1 as the missing default on BOTH sides (write here, read in _dot_tick), so "no entry" can never be
+	# mistaken for a real generation. A 0 default here would have collided with a genuine generation 0 on a
+	# fresh registry, which is exactly the kind of coincidence the anti-reuse guard exists to rule out.
+	var gen: int = int((_condition_gen.get(target_id, {}) as Dictionary).get("plagued", -1))
+	if gen < 0:
+		return  # apply_condition refused it (dead / despawned in the same breath) — no chain to start.
+	# INTERVAL BAKED AT CAST, deliberately, and consistent with §2.8.2 stamp-and-bake: the root's duration,
+	# a stun's window and a cooldown are all frozen at the moment they are charged, so a tempo change never
+	# re-derives something already running. The consequence, stated so nobody has to rediscover it: a target
+	# whose pace flips mid-plague keeps ticking on the beat it was infected at. FLOORED so a misauthored
+	# zero interval degrades to one tick per frame rather than a same-frame burst — is_valid_ability refuses
+	# that authoring outright, and this is the second belt.
+	var interval_sec := maxf(interval_beats, 0.01) * PaceReferee.beat_or_explore(_pace, target_id)
+	_dot_tick(target_id, source_id, damage, ticks, interval_sec, gen)
+
+
+## One tick of a DoT run, then re-arm if any remain. Generation-guarded against the "plagued" condition, so
+## a superseding cast, a death or a despawn ends the chain silently — the same shape _expire_condition and
+## the stun expiry use, for the same reason: a bound timer must never speak for a life that has moved on.
+func _dot_tick(target_id: int, source_id: int, damage: int, remaining: int, interval_sec: float,
+		gen: int) -> void:
+	if int((_condition_gen.get(target_id, {}) as Dictionary).get("plagued", -1)) != gen:
+		return
+	if not is_alive(target_id):
+		return
+	apply_damage(source_id, target_id, damage, "plague", 0.0)
+	# Re-check liveness AFTER the hit: a tick that killed the target must not schedule another, and
+	# apply_damage has already run the whole death path by the time we get here.
+	if not is_alive(target_id):
+		return
+	if remaining <= 1:
+		# THE RUN ENDS THE CONDITION — see apply_condition's headroom note. Posting the expiry from here,
+		# immediately behind the final tick's damage event, is what puts "the swarm disperses" after "it
+		# bites" instead of racing it. The armed expiry timer is still there as the backstop for any path
+		# that skips this line.
+		clear_condition(target_id, "plagued")
+		return
+	get_tree().create_timer(interval_sec).timeout.connect(
+			_dot_tick.bind(target_id, source_id, damage, remaining - 1, interval_sec, gen))
+
+
 ## Does this entity currently carry `name`? The one presence predicate; an untracked id reads false.
 ## Host-only truth, never trusted from the wire.
 func has_condition(entity_id: int, name: String) -> bool:
@@ -550,7 +629,13 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 	# clear_condition's own status_expired IS the "released early" cue; there is no second event shape.
 	# The `amount > 0` term is what makes a 0-damage landed hit (a kick, a fully-absorbed swing) leave the
 	# root standing — the dial says damage breaks it, not contact.
-	if GameManager.config.root_breaks_on_damage and amount > 0:
+	# A DoT TICK NEVER BREAKS A ROOT (v0.40.0, Jon's ruling, decided before building rather than discovered
+	# in play). The dial's intent is "your party FOCUSING the held target frees it" — a deliberate blow
+	# somebody chose to land at that moment. A lingering plague is not that: nobody is acting, it is just
+	# damage arriving on its own clock. Without this exclusion the druid's two spells would fight each other
+	# the instant the dial went on — plague a rooted enemy and you would snap your own root — which makes
+	# using one class's kit together a trap you have to remember.
+	if GameManager.config.root_breaks_on_damage and amount > 0 and kind != "plague":
 		clear_condition(target_id, "rooted")
 	# Damage is an AGGRO SOURCE (v0.17.2 review fix): a SURVIVING Monster that just took a hit wakes its
 	# brain, so a ranged arrow from beyond aggro_range_tiles aggros it (no free sniping). Placed AFTER the
@@ -1368,10 +1453,24 @@ func _use_targeted(user_id: int, ability: ActiveAbility, data: Dictionary) -> Di
 		"target_tile": target_tile,
 		"target_name": occ_name,
 		"cast_sec": cast_sec,
+		# WHICH SPELL (v0.40.0). The channel event went generic the moment a SECOND targeted ability arrived
+		# — it was `root_cast` through v0.39.0 and is `targeted_cast` now — so every peer needs to know which
+		# cast it is drawing. §2.3.4: two casts that do entirely different things must never paint the same
+		# cue. TWO FIELDS, and the split matters:
+		#
+		#   `effect` — DERIVED FROM WHAT THE ABILITY ACTUALLY DOES, and what presentation branches on. Keying
+		#     the tint and the log sentence off the display NAME was the first cut and was quietly brittle:
+		#     rename "Insect Plague" in the .tres and the plague would silently start drawing and reading as
+		#     roots, with no error anywhere (GLM diff review). An effect derived from the authored payload
+		#     cannot drift from the payload, because it IS the payload.
+		#   `ability` — the display name, for the log to SAY. Naming a thing and branching on a thing are
+		#     different jobs; only the second one has to be stable.
+		"effect": "plague" if ability.dot_ticks > 0 and ability.dot_damage > 0 else "root",
+		"ability": ability.display_name,
 	}
 	if locked_id != _NO_ENTITY:
 		cast_data["target_id"] = locked_id
-	NetEvents.post_event("root_cast", cast_data, user_id)
+	NetEvents.post_event("targeted_cast", cast_data, user_id)
 	# interrupt_gen BOUND AT COMMIT and re-checked at fire. The smite skips this because only players blink
 	# and only monsters smite; a PLAYER caster closes that documented gap — a druid shadow-stepped (or, in
 	# future, knocked) out of its own channel is no longer standing where it cast from, so the roots fizzle.
@@ -1379,8 +1478,16 @@ func _use_targeted(user_id: int, ability: ActiveAbility, data: Dictionary) -> Di
 	# grabbed and how far the caster's reach is, and both are read from the ability HERE at commit rather
 	# than re-fetched at fire — stamp-and-bake (§2.8.2), so retuning the ability mid-channel cannot change
 	# a cast already in flight.
+	# The EFFECT, baked at commit (v0.40.0) — see _resolve_targeted's note on why it is values rather than
+	# the resource. Both payloads ride together so an ability carrying root AND plague needs no new plumbing.
+	var payload := {
+		"root_beats": ability.root_beats,
+		"dot_damage": ability.dot_damage,
+		"dot_ticks": ability.dot_ticks,
+		"dot_interval_beats": ability.dot_interval_beats,
+	}
 	get_tree().create_timer(cast_sec).timeout.connect(
-			_resolve_targeted.bind(user_id, target_tile, ability.root_beats, recovery_sec,
+			_resolve_targeted.bind(user_id, target_tile, payload, recovery_sec,
 					_move_referee.interrupt_gen_of(user_id), locked_id, ability.range_tiles))
 	return { "ok": true, "deferred": true }
 
@@ -1404,7 +1511,11 @@ func _use_targeted(user_id: int, ability: ActiveAbility, data: Dictionary) -> Di
 ## through to the same whiff branch a dodged tile-cast takes. A locked target that DIED mid-channel also
 ## whiffs, via the same liveness test the tile path already applies. So the mode does not remove the
 ## counterplay, it changes its shape: sidestepping stops working, running works.
-func _resolve_targeted(caster_id: int, target_tile: Vector2i, root_beats: float, recovery_sec: float,
+## `payload` (v0.40.0) carries the ability's EFFECT as baked values — root_beats and the three dot_* fields —
+## rather than the ability resource itself. A dictionary rather than four more parameters keeps the
+## signature readable, and BAKED rather than a live resource reference keeps stamp-and-bake (§2.8.2): a
+## `/ab` retune mid-channel cannot change a cast already in flight.
+func _resolve_targeted(caster_id: int, target_tile: Vector2i, payload: Dictionary, recovery_sec: float,
 		interrupt_gen: int, locked_id: int = _NO_ENTITY, range_tiles: int = 0) -> void:
 	if not is_alive(caster_id):
 		return
@@ -1447,7 +1558,27 @@ func _resolve_targeted(caster_id: int, target_tile: Vector2i, root_beats: float,
 	if occ_id != _NO_ENTITY:
 		var occ := _node_of_id(occ_id)
 		if occ != null and is_alive(occ_id) and caster != null and caster.is_hostile_to(occ):
-			apply_condition(occ_id, "rooted", root_beats)
+			# THE PAYLOAD IS DATA (v0.40.0): apply whatever the ability authored — a root, a damage-over-time
+			# run, or both. `landed` rather than an unconditional return so a cast with NEITHER (impossible
+			# past is_valid_ability, but cheap to be honest about) falls through to the whiff instead of
+			# silently consuming a cooldown for nothing.
+			#
+			# ROOT FIRST, deliberately: the DoT's opening tick fires synchronously inside apply_dot, so
+			# applying the root first keeps the ordered event stream reading the way it happened — held, then
+			# bitten. (It cannot break its own root either way; "plague" is exempt from that dial.)
+			# `.get` with defaults throughout, never a direct index: a future caller handing over a partial
+			# payload should degrade to "that half isn't authored", not crash mid-resolve.
+			var landed := false
+			var root_beats := float(payload.get("root_beats", 0.0))
+			if root_beats > 0.0:
+				apply_condition(occ_id, "rooted", root_beats)
+				landed = true
+			if int(payload.get("dot_ticks", 0)) > 0 and int(payload.get("dot_damage", 0)) > 0:
+				apply_dot(occ_id, caster_id, int(payload["dot_damage"]), int(payload["dot_ticks"]),
+						float(payload.get("dot_interval_beats", 0.0)))
+				landed = true
+			if not landed:
+				push_warning("[CombatReferee] targeted cast by %d landed with NO authored payload — check the ability's root_beats / dot_* fields." % caster_id)
 			# A HOSTILE CAST IS AN AGGRO SOURCE (v0.35.0, Jon's playtest) — the same wake apply_damage
 			# performs at its own tail. Without it a control spell was the one offensive act in the game
 			# that a monster could sleep through: Entangling Roots dealt no damage, so nothing ever
@@ -2265,24 +2396,20 @@ func _build_attack_data(attacker: Node, attacker_id: int, target: Node, target_i
 	# reader must use .get("absorbed", 0) like every other present-only field.
 	if absorbed > 0:
 		data["absorbed"] = absorbed
-	# Weapon stamp drives the rig swing on playback (main.gd) — stamped for EVERY kind that swings a
-	# weapon (bump / windup / strike / free / arrow). EXCLUDE "kick" (v0.17.1): a ranged weapon's
-	# point-blank bump has no melee swing, so it must carry NO weapon field (the rig-swing tail is
-	# field-gated) — a kick renders like a bare-handed bump, never the bow slash arc.
-	# EXCLUDE "ability" too (v0.20.0): a shield bash / kick is not a weapon swing, so it stamps no weapon field
-	# (no longsword rig arc over a bash) — the attacker's lunge in _handle_attack_event is its melee cue.
-	# EXCLUDE "smite" (v0.36.0, Jon's playtest — this was a BUG, not a design change). A smite is a
-	# ground-target SPELL, but the shaman happens to hold a club, so every landed smite stamped "club" and
-	# every peer dutifully played a club swing (and its arc across the recovery window) for a spell — Jon
-	# reported it as "his recovery shows the club again". The rule the list above already states — stamp the
-	# kinds that SWING A WEAPON — always excluded smite; nobody added it when the shaman shipped. The cast's
-	# own cue is the overhead symbol on the separate `smite_cast` event, which is untouched by this, as is the
-	# recovery tell (gated on duration_sec, not on the weapon field).
+	# Weapon stamp drives the rig swing on playback (main.gd), and is stamped ONLY for the kinds where the
+	# weapon is what actually struck — see _WEAPON_SWING_KINDS.
 	#
-	# THREE EXCLUSIONS IS THE LIMIT: this list is really "kinds where the weapon is not what struck", and a
-	# fourth entry means it should be inverted into an allowlist of the kinds that DO swing.
-	if attacker is Entity and attacker.equipped_weapon != null \
-			and kind != "kick" and kind != "ability" and kind != "smite":
+	# INVERTED FROM A DENYLIST IN v0.40.0, on the trigger the v0.36.0 comment set for itself: the exclusion
+	# list read "not kick, not ability, not smite", and the note said a FOURTH entry meant it should become
+	# an allowlist. The plague was the fourth — and it arrived as a BUG exactly like the smite one before
+	# it, with a druid's club swinging on every peer once per DoT tick. A denylist fails open: every new
+	# damage kind silently claims a weapon swing until someone notices. An allowlist fails closed, which is
+	# the right default for presentation nobody asked for.
+	#
+	# ONE DELIBERATE BEHAVIOR CHANGE rides the inversion: "admin" (the `/mi` damage poke) used to be absent
+	# from the denylist and so DID swing the poker's weapon. It no longer does — a debug command that
+	# subtracts HP is not a sword blow, and animating one was never intended, just unnoticed.
+	if attacker is Entity and attacker.equipped_weapon != null and kind in _WEAPON_SWING_KINDS:
 		data["weapon"] = attacker.equipped_weapon.display_name
 		# DAMAGE TYPE (v0.27.0): a PRESENT-ONLY label, stamped in the same breath as the weapon identity
 		# and under exactly the same condition — a weapon is present AND this hit is that weapon's own
@@ -2950,8 +3077,12 @@ func _armor_flat_of(weight: int) -> int:
 ##  - "admin" — the dev pokes (/mi hp, /mi kill) must stay EXACT: an armored knight has to die to
 ##    "/mi kill" and land on the number "/mi hp" asked for, or the tuning tools lie.
 ## Kept as a predicate (not an inline check) so every future kind decides its side here, in one place.
+## v0.40.0: "plague" joins smite as NON-physical (Jon's call). Armour is a two-term rule whose flat half is
+## 1-3 points, and a DoT tick is 2 — so mitigating it would not reduce the plague, it would DELETE it
+## against anything wearing metal, and "a disease is not stopped by mail" is the reading that keeps the
+## spell meaningful against exactly the enemies you would want to soften.
 func _is_physical_kind(kind: String) -> bool:
-	return kind != "smite" and kind != "admin"
+	return kind != "smite" and kind != "admin" and kind != "plague"
 
 
 ## Wielder MELEE windup bonus in BEATS (v0.19.0): monsters only (MonsterType.bonus_windup_beats) — a player

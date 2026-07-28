@@ -34,9 +34,11 @@ const DEV_WEAPON_CLAMPS := {
 ## victim). Clamp [0, 120] beats — twice the stun's ceiling, because a root is a movement lock rather than a
 ## total lock and is meant to be authored an order of magnitude longer (30 beats shipped vs the kick's 6),
 ## while 120 still refuses "permanent" outright.
+## v0.40.0: the three DoT fields joined, so Jon can answer his own "does that sound balanced?" in play
+## rather than by rebuilding — the plague's whole design question is a feel question about pacing.
 const DEV_ABILITY_FIELDS := ["damage", "stun_beats", "windup_beats", "recovery_beats", "cooldown_beats",
-	"root_beats"]
-const DEV_ABILITY_INT_FIELDS := ["damage"]
+	"root_beats", "dot_damage", "dot_ticks", "dot_interval_beats"]
+const DEV_ABILITY_INT_FIELDS := ["damage", "dot_damage", "dot_ticks"]
 const DEV_ABILITY_CLAMPS := {
 	"damage": [0, 999],
 	"stun_beats": [0.0, 60.0],
@@ -44,6 +46,13 @@ const DEV_ABILITY_CLAMPS := {
 	"recovery_beats": [0.0, 30.0],
 	"cooldown_beats": [0.0, 600.0],
 	"root_beats": [0.0, 120.0],
+	# DoT (v0.40.0). Damage per tick is small by nature; 20 ticks is far past any real design and still
+	# refuses a runaway. The interval's floor is 0.5 rather than 0 ON PURPOSE — a 0 interval would fire the
+	# whole run in one frame, which is a different spell than the one authored (ActiveAbility's validator
+	# refuses that shape outright; this keeps the live dial from reaching it either).
+	"dot_damage": [0, 99],
+	"dot_ticks": [0, 20],
+	"dot_interval_beats": [0.5, 60.0],
 }
 
 const DEV_MONSTER_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles",

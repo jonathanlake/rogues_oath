@@ -1,7 +1,8 @@
-[gd_resource type="Resource" script_class="PlayerClass" load_steps=6 format=3]
+[gd_resource type="Resource" script_class="PlayerClass" load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://resources/player_class.gd" id="1_class"]
 [ext_resource type="Resource" path="res://resources/abilities/entangling_roots.tres" id="2_roots"]
+[ext_resource type="Resource" path="res://resources/abilities/insect_plague.tres" id="6_plague"]
 [ext_resource type="Resource" path="res://resources/items/leather_armor.tres" id="3_leather"]
 [ext_resource type="Resource" uid="uid://b3cmct5a57xr8" path="res://resources/weapons/club.tres" id="4_club"]
 [ext_resource type="Script" uid="uid://guqoq14bk8tr" path="res://resources/weapon_type.gd" id="5_weapon"]
@@ -10,6 +11,6 @@
 script = ExtResource("1_class")
 display_name = "druid"
 atlas_coords = Vector2i(2, 4)
-active_abilities = Array[ActiveAbility]([ExtResource("2_roots")])
+active_abilities = Array[ActiveAbility]([ExtResource("2_roots"), ExtResource("6_plague")])
 starting_body_armor = ExtResource("3_leather")
 weapon_roster = Array[ExtResource("5_weapon")]([ExtResource("4_club")])

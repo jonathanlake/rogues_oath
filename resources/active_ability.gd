@@ -120,6 +120,29 @@ enum TargetMode { TILE, CREATURE }
 ## Tunable live through `/ab <ability> root_beats <n>` and the debug panel's CLASSES section.
 @export var root_beats: float = 0.0
 
+## ── DAMAGE OVER TIME (v0.40.0, the druid's Insect Plague — the game's first) ──────────────────────
+##
+## THREE FIELDS RATHER THAN A NEW Kind, because a TARGETED cast's EFFECT is data, not shape. The resolve
+## applies whatever is authored: a root if `root_beats > 0`, a DoT if these are set, BOTH if both are. So a
+## future "entangling swarm" is a `.tres` edit, not a referee edit — the same reason the abilities got
+## fields instead of an enum in v0.27.0.
+##
+## `dot_damage` per tick, `dot_ticks` times, `dot_interval_beats` apart. THE FIRST TICK LANDS IMMEDIATELY
+## when the cast resolves, and the rest follow at the interval — so the spell visibly does something the
+## moment it lands rather than looking like it failed for six beats. That makes the total window
+## `(dot_ticks - 1) × dot_interval_beats`, not `dot_ticks ×`, which is worth knowing when you tune it.
+##
+## SHIPPED (Jon, halved from his first thought of 12 beats because 48 beats outlasts most fights and the
+## last ticks would never land): 2 damage × 4 ticks, 6 beats apart — 8 total over 18 beats.
+##
+## Ticks are stamped at the TARGET's resolved pace and deal kind "plague", which is NOT physical, so armour
+## does not apply (Jon's call: at 2 a tick, chainmail's flat 2 would not reduce the plague, it would erase
+## it — and a disease is not stopped by mail). Re-casting on an already-plagued target REPLACES the run
+## rather than stacking it, exactly as re-rooting refreshes rather than doubling.
+@export var dot_damage: int = 0
+@export var dot_ticks: int = 0
+@export var dot_interval_beats: float = 0.0
+
 ## COOLDOWN in BEATS before this ability may be used again (v0.27.0). 0 (default) = NO cooldown, which is
 ## byte-for-byte the pre-v0.27.0 behavior for any ability that leaves it unset.
 ##
@@ -158,7 +181,17 @@ enum TargetMode { TILE, CREATURE }
 ## precisely so adding a Kind never silently grants it validity again.
 func is_valid_ability() -> bool:
 	if kind == Kind.TARGETED:
-		return range_tiles > 0 and root_beats > 0.0 and (windup_beats + recovery_beats) > 0.0
+		# v0.40.0: "has an effect to land" is now root OR damage-over-time, since a TARGETED cast's payload
+		# became data (see the DoT block above). The other two requirements are unchanged — a reach to aim
+		# inside, and an occupied window to pay with — so a misauthored targeted cast is still as unusable
+		# as a misauthored strike, and an ability with NEITHER payload is still refused.
+		# A MULTI-TICK DoT MUST HAVE AN INTERVAL. Without this, `dot_ticks 4, dot_interval_beats 0` reads as
+		# valid and then fires every tick on a zero-length timer — the whole payload lands as one burst,
+		# which is a different spell than the one authored (GLM diff review). A SINGLE tick needs no
+		# interval, since there is no gap to describe.
+		var dot_ok := dot_damage > 0 and dot_ticks > 0 and (dot_ticks == 1 or dot_interval_beats > 0.0)
+		return range_tiles > 0 and (windup_beats + recovery_beats) > 0.0 \
+				and (root_beats > 0.0 or dot_ok)
 	if kind != Kind.STRIKE:
 		return true
 	return (damage > 0 or stun_beats > 0.0) and (windup_beats + recovery_beats) > 0.0

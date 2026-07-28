@@ -171,6 +171,11 @@ var _rooted_fx_gen: int = 0
 var _targeted_fx: Node2D = null
 var _targeted_fx_tween: Tween = null
 var _targeted_fx_gen: int = 0
+# PLAGUED swarm (v0.40.0) — the first damage-over-time's cue. Own fx slot + generation, the rooted cue's
+# shape exactly. Orbits ABOVE the body so it never fights the root tendrils at the feet.
+var _plague_fx: Node2D = null
+var _plague_fx_tween: Tween = null
+var _plague_fx_gen: int = 0
 # Overhead THINKING cue (v0.24.0 stamina experiment): a grey "…" held for the monster's rolled hesitation
 # window. Own fx slot + generation (never collides with stun/cast); self-clearing on a local timer —
 # there is deliberately no expire event (the duration rides the one `thinking` broadcast).
@@ -664,7 +669,7 @@ func play_rooted(hold_sec: float) -> void:
 
 
 ## MARKED BY A CREATURE-TARGETED CAST (v0.38.0, §2.3.4) — four converging corner brackets that close in on
-## the body for the cast window, in the control channel's green. Driven per-peer from the `root_cast` event
+## the body for the cast window, in the control channel's green. Driven per-peer from the `targeted_cast` event
 ## when it carries a `target_id`; self-clearing on a generation-guarded local timer like the thinking cue,
 ## since the cast's outcome (a `status_applied` root, or a whiff) is its own separate event.
 ##
@@ -698,6 +703,55 @@ func play_targeted(hold_sec: float) -> void:
 	_targeted_fx_tween.tween_property(fx, "scale", Vector2(1.0, 1.0), maxf(hold_sec, 0.05)) \
 			.from(Vector2(1.9, 1.9))
 	get_tree().create_timer(maxf(hold_sec, _MIN_CUE_HOLD_SEC)).timeout.connect(hide_targeted.bind(gen))
+
+
+## PLAGUED (v0.40.0, Insect Plague — §2.3.4's cue for the game's first damage-over-time): a small swarm of
+## dark specks orbiting the body for the run's window. Driven per-peer from status_applied "plagued"; the
+## paired status_expired clears it, with a generation-guarded local timer as the backup — the rooted
+## tendrils' exact two-belt lifecycle, so a re-cast's cue outlives the old run's timer just as the host's
+## registry outlives the old chain.
+##
+## DELIBERATELY NOT AT THE FEET AND NOT GREEN: the roots already own the feet and the control channel's
+## green, and a body that is both held and diseased has to read as two things at a glance. The specks
+## ORBIT — motion rather than a static mark — because this is the one status that keeps HAPPENING instead
+## of simply being true, and each tick's damage popup lands over it.
+##
+## NO gameplay meaning: the host's tick chain is the only truth about who is taking plague damage.
+func play_plagued(hold_sec: float) -> void:
+	hide_plagued()
+	_plague_fx_gen += 1
+	var gen := _plague_fx_gen
+	var fx := Node2D.new()
+	fx.position = Vector2(0, -6)
+	add_child(fx)
+	_plague_fx = fx
+	# Six specks on a ring, each a small Polygon2D diamond — the cue family's no-art-dependency idiom.
+	# The Y offsets are flattened so the ring reads as an ORBIT around the body, not a flat circle pasted
+	# over it.
+	for i in 6:
+		var angle := i * TAU / 6.0
+		var speck := Polygon2D.new()
+		speck.polygon = PackedVector2Array([
+			Vector2(0, -1.6), Vector2(1.6, 0), Vector2(0, 1.6), Vector2(-1.6, 0)])
+		speck.position = Vector2(cos(angle) * 13.0, sin(angle) * 6.0)
+		speck.color = Color(0.30, 0.42, 0.16) if i % 2 == 0 else Color(0.16, 0.22, 0.10)
+		fx.add_child(speck)
+	_plague_fx_tween = create_tween().set_loops()
+	_plague_fx_tween.tween_property(fx, "rotation", TAU, 2.2).from(0.0)
+	get_tree().create_timer(maxf(hold_sec, _MIN_CUE_HOLD_SEC)).timeout.connect(hide_plagued.bind(gen))
+
+
+## Clear the plague swarm. Same generation contract as hide_rooted: no-arg is unconditional (status_expired
+## / re-cast pre-clear / death), a bound generation no-ops if a NEWER run has since claimed this body.
+func hide_plagued(gen: int = -1) -> void:
+	if gen != -1 and gen != _plague_fx_gen:
+		return
+	if _plague_fx_tween != null and _plague_fx_tween.is_valid():
+		_plague_fx_tween.kill()
+	_plague_fx_tween = null
+	if _plague_fx != null and is_instance_valid(_plague_fx):
+		_plague_fx.queue_free()
+	_plague_fx = null
 
 
 ## Clear the targeted brackets. Same two-belt/generation contract as hide_rooted: no-arg is unconditional

@@ -113,7 +113,7 @@ const _WEAPON_FIELDS := ["damage_min", "damage_max", "windup_beats", "recovery_b
 ## snapshot dictionary's key order is insertion order, which is that same list — but the panel should not
 ## depend on that for its layout). A field missing from this list is simply not shown; keep them in step.
 const _ABILITY_FIELDS := ["damage", "stun_beats", "windup_beats", "recovery_beats", "cooldown_beats",
-	"root_beats"]
+	"root_beats", "dot_damage", "dot_ticks", "dot_interval_beats"]
 
 # Pending widget edits: row key -> {cmd, args}. Keyed so scrubbing a SpinBox collapses to one
 # intent per flush; flushed by _flush_timer 0.3s after the last change.

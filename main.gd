@@ -995,11 +995,11 @@ func _on_net_event(event: Dictionary) -> void:
 			# A monster's telegraphed SMITE channel starting (v0.19.10, host-authored). Orange-red tell over the
 			# caster; the LAND is the later `attack` event (kind "smite"). Log line from game_log.
 			_handle_smite_cast_event(event)
-		"root_cast":
+		"targeted_cast":
 			# A PLAYER's telegraphed CONTROL cast starting (v0.34.0 — the druid's Entangling Roots).
 			# GREEN danger tile + green channel tell; the LAND is the later `status_applied` "rooted"
 			# (or an `attack` whiff if the ground came up empty). Log line from game_log.
-			_handle_root_cast_event(event)
+			_handle_targeted_cast_event(event)
 		"stamina":
 			# A player's stamina pool changed (v0.24.0 experiment, renamed v0.24.1; host-authored: spend,
 			# battle-entry reset, or a rest-to-recover regen tick). Own-player HUD renders the pips.
@@ -1575,7 +1575,7 @@ func _handle_smite_cast_event(event: Dictionary) -> void:
 ## The LAND is the later `status_applied` "rooted" (or an `attack` whiff on empty ground); the log line comes
 ## from game_log. Works for any caster kind — play_spell_cast lives on Entity, so a future monster druid
 ## needs nothing added here.
-func _handle_root_cast_event(event: Dictionary) -> void:
+func _handle_targeted_cast_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
 	var caster := _node_for_peer(int(data.get("caster_id", 0)))
 	if caster == null:
@@ -1595,11 +1595,21 @@ func _handle_root_cast_event(event: Dictionary) -> void:
 	# key for a creature-mode cast, so "is it there" is exactly the question, and asking it directly keeps
 	# this reader honest if the entity-id space ever changes shape.
 	var target := _node_for_peer(int(data.get("target_id", 0))) as Entity if data.has("target_id") else null
+	# ONE CHANNEL, TWO SPELLS, TWO COLOURS (v0.40.0). This event went generic when Insect Plague joined
+	# Entangling Roots on it, and §2.3.4 will not let two casts that do entirely different things paint the
+	# same cue. Branch on `effect`, which the referee DERIVES from the ability's authored payload — never on
+	# the display name, which a rename would silently change out from under this. GREEN stays the control
+	# channel (roots); the plague takes a sickly YELLOW-GREEN, close enough to read as the same caster's
+	# magic and far enough to read as a different spell. An unrecognised effect falls back to the control
+	# green rather than drawing nothing, so a future third spell is unlabelled rather than invisible.
+	var is_plague := str(data.get("effect", "")) == "plague"
+	var cast_tint := Color(0.75, 0.85, 0.2) if is_plague else Color(0.35, 0.9, 0.35)
 	if target != null:
 		target.play_targeted(cast_sec)
 	else:
-		_fx.danger_tile(target_tile, cast_sec, Color(0.25, 0.85, 0.3, 0.45))
-	caster.play_spell_cast(cast_sec, Color(0.35, 0.9, 0.35))
+		var ground_tint := Color(0.62, 0.72, 0.18, 0.45) if is_plague else Color(0.25, 0.85, 0.3, 0.45)
+		_fx.danger_tile(target_tile, cast_sec, ground_tint)
+	caster.play_spell_cast(cast_sec, cast_tint)
 
 
 ## All peers: show the overhead STUN icon when the host applies a stun (v0.20.0). entity_id may be a player
@@ -1715,6 +1725,12 @@ func _handle_status_applied_event(event: Dictionary) -> void:
 			# and because a RE-ROOT bumps the visual generation, a refresh's cue outlives the old timer
 			# exactly as the host's registry outlives the old expiry.
 			ent.play_rooted(float(data.get("duration_sec", 0.0)))
+		"plagued":
+			# PLAGUED (v0.40.0, the first damage-over-time): the orbiting swarm, held for the host's stamped
+			# run. Same two-belt lifecycle as the roots, and a RE-CAST bumps the visual generation so a
+			# refreshed run's cue outlives the replaced run's timer. The per-tick damage arrives as its own
+			# `attack` event and floats its popup over this.
+			ent.play_plagued(float(data.get("duration_sec", 0.0)))
 
 
 ## All peers: clear an overhead status icon when the host's status ends (v0.20.0 stun; v0.26.0 block).
@@ -1733,6 +1749,10 @@ func _handle_status_expired_event(event: Dictionary) -> void:
 			# toggle on, or a Shadow Step out of the roots) — because clear_condition posts the same event.
 			# One teardown, so a broken root can never leave tendrils on a body that is already running.
 			ent.hide_rooted()
+		"plagued":
+			# v0.40.0, same one-teardown reasoning: the run ending naturally and the run ending because its
+			# victim died both post this, so the swarm can never outlive what it is orbiting.
+			ent.hide_plagued()
 
 
 ## All peers: play back a host-adjudicated BLINK (v0.26.0 instants experiment — Shadow Step). The body SNAPS

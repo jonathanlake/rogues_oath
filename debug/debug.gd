@@ -1098,11 +1098,11 @@ func _log_net_event(event: Dictionary) -> void:
 	# caused, so "it drew but loosed nothing" and "it loosed and missed" read identically. projectile_launched
 	# carries the shooter, the exact path and the recovery stamp; projectile_ended carries the outcome
 	# (hit / spent / blocked). Both are needed to assert a MONSTER archer at all.
-	# v0.34.0: root_cast joined the set — the druid's channel is the ONE observable that says the cast was
+	# v0.34.0: targeted_cast joined the set — the druid's channel is the ONE observable that says the cast was
 	# accepted and committed at all (its LAND is a status_applied, its miss a whiff `attack`), so without it a
 	# refused press and a dodged cast read identically in a trace. status_applied / status_expired were
 	# already in, and they carry the condition NAME, so ROOTED needed no allowlist change of its own.
-	if not (action in ["glide_to", "windup", "heal_cast", "smite_cast", "root_cast", "heal", "attack", "died",
+	if not (action in ["glide_to", "windup", "heal_cast", "smite_cast", "targeted_cast", "heal", "attack", "died",
 			"status_applied", "status_expired",
 			"item_picked_up", "item_pickup_full", "item_pickup_available", "item_used", "equip_item",
 			"ai_decision", "stamina", "stamina_recovery", "thinking", "exhausted", "banter",
