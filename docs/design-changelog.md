@@ -9,6 +9,37 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.46.0 (2026-07-28) — THE DEBUG PANEL CLEANUP.** The reorganisation cut from v0.37.0 for budget, plus
+  the bugs found while looking at it.
+  **WEAPONS IS A DROPDOWN NOW**, like MONSTER TYPES and CLASSES already were — pick the weapon you are
+  tuning instead of scrolling past all four. **The settled stamina dials moved to a collapsed LEGACY
+  section** at the bottom. They are still live and still tunable; they simply stopped being what you open
+  the panel to reach while sitting at the top of it.
+  **THE GRIDS GO FOUR COLUMNS.** The class, monster-type and instance grids were using about half the
+  panel's width on its longest sections — a single monster type is 28 rows. Two label/value pairs per row
+  halves those sections, which compounds with last version's taller expanded panel.
+  **A TRAITS SECTION**, driven by the new trait catalog. Traits became tunable objects in v0.45.0 and had
+  no panel surface at all.
+  **Four real bugs, three of them invisible until you hit them:**
+  **Negative monster dials were unreachable from the panel.** `bonus damage`, `bonus windup` and `bonus
+  recovery` are all explicitly signed — "a designer can add or subtract" — but every spin box started at
+  0, so from the GUI you could only ever add. Worse in the other direction, `utility alone move factor` is
+  a 0-to-1 fraction and was offered in steps of 0.5, so only 0, 0.5 and 1 were reachable at all. Ranges now
+  derive from the host's own clamp table, so the panel can express exactly what the command line can.
+  **The exhaustion button lied.** It reads the player side only, while the row below it sets each side
+  separately — set players to crawl and monsters to hard-stop and the button said "crawl" while every
+  monster in the room stopped dead. It names the split now.
+  **An open LIVE INSTANCES grid collapsed under you** roughly every 0.6 seconds, because the panel rebuilds
+  that section on every refresh and the open/closed flag lived on the thing being rebuilt. Live monsters
+  have live-changing hp, so this happened constantly.
+  **`banter earshot` had no row at all**, and neither did any of v0.43.0's mana, orb or blink fields — the
+  panel's ability list said "the six tunable fields" over a list of nine while the game allowed fourteen.
+  All present now, and the header no longer states a count that can rot.
+  **Verified** by probing the built panel rather than by eye: 4 columns, `bonus damage` reaching -999,
+  the fraction dial stepping 0.05, the LEGACY section collapsed, TRAITS and WEAPONS both populated. One
+  GLM pass, which caught that converting WEAPONS to a rebuilt section had quietly removed its typing
+  protection, and that a dropdown built once still would not show a weapon added mid-session.
+
 - **v0.45.0 (2026-07-28) — TRAITS ARE OBJECTS NOW, AND YOU CAN BE GIVEN ONE.** Jon asked whether a trait
   could move between classes, or be handed to someone outside their class. The first was already free; the
   second was not possible at all. Now both are.

@@ -630,8 +630,25 @@ func _dev_cmd_snapshot() -> Dictionary:
 				"instanced": child.monster_type != null and child.monster_type.resource_path == "",
 				"fields": instance_fields,
 			}
+	# TRAITS (v0.46.0) — enumerated from the CATALOG rather than from the class roster, deliberately. Every
+	# other section here walks what is EQUIPPED or AUTHORED-ON-A-CLASS, but a trait can now be granted to
+	# anyone, so "the traits that exist" is the honest set and the catalog is what defines it. It is also
+	# the same index `/pa` resolves through, which is what keeps the panel from rendering rows whose edits
+	# would reject (ROADMAP's split-index trap, which the trait catalog's coverage guard already prevents
+	# from the other direction).
+	var passives := {}
+	for trait_res in GameManager.config.passive_catalog:
+		if trait_res == null:
+			continue
+		var trait_fields := {}
+		for field in GameManager.DEV_PASSIVE_FIELDS:
+			# A trait only carries the fields its own subclass declares, so the union is filtered per
+			# trait — the panel shows Sneak Attack a multiplier and Archery two deltas, not both to both.
+			if _resource_has_property(trait_res, field):
+				trait_fields[field] = trait_res.get(field)
+		passives[trait_res.display_name] = trait_fields
 	NetEvents.post_event("dev_snapshot", {
-		"game": game, "weapons": weapons, "classes": classes,
+		"game": game, "weapons": weapons, "classes": classes, "passives": passives,
 		"monster_types": monster_types, "instances": instances,
 	})
 	return { "ok": true, "deferred": true }

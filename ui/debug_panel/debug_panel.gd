@@ -32,7 +32,17 @@ extends CanvasLayer
 ## debounced. Multi-admin edits are last-writer-wins by design (Jon+Jeff are the only admins);
 ## the snapshot refresh converges every open panel within a second.
 
-## Paired per-side stamina dials (v0.25.0 split): one row, Players column | Monsters column.
+## LEGACY stamina dials (v0.46.0) — paired per-side, one row with a Players column and a Monsters column
+## (the v0.25.0 split).
+##
+## MOVED OUT OF THE FRONT PAGE, not retired. Stamina graduated from experiment to a core engine rule on
+## Jeff's v0.26.0 verdict, and these seven rows plus the four regen-idle ones below are the dials that
+## question was answered WITH. They are still live, still host-validated, still exactly as tunable as they
+## were — they simply stopped being what you open the panel to reach, while occupying the top of it. The
+## section is collapsed by default; every editor still registers in the same `_game_editors` dict, so a
+## snapshot repaints them whether the section is open or shut.
+##
+## This is the "LEGACY section for the settled stamina dials" cut from v0.37.0 for budget.
 const _PAIRED_DIALS := [
 	{ "label": "stamina max", "p": "stamina_max", "m": "monster_stamina_max",
 		"min": 1, "max": 12, "step": 1 },
@@ -50,12 +60,12 @@ const _PAIRED_DIALS := [
 		"m": "monster_refill_lockout_beats", "min": 0, "max": 200, "step": 1 },
 ]
 
-## Shared single-column dials.
-## The four REGEN-IDLE dials (v0.26.0) live here rather than in the paired block above because the
-## player side is no longer ONE number to pair against the monster one: it is three ARMOR-WEIGHT bands
-## (the light dial also covers UNARMORED), so a two-column row can't express it. The monsters' single
-## dial sits alongside them as the fourth row, keeping every idle wait in one visual group.
-const _SHARED_DIALS := [
+## The single-column LEGACY dials, joining the paired block above in the collapsed section. The four
+## REGEN-IDLE dials (v0.26.0) are single-column rather than paired because the player side is no longer ONE
+## number to pair against the monster one: it is three ARMOR-WEIGHT bands (the light dial also covers
+## UNARMORED), so a two-column row cannot express it. The monsters' single dial sits alongside them as the
+## fourth row, keeping every idle wait in one visual group.
+const _LEGACY_SHARED_DIALS := [
 	{ "label": "regen idle LIGHT (beats)", "field": "player_regen_idle_light_beats",
 		"min": 0, "max": 100, "step": 0.5 },
 	{ "label": "regen idle MEDIUM (beats)", "field": "player_regen_idle_medium_beats",
@@ -64,6 +74,10 @@ const _SHARED_DIALS := [
 		"min": 0, "max": 100, "step": 0.5 },
 	{ "label": "regen idle MONSTERS (beats)", "field": "monster_regen_idle_beats",
 		"min": 0, "max": 100, "step": 0.5 },
+]
+
+## Shared single-column dials — the live front page.
+const _SHARED_DIALS := [
 	{ "label": "tactical beat (sec)", "field": "tactical_beat_sec", "min": 0.05, "max": 1.0, "step": 0.05 },
 	{ "label": "think min (beats)", "field": "monster_think_min_beats", "min": 0, "max": 30, "step": 1 },
 	{ "label": "think max (beats)", "field": "monster_think_max_beats", "min": 0, "max": 30, "step": 1 },
@@ -101,19 +115,79 @@ const _SHARED_DIALS := [
 	# v0.34.0 conditions — the ROOT's break-on-damage question, shipped OFF. On = any damaging hit frees a
 	# rooted target; off = the root runs its authored beats whatever you do to it.
 	{ "label": "root breaks on damage", "field": "root_breaks_on_damage", "bool": true },
+	# v0.46.0 — banter EARSHOT in tiles. A live host dial since v0.27.1 that never got a row, so it was
+	# typed-command-only and silently so. 0 makes the ally-died and help-me reactions silent, which is a
+	# legitimate setting rather than an off-by-one.
+	{ "label": "banter earshot (tiles)", "field": "banter_earshot_tiles", "min": 0, "max": 60, "step": 1 },
 	# v0.29.0 — the TESTING PIN, deliberately last in the group so it doesn't read as a balance dial:
 	# everyone resolves tactical while it is on, which also runs the stamina system everywhere.
 	{ "label": "force tactical", "field": "force_tactical_pace", "bool": true },
 ]
 
+## GRID GEOMETRY (v0.46.0). The class / monster-type / live-instance grids are the panel's most numerous
+## rows by a wide margin — a single monster type renders 28 of them — and at 2 columns they used
+## 170 + 80 + separation ≈ 254 of the ~486 usable units. Nearly half the dock was empty space, on exactly
+## the sections you scroll longest.
+##
+## FOUR COLUMNS (label, spin, label, spin) halves those sections' height for free at any zoom, which
+## compounds with v0.44.0's taller expanded dock. The widths below are the 2-column pair trimmed to fit two
+## pairs inside the SAME collapsed 502-unit budget: 2 x (118 + 76) + separations ≈ 400, comfortably under
+## the _MIN_RECT_W floor that keeps the dock from bleeding left. A SpinBox's own minimum is ~68 units
+## whatever custom_minimum_size says, so 76 is real and 118 is what the label gets.
+const _GRID_COLUMNS := 4
+const _GRID_LABEL_W := 118
+const _GRID_SPIN_W := 76
+
 const _WEAPON_FIELDS := ["damage_min", "damage_max", "windup_beats", "recovery_beats"]
 
-## The SIX tunable ABILITY fields (v0.27.0 CLASSES section; `root_beats` joined in v0.34.0) — the same list
-## GameManager.DEV_ABILITY_FIELDS enforces host-side, restated here only to fix the ROW ORDER on screen (a
-## snapshot dictionary's key order is insertion order, which is that same list — but the panel should not
-## depend on that for its layout). A field missing from this list is simply not shown; keep them in step.
+## Apply a field's HOST CLAMP to a SpinBox (v0.46.0) — the fix for ROADMAP's "panel spin ranges exceed the
+## host clamps" finding, which turned out to understate the problem in one direction that mattered.
+##
+## The old hardcoded `0..999 step 0.5` on the type and instance grids did not merely allow values the host
+## would refuse (harmless — the reject is distinct). It made host-LEGAL values UNREACHABLE, because three
+## monster dials are explicitly SIGNED: `bonus_windup_beats` and `bonus_recovery_beats` at [-30, 30] and
+## `bonus_damage` at [-999, 999], all documented as "a designer can add or subtract". From the panel you
+## could only ever add. `utility_alone_move_factor` was worse in the other direction — a [0, 1] fractional
+## multiplier offered at step 0.5, so only 0, 0.5 and 1 were reachable at all.
+##
+## Deriving from the SAME table the host validates against means the panel can express exactly what the
+## command line can, and a retuned clamp moves both together. A field with no clamp entry keeps a wide
+## permissive default rather than guessing — better an occasional honest reject than an invented ceiling.
+##
+## STEP is derived too: an int-typed field steps by 1, and a fractional range narrower than 2 gets a fine
+## step so a 0-1 dial is actually adjustable.
+static func _apply_clamp(spin: SpinBox, field: String, clamps: Dictionary, int_fields: Array) -> void:
+	var lo := -999.0
+	var hi := 999.0
+	# Shape-checked rather than indexed blind (GLM diff review): a malformed table entry should fall back to
+	# the permissive default, not crash the whole panel build on a typo in a constant.
+	var entry = clamps.get(field)
+	if entry is Array and entry.size() >= 2:
+		lo = float(entry[0])
+		hi = float(entry[1])
+	spin.min_value = lo
+	spin.max_value = hi
+	if field in int_fields:
+		spin.step = 1.0
+	elif hi - lo <= 2.0:
+		spin.step = 0.05
+	else:
+		spin.step = 0.5
+
+## The tunable ABILITY fields (v0.27.0 CLASSES section) — the same set GameManager.DEV_ABILITY_FIELDS
+## enforces host-side, restated here only to fix the ROW ORDER on screen (a snapshot dictionary's key order
+## is insertion order, which is that same list — but the panel should not depend on that for its layout).
+##
+## THEY DRIFTED, WHICH IS WHY THE COUNT IS NO LONGER IN THIS COMMENT. It said "the SIX tunable ability
+## fields" over a list of nine, and by v0.43.0 the host allowed fourteen — so the entire mana / orb / blink
+## surface shipped with no panel row at all, tunable only by typing `/ab`. Both halves of that are fixed
+## here: the list below is complete, and the header no longer states a number that can rot.
+##
+## A field the host allows but this list omits is simply not shown, so keep them in step — or better, ask
+## whether the new field wants a row before adding it host-side.
 const _ABILITY_FIELDS := ["damage", "stun_beats", "windup_beats", "recovery_beats", "cooldown_beats",
-	"root_beats", "dot_damage", "dot_ticks", "dot_interval_beats"]
+	"root_beats", "dot_damage", "dot_ticks", "dot_interval_beats",
+	"mana_cost", "orb_count", "orb_damage", "orb_interval_beats", "blink_travel_tiles"]
 
 # Pending widget edits: row key -> {cmd, args}. Keyed so scrubbing a SpinBox collapses to one
 # intent per flush; flushed by _flush_timer 0.3s after the last change.
@@ -162,6 +236,7 @@ var _expand_button: Button = null
 var _local_box: VBoxContainer = null
 var _mute_bonk_check: CheckBox = null
 var _game_box: VBoxContainer = null
+var _legacy_box: VBoxContainer = null
 var _weapons_box: VBoxContainer = null
 var _types_box: VBoxContainer = null
 var _instances_box: VBoxContainer = null
@@ -176,8 +251,19 @@ var _classes_box: VBoxContainer = null
 var _class_selector: OptionButton = null
 var _class_abilities_box: VBoxContainer = null
 # field -> editor Control for repaint-in-place (game + weapon rows). Instance/type editors rebuild.
+## Per-instance LIVE INSTANCES disclosure state (v0.46.0): instance id -> is its detail grid open. Lives
+## here rather than on the Control because _paint_instances rebuilds those Controls on every snapshot; see
+## the note at its use site for the bug that caused.
+var _instance_open: Dictionary = {}
 var _game_editors: Dictionary = {}
-var _weapon_editors: Dictionary = {}
+## WEAPONS selector + grid (v0.46.0) — replaces the flat build-once `_weapon_editors` registry.
+## TRAITS selector + grid (v0.46.0) — the fourth instance of the selector+grid pattern, driven by the
+## v0.45.0 trait catalog. Traits became tunable objects that version and had no panel surface at all.
+var _traits_box: VBoxContainer = null
+var _trait_selector: OptionButton = null
+var _trait_grid: GridContainer = null
+var _weapon_selector: OptionButton = null
+var _weapon_grid: GridContainer = null
 
 
 func _ready() -> void:
@@ -311,14 +397,17 @@ func _build() -> void:
 	body.add_theme_constant_override("separation", 4)
 	scroll.add_child(body)
 	_local_box = _make_section(body, "LOCAL (this machine)")
-	_game_box = _make_section(body, "GAME / STAMINA (players | monsters)")
+	_game_box = _make_section(body, "GAME")
 	_weapons_box = _make_section(body, "WEAPONS")
 	# v0.27.0: abilities became tunable (cooldowns, retuned stuns/damage), so they get a section. The heading
 	# states the sharing model out loud — an ActiveAbility .tres is shared by every class holding it, so
 	# editing "Kick" under rogue edits Kick everywhere, exactly as MONSTER TYPES edits every instance.
 	_classes_box = _make_section(body, "CLASSES (ability .tres — all wielders)")
+	_traits_box = _make_section(body, "TRAITS (passive .tres — all wearers)")
 	_types_box = _make_section(body, "MONSTER TYPES (shared .tres — all instances)")
 	_instances_box = _make_section(body, "LIVE INSTANCES (this one monster only)")
+	# LAST and CLOSED (v0.46.0): the settled stamina dials. See _PAIRED_DIALS for why they moved.
+	_legacy_box = _make_section(body, "LEGACY / STAMINA (players | monsters)", false)
 	_build_local_rows()
 	_build_game_rows()
 	# Weapons / types / instances build on the first snapshot (their sets are data-driven).
@@ -460,14 +549,15 @@ func _sync_expand_button() -> void:
 
 
 ## A folding section: header button toggles the content VBox. Returns the content box.
-func _make_section(parent: VBoxContainer, heading: String) -> VBoxContainer:
+func _make_section(parent: VBoxContainer, heading: String, start_open: bool = true) -> VBoxContainer:
 	var header := Button.new()
-	header.text = "▼ " + heading
+	header.text = ("▼ " if start_open else "▶ ") + heading
 	header.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	header.add_theme_font_size_override("font_size", 12)
 	parent.add_child(header)
 	var content_box := VBoxContainer.new()
 	content_box.add_theme_constant_override("separation", 2)
+	content_box.visible = start_open
 	parent.add_child(content_box)
 	header.pressed.connect(func():
 		content_box.visible = not content_box.visible
@@ -501,23 +591,29 @@ func _sync_local_widgets() -> void:
 
 
 func _build_game_rows() -> void:
-	# Column header for the paired grid.
-	var head := HBoxContainer.new()
-	head.add_child(_label("", 150))
-	head.add_child(_label("players", 100))
-	head.add_child(_label("monsters", 100))
-	_game_box.add_child(head)
-	for dial in _PAIRED_DIALS:
-		var row := HBoxContainer.new()
-		row.add_child(_label(str(dial["label"]), 150))
-		row.add_child(_make_editor(dial, str(dial["p"])))
-		row.add_child(_make_editor(dial, str(dial["m"])))
-		_game_box.add_child(row)
 	for dial in _SHARED_DIALS:
 		var row := HBoxContainer.new()
 		row.add_child(_label(str(dial["label"]), 150))
 		row.add_child(_make_editor(dial, str(dial["field"])))
 		_game_box.add_child(row)
+	# The LEGACY section, built in the same pass and into the same `_game_editors` registry — a snapshot
+	# repaints these whether the section is open or shut, so collapsing it costs nothing but the pixels.
+	var head := HBoxContainer.new()
+	head.add_child(_label("", 150))
+	head.add_child(_label("players", 100))
+	head.add_child(_label("monsters", 100))
+	_legacy_box.add_child(head)
+	for dial in _PAIRED_DIALS:
+		var row := HBoxContainer.new()
+		row.add_child(_label(str(dial["label"]), 150))
+		row.add_child(_make_editor(dial, str(dial["p"])))
+		row.add_child(_make_editor(dial, str(dial["m"])))
+		_legacy_box.add_child(row)
+	for dial in _LEGACY_SHARED_DIALS:
+		var row := HBoxContainer.new()
+		row.add_child(_label(str(dial["label"]), 150))
+		row.add_child(_make_editor(dial, str(dial["field"])))
+		_legacy_box.add_child(row)
 
 
 ## One editor widget for a config g-field: CheckBox for bools, SpinBox for numbers. Edits queue a
@@ -620,12 +716,32 @@ func _apply_snapshot(data: Dictionary) -> void:
 	if _stamina_button != null:
 		_stamina_button.text = "stamina: %s" % ("ON" if bool(game.get("stamina_enabled", true)) else "off")
 	if _winded_button != null:
-		_winded_button.text = "exhaustion: %s" % (
-				"HARD STOP" if bool(game.get("player_exhausted_blocks_movement", false)) else "crawl")
-	_paint_weapons(data.get("weapons", {}))
+		# THE BUTTON MUST NOT LIE WHEN THE TWO SIDES DIVERGE (v0.46.0). `/winded` is a CONVERGENT toggle —
+		# it reads the PLAYER field and sets BOTH sides to its negation — but the "hard-stop at 0" paired
+		# row below sets each side independently. Set players to crawl and monsters to hard-stop from that
+		# row, and this button read "exhaustion: crawl" while every monster in the room hard-stopped: a
+		# status readout stating half the truth with no hint there was another half.
+		#
+		# Naming the split is the honest repaint. Pressing it still converges them, which is exactly what
+		# you want when you see SPLIT and did not mean to.
+		var winded_p := bool(game.get("player_exhausted_blocks_movement", false))
+		var winded_m := bool(game.get("monster_exhausted_blocks_movement", winded_p))
+		if winded_p != winded_m:
+			_winded_button.text = "exhaustion: SPLIT (P %s / M %s)" % [
+					"stop" if winded_p else "crawl", "stop" if winded_m else "crawl"]
+		else:
+			_winded_button.text = "exhaustion: %s" % ("HARD STOP" if winded_p else "crawl")
 	# Rebuilding sections: skipped entirely while one of their children owns focus (see above).
+	# WEAPONS JOINED THEM in v0.46.0 (GLM diff review). It used to build once and repaint values in place
+	# with a per-editor focus check, so it needed no section guard; converting it to a selector+grid made it
+	# a rebuild like its siblings, and without this the 0.6s snapshot would free the SpinBox out from under
+	# someone typing in it.
+	if focused == null or not _weapons_box.is_ancestor_of(focused):
+		_paint_weapons(data.get("weapons", {}))
 	if focused == null or not _classes_box.is_ancestor_of(focused):
 		_paint_classes(data.get("classes", {}))
+	if focused == null or not _traits_box.is_ancestor_of(focused):
+		_paint_traits(data.get("passives", {}))
 	if focused == null or not _types_box.is_ancestor_of(focused):
 		_paint_types(data.get("monster_types", {}))
 	if focused == null or not _instances_box.is_ancestor_of(focused):
@@ -635,44 +751,126 @@ func _apply_snapshot(data: Dictionary) -> void:
 	_painting = false
 
 
+## Reconcile an OptionButton's items against a live name set, preserving the current selection by NAME
+## (v0.46.0, GLM diff review). Returns true if the selector has anything to show.
+##
+## POPULATING ONCE WAS THE OLD BUG WEARING NEW CLOTHES. `_paint_weapons` used to build its rows on the
+## first snapshot and never again, so a weapon added mid-session got no rows; converting it to a
+## selector+grid fixed the ROWS but left the DROPDOWN static, which is the same defect one level up. The
+## grid rebuilds every snapshot; the list of things you can pick has to as well.
+##
+## Rebuilds only when the set actually differs, because rebuilding unconditionally would fight the user's
+## selection every 0.6s. Selection is restored by name rather than index — an added or removed entry
+## shifts indices, and a selector that silently jumps to a different weapon while you tune is worse than
+## one that never updates.
+static func _sync_selector(selector: OptionButton, names: Array) -> bool:
+	var current := selector.get_item_text(selector.selected) if selector.selected >= 0 else ""
+	var same := selector.item_count == names.size()
+	if same:
+		for i in names.size():
+			if selector.get_item_text(i) != str(names[i]):
+				same = false
+				break
+	if not same:
+		selector.clear()
+		for n in names:
+			selector.add_item(str(n))
+		var restored := -1
+		for i in names.size():
+			if str(names[i]) == current:
+				restored = i
+				break
+		if selector.item_count > 0:
+			selector.select(restored if restored >= 0 else 0)
+	return selector.item_count > 0
+
+
+## WEAPONS as a SELECTOR + GRID (v0.46.0) — the "dropdowns for weapons" half of the reorganisation cut from
+## v0.37.0 for budget, and now the third instance of the pattern MONSTER TYPES and CLASSES already use.
+##
+## WHY: the flat form rendered every weapon at once, two rows each — four weapons was 12 rows and a fifth
+## would have been 15, growing the section forever for a surface you only ever read one row of. The
+## selector shows the one weapon you are tuning and nothing else, which is the same argument
+## `_paint_classes` records for not listing every ability of every class at once.
+##
+## The rebuild-on-selection shape also fixes the old build-once guard: `_paint_weapons` used to populate its
+## editors on the first snapshot only, so a weapon added to the catalog mid-session never got rows at all.
 func _paint_weapons(weapons: Dictionary) -> void:
-	if _weapon_editors.is_empty():
-		for weapon_name in weapons:
-			var head := _label(str(weapon_name), 150)
-			_weapons_box.add_child(head)
-			# TWO fields per row (v0.26.1). Damage became a min/max BAND, so the old single row would carry
-			# four (label, spin) pairs — MEASURED at 470 units minimum, which overflows the dock's collapsed 502
-			# and makes the root lose to min-size and bleed left (the bug _sync_geometry's comment records).
-			# A SpinBox's own minimum is ~68 units whatever custom_minimum_size says, so no label trim gets
-			# four pairs inside the budget; pairing them is what fits (2 × (62 + 68) + separations ≈ 271)
-			# AND keeps the labels spelled out. Vertical cost is one extra row per weapon.
-			for pair_start in range(0, _WEAPON_FIELDS.size(), 2):
-				var row := HBoxContainer.new()
-				for field in _WEAPON_FIELDS.slice(pair_start, pair_start + 2):
-					row.add_child(_label(_weapon_field_label(field), 62))
-					var spin := SpinBox.new()
-					spin.custom_minimum_size = Vector2(58, 0)
-					spin.min_value = 0.0
-					spin.max_value = 100.0
-					spin.step = 1.0 if field.begins_with("damage") else 0.5
-					var key := "w:%s:%s" % [weapon_name, field]
-					spin.value_changed.connect(func(value: float):
-						if not _painting:
-							_queue(key, "w", [str(weapon_name), field, str(value)]))
-					_weapon_editors[key] = spin
-					row.add_child(spin)
-				_weapons_box.add_child(row)
-	var focused := _root.get_viewport().gui_get_focus_owner()
-	for weapon_name in weapons:
-		for field in _WEAPON_FIELDS:
-			var editor: SpinBox = _weapon_editors.get("w:%s:%s" % [weapon_name, field], null)
-			if editor != null and not (focused != null and editor.get_line_edit() == focused):
-				editor.set_value_no_signal(float(weapons[weapon_name].get(field, 0)))
+	if _weapon_selector == null:
+		_weapon_selector = OptionButton.new()
+		_weapon_selector.item_selected.connect(func(_index: int): _rebuild_weapon_grid())
+		_weapons_box.add_child(_weapon_selector)
+		_weapon_grid = GridContainer.new()
+		_weapon_grid.columns = _GRID_COLUMNS
+		_weapons_box.add_child(_weapon_grid)
+	_sync_selector(_weapon_selector, weapons.keys())
+	_rebuild_weapon_grid()
+
+
+func _rebuild_weapon_grid() -> void:
+	if _weapon_grid == null or _weapon_selector == null or _weapon_selector.selected < 0:
+		return
+	for child in _weapon_grid.get_children():
+		child.queue_free()
+	var weapon_name := _weapon_selector.get_item_text(_weapon_selector.selected)
+	var fields: Dictionary = _snapshot.get("weapons", {}).get(weapon_name, {})
+	for field in _WEAPON_FIELDS:
+		if not fields.has(field) or fields[field] == null:
+			continue
+		_weapon_grid.add_child(_label(_weapon_field_label(field), _GRID_LABEL_W))
+		var spin := SpinBox.new()
+		spin.custom_minimum_size = Vector2(_GRID_SPIN_W, 0)
+		_apply_clamp(spin, field, GameManager.DEV_WEAPON_CLAMPS, GameManager.DEV_WEAPON_INT_FIELDS)
+		spin.set_value_no_signal(float(fields[field]))
+		var key := "w:%s:%s" % [weapon_name, field]
+		spin.value_changed.connect(func(value: float):
+			if not _painting:
+				_queue(key, "w", [str(weapon_name), field, str(value)]))
+		_weapon_grid.add_child(spin)
+## TRAITS section (v0.46.0) — selector + grid over the trait catalog, the same shape as WEAPONS and MONSTER
+## TYPES. A trait's fields live on its own subclass, so the snapshot sends only the ones each trait actually
+## declares and this renders exactly those: Sneak Attack shows a multiplier, Archery shows two deltas.
+func _paint_traits(passives: Dictionary) -> void:
+	if _trait_selector == null:
+		_trait_selector = OptionButton.new()
+		_trait_selector.item_selected.connect(func(_index: int): _rebuild_trait_grid())
+		_traits_box.add_child(_trait_selector)
+		_trait_grid = GridContainer.new()
+		_trait_grid.columns = _GRID_COLUMNS
+		_traits_box.add_child(_trait_grid)
+	_sync_selector(_trait_selector, passives.keys())
+	_rebuild_trait_grid()
+
+
+func _rebuild_trait_grid() -> void:
+	if _trait_grid == null or _trait_selector == null or _trait_selector.selected < 0:
+		return
+	for child in _trait_grid.get_children():
+		child.queue_free()
+	var trait_name := _trait_selector.get_item_text(_trait_selector.selected)
+	var fields: Dictionary = _snapshot.get("passives", {}).get(trait_name, {})
+	for field in fields:
+		if fields[field] == null:
+			continue
+		_trait_grid.add_child(_label(str(field), _GRID_LABEL_W))
+		var spin := SpinBox.new()
+		spin.custom_minimum_size = Vector2(_GRID_SPIN_W, 0)
+		_apply_clamp(spin, str(field), GameManager.DEV_PASSIVE_CLAMPS, GameManager.DEV_PASSIVE_INT_FIELDS)
+		spin.set_value_no_signal(float(fields[field]))
+		# The /pa token is the display_name SLUG, normalized the same way GameConfig.passive_by_name
+		# normalizes it — and submitting the slug keeps the arg a SINGLE token ("Sneak Attack" would
+		# arrive as two args and resolve to nothing).
+		var slug := str(trait_name).to_lower().replace(" ", "_")
+		var key := "pa:%s:%s" % [slug, field]
+		spin.value_changed.connect(func(value: float):
+			if not _painting:
+				_queue(key, "pa", [slug, str(field), str(value)]))
+		_trait_grid.add_child(spin)
 
 
 ## The short row label for a weapon field (v0.26.1). The band's two fields would read "damage_min"/
-## "damage_max" through the generic trim, which no longer fits the narrowed 4-field row — so they get
-## explicit abbreviations and everything else keeps the "_beats" trim it always had.
+## "damage_max" through the generic trim, so they get explicit abbreviations and everything else keeps the
+## "_beats" trim it always had.
 func _weapon_field_label(field: String) -> String:
 	match field:
 		"damage_min":
@@ -682,12 +880,8 @@ func _weapon_field_label(field: String) -> String:
 	return field.trim_suffix("_beats")
 
 
-## CLASSES section (v0.27.0) — a class OptionButton over a box of per-ability field grids, built ONCE (the
-## selector is populated from the first snapshot that carries classes) and repainted on every snapshot.
-## Deliberately the _paint_types selector+grid pattern rather than a flat list of every ability: five fields
-## × several abilities × six classes would be an unscrollable wall, and "which class am I tuning" is how a
-## playtester thinks about it. Edits queue a `/ab <slug> <field> <value>` intent under the key
-## "ab:<ability>:<field>", so scrubbing one spin collapses to one intent per flush like every other row.
+
+
 func _paint_classes(classes: Dictionary) -> void:
 	if _class_selector == null:
 		if classes.is_empty():
@@ -706,7 +900,7 @@ func _paint_classes(classes: Dictionary) -> void:
 
 
 ## Rebuild the selected class's ability editors from the last snapshot. One sub-label per ability, then a
-## 2-column (label 170 + spin 80) grid of its five fields — the same widths the MONSTER TYPES grid uses, so
+## 4-column (label + spin, twice per row) grid of its fields — the same widths the MONSTER TYPES grid uses, so
 ## the rows are known to fit the dock's collapsed 502 units (_DOCK_W).
 func _rebuild_class_grid() -> void:
 	if _class_abilities_box == null or _class_selector == null or _class_selector.selected < 0:
@@ -716,13 +910,13 @@ func _rebuild_class_grid() -> void:
 	var class_name_key := _class_selector.get_item_text(_class_selector.selected)
 	var abilities: Dictionary = _snapshot.get("classes", {}).get(class_name_key, {})
 	if abilities.is_empty():
-		_class_abilities_box.add_child(_label("(no active abilities)", 170))
+		_class_abilities_box.add_child(_label("(no active abilities)", _GRID_LABEL_W))
 		return
 	for ability_name in abilities:
 		_class_abilities_box.add_child(_label(str(ability_name), 250))
 		var fields: Dictionary = abilities[ability_name]
 		var grid := GridContainer.new()
-		grid.columns = 2
+		grid.columns = _GRID_COLUMNS
 		_class_abilities_box.add_child(grid)
 		# The /ab token is the display_name SLUG (lowercase, spaces→underscores) — GameConfig.ability_by_name
 		# normalizes both sides the same way, and submitting the slug keeps the arg a SINGLE token (a raw
@@ -731,21 +925,14 @@ func _rebuild_class_grid() -> void:
 		for field in _ABILITY_FIELDS:
 			if not fields.has(field) or fields[field] == null:
 				continue
-			grid.add_child(_label(str(field), 170))
+			grid.add_child(_label(str(field), _GRID_LABEL_W))
 			var spin := SpinBox.new()
-			spin.custom_minimum_size = Vector2(80, 0)
-			spin.min_value = 0.0
-			# Cooldowns reach 600 beats (the instants band); root_beats reaches its own 120 host clamp
-			# (v0.34.0 — a 30-beat shipped hold has real headroom above it); every other ability field is
-			# well under 100. Still hand-written rather than derived from DEV_ABILITY_CLAMPS — the panel's
-			# known spin-bounds gap, tracked in ROADMAP's parking lot.
-			if field == "cooldown_beats":
-				spin.max_value = 600.0
-			elif field == "root_beats":
-				spin.max_value = 120.0
-			else:
-				spin.max_value = 100.0
-			spin.step = 1.0 if field == "damage" else 0.5
+			spin.custom_minimum_size = Vector2(_GRID_SPIN_W, 0)
+			# v0.46.0: DERIVED from the host's own clamp table, closing ROADMAP's spin-bounds gap here as
+			# well as on the monster grids. The three hand-written ceilings this replaces (600 for
+			# cooldowns, 120 for roots, 100 for everything else) were correct when written and had already
+			# drifted: v0.43.0 added five fields none of them described.
+			_apply_clamp(spin, str(field), GameManager.DEV_ABILITY_CLAMPS, GameManager.DEV_ABILITY_INT_FIELDS)
 			spin.set_value_no_signal(float(fields[field]))
 			var key := "ab:%s:%s" % [slug, field]
 			spin.value_changed.connect(func(value: float):
@@ -764,7 +951,7 @@ func _paint_types(types: Dictionary) -> void:
 		_type_selector.item_selected.connect(func(_index: int): _rebuild_type_grid())
 		_types_box.add_child(_type_selector)
 		_type_grid = GridContainer.new()
-		_type_grid.columns = 2
+		_type_grid.columns = _GRID_COLUMNS
 		_types_box.add_child(_type_grid)
 	_rebuild_type_grid()
 
@@ -779,12 +966,10 @@ func _rebuild_type_grid() -> void:
 	for field in fields:
 		if fields[field] == null:
 			continue
-		_type_grid.add_child(_label(str(field), 170))
+		_type_grid.add_child(_label(str(field), _GRID_LABEL_W))
 		var spin := SpinBox.new()
-		spin.custom_minimum_size = Vector2(80, 0)
-		spin.min_value = 0.0
-		spin.max_value = 999.0
-		spin.step = 0.5
+		spin.custom_minimum_size = Vector2(_GRID_SPIN_W, 0)
+		_apply_clamp(spin, str(field), GameManager.DEV_MONSTER_CLAMPS, GameManager.DEV_MONSTER_INT_FIELDS)
 		spin.set_value_no_signal(float(fields[field]))
 		var key := "m:%s:%s" % [type_name, field]
 		spin.value_changed.connect(func(value: float):
@@ -796,6 +981,11 @@ func _rebuild_type_grid() -> void:
 func _paint_instances(instances: Dictionary) -> void:
 	for child in _instances_box.get_children():
 		child.queue_free()
+	# Drop remembered disclosure state for monsters that no longer exist, so the dict tracks the live set
+	# rather than every id the session has ever seen.
+	for remembered in _instance_open.keys():
+		if not instances.has(remembered):
+			_instance_open.erase(remembered)
 	var ids := instances.keys()
 	ids.sort()
 	for id_key in ids:
@@ -819,15 +1009,26 @@ func _paint_instances(instances: Dictionary) -> void:
 		header.add_child(edit)
 		_instances_box.add_child(header)
 		var detail := GridContainer.new()
-		detail.columns = 2
-		detail.visible = false
+		detail.columns = _GRID_COLUMNS
+		# DISCLOSURE STATE SURVIVES THE REBUILD (v0.46.0). _paint_instances frees and rebuilds everything on
+		# every snapshot, and the open/closed flag used to live only on the Control it rebuilt — so opening a
+		# monster's grid and then changing ANY dial (or another admin changing one) collapsed it about 0.6s
+		# later, mid-edit. The focus guard above does not cover it: a Button press leaves no LineEdit
+		# focused, and live monsters have live-changing hp, so snapshots are frequent.
+		#
+		# Keyed by instance id in a dict that OUTLIVES the widgets. A despawned monster's entry is pruned
+		# below rather than left to accumulate, so a long session does not grow a set of ids for corpses.
+		var open_key := str(id_key)
+		detail.visible = bool(_instance_open.get(open_key, false))
 		_instances_box.add_child(detail)
-		edit.pressed.connect(func(): detail.visible = not detail.visible)
+		edit.pressed.connect(func():
+			detail.visible = not detail.visible
+			_instance_open[open_key] = detail.visible)
 		# hp / stamina live pokes.
-		detail.add_child(_label("hp", 170))
+		detail.add_child(_label("hp", _GRID_LABEL_W))
 		detail.add_child(_instance_spin(str(id_key), "hp", float(info.get("hp", 0)),
 				0.0, float(info.get("max_hp", 1))))
-		detail.add_child(_label("stamina", 170))
+		detail.add_child(_label("stamina", _GRID_LABEL_W))
 		detail.add_child(_instance_spin(str(id_key), "stamina", float(info.get("stamina", 0)),
 				0.0, float(info.get("stamina_max", 1))))
 		# Per-instance stat fields (the /mi lazy-fork surface), seeded from THIS instance's values.
@@ -835,16 +1036,22 @@ func _paint_instances(instances: Dictionary) -> void:
 		for field in fields:
 			if fields[field] == null:
 				continue
-			detail.add_child(_label(str(field), 170))
+			detail.add_child(_label(str(field), _GRID_LABEL_W))
 			detail.add_child(_instance_spin(str(id_key), str(field), float(fields[field]), 0.0, 999.0))
 
 
+## `minimum`/`maximum` are the caller's HINT, used only for the two fields that have no entry in the
+## monster clamp table (a live instance's hp and stamina, which are per-instance state rather than authored
+## MonsterType fields). Everything else derives from the host table — see _apply_clamp.
 func _instance_spin(id_key: String, field: String, current: float, minimum: float, maximum: float) -> SpinBox:
 	var spin := SpinBox.new()
-	spin.custom_minimum_size = Vector2(80, 0)
-	spin.min_value = minimum
-	spin.max_value = maximum
-	spin.step = 0.5 if field.ends_with("_beats") else 1.0
+	spin.custom_minimum_size = Vector2(_GRID_SPIN_W, 0)
+	if GameManager.DEV_MONSTER_CLAMPS.has(field):
+		_apply_clamp(spin, field, GameManager.DEV_MONSTER_CLAMPS, GameManager.DEV_MONSTER_INT_FIELDS)
+	else:
+		spin.min_value = minimum
+		spin.max_value = maximum
+		spin.step = 0.5 if field.ends_with("_beats") else 1.0
 	spin.set_value_no_signal(current)
 	var key := "mi:%s:%s" % [id_key, field]
 	spin.value_changed.connect(func(value: float):
