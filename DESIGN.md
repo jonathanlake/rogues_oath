@@ -1003,6 +1003,22 @@ stale figure. The armour line states the real two-term rule (§2.3.8) rather tha
 flat term through the same `GameConfig.armor_flat_for` the referee applies — one source for the number, so
 the explanation and the adjudication cannot drift.
 
+**v0.50.0 — EQUIPMENT GRANTS TRAITS, AND WHAT BELONGS ON AN ITEM AT ALL.** `ItemType.granted_traits` names
+the traits a worn item confers; `Player.all_traits()` now reads **class → granted → worn gear**, deduped.
+The gear half is **DERIVED, never granted** — computed on every read rather than written into
+`granted_traits` — so unequipping needs no bookkeeping and no new wire traffic exists: gear is already
+replicated by the spawn seed, the `equip_item` event and the late-join `sync_player_field`, so every peer's
+union agrees by construction. The character panel lists gear-sourced traits in their own colour ("my class"
+vs "my kit" are different facts), and a bag item's tooltip advertises what it will grant before you wear it.
+First tenant: the **robe of farsight** (BODY, unarmoured) granting *Farsight*, a second reach source that
+stacks with the wizard's own Spellreach.
+**WHAT DOES NOT BECOME A TRAIT** is the load-bearing half of this, and it is the **three-layer rule** (Jon,
+2026-07-28 — spec in `docs/modifier-resolver.md`): a **field/keyword** is what a thing intrinsically *is*
+(an axe cleaves, `damage_type` burns, armour has weight); a **stat** is a number many sources push on
+(reach, move cost, one day fire resistance); a **trait** is a named behaviour you would describe in a
+sentence. Plain boots are numbers; magical boots hand you a trait. The rule exists so the trait list stays
+worth reading — if every `+1` were a trait, traits would stop meaning identity.
+
 **Complete when** items are a full designer-authored system: drop tables, multiple categories that
 all *do* something (including equipment that equips), the `.tres`-only gate (M5) met. *(Stage
 progress is tracked in ROADMAP, not here.)*

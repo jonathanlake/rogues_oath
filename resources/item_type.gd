@@ -174,6 +174,37 @@ enum EquipSlot { BODY, OFF_HAND, HEAD, HANDS, FEET, RING, AMULET }
 ## Shipped: leather armor 0.10, chainmail 0.25 (the numbers PlayerClass carried in v0.26.0 phase 1).
 @export_range(0.0, 1.0) var phys_damage_reduction: float = 0.0
 
+## TRAITS THIS ITEM CONFERS WHILE IT IS WORN (v0.50.0) — the robe of farsight's Farsight. Empty (the
+## default) for every mundane item, which is why the field's mere existence leaves every shipped `.tres`
+## untouched.
+##
+## THE THREE-LAYER RULE (Jon, 2026-07-28) — which layer a piece of magic belongs in, so this list does not
+## become the dumping ground for everything an item does:
+##   FIELDS/KEYWORDS for what the item intrinsically IS — cleave on an axe, a flaming sword's damage type,
+##     armour weight. Authored on the resource beside `phys_damage_reduction`; no trait.
+##   STATS for any number many sources push on — reach, move speed, a future fire resist. Named in
+##     `stats.gd`; traits, items and enemies all contribute.
+##   TRAITS for named, identity-level behaviours a player would describe in a sentence (Sneak Attack,
+##     Devour). Magical boots grant a TRAIT; the trait contributes to a STAT.
+## An item that just wants a number should get a field or push a stat — reach for this list only when the
+## thing it grants deserves a name in the character panel.
+##
+## DERIVED, NEVER GRANTED. `Player.all_traits()` reads this list off the two worn slots every time it is
+## called; nothing ever copies these into `Player.granted_traits`. So unequipping needs no bookkeeping,
+## a robe's trait cannot outlive the robe, and there is NO new wire traffic — gear is already replicated
+## on every peer (spawn seed, `equip_item` event, late-join `sync_player_field`), so each peer derives the
+## same union independently. Deduped by identity with the class and granted lists, so a robe granting what
+## your class already gives is held ONCE.
+##
+## READ ON BOTH SIDES, unlike the gameplay fields above: the host runs these traits' hooks, and the client
+## resolves their presentation-safe stat contributions for the targeting ring and the panel. The resources
+## are shared config every peer loads; only the item NAME ever crosses the wire.
+##
+## CATALOGUE WHAT YOU GRANT: `GameConfig.validate_item_traits_catalogued()` warns at startup for any trait
+## here that `passive_catalog` cannot resolve — an uncatalogued one works when worn but can never be
+## tuned with `/pa`, granted, or named on the wire.
+@export var granted_traits: Array[PassiveAbility] = []
+
 ## BEATS the USE action OCCUPIES on the user's one timeline (DESIGN's "N-beat commit" for item use, §2.1 /
 ## §2.8) — the whole committed window during which the user is BUSY and cannot act, exactly like an attack's
 ## recovery_beats or a step's glide. The referee stamps it to SECONDS at the user's resolved pace (beats ×

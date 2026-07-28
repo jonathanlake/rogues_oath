@@ -1,7 +1,55 @@
 # The modifier resolver — design and migration
 
-Status: **designed, not started.** Written at the end of the v0.43–v0.49 arc (2026-07-28) so the next
-session begins with the reasoning rather than re-deriving it. ROADMAP carries the one-line pointer.
+Status: **step 1 SHIPPED (v0.50.0).** `Stats.resolve` exists, `ABILITY_RANGE` is migrated onto it, and
+equipment is a trait source. The rest of the migration below is unstarted and still governs. Written at
+the end of the v0.43–v0.49 arc (2026-07-28) so the next session begins with the reasoning rather than
+re-deriving it. ROADMAP carries the one-line pointer.
+
+---
+
+## The three-layer rule (Jon, 2026-07-28) — read this before adding anything
+
+The question that produced it: *"if a boot does something magical, should it show up as a trait for as
+long as it is equipped?"* Yes — but only if it clears the bar. Everything new sorts into exactly one of
+three layers, and the rule exists to keep the trait list **worth reading**: if every `+1` becomes a
+trait, the character panel becomes a wall nobody looks at, and traits stop being identity.
+
+| layer | what it holds | where it lives | examples |
+|---|---|---|---|
+| **FIELD / KEYWORD** | what a thing intrinsically *is* | an `@export` on the resource | cleave on an axe, `WeaponType.damage_type` on a flaming sword, `armor_weight` |
+| **STAT** | a number *many* sources push on | a named stat in `Stats`, resolved | spell reach, move beats, fire resistance |
+| **TRAIT** | a named behaviour a player would describe in a sentence | a `PassiveAbility` resource | Sneak Attack, Devour, Fleet of Foot, Farsight |
+
+The test for the third layer: **would a player describe it in a sentence rather than a number?** If yes,
+it is a trait. "All axes cleave" is a keyword — it is what an axe *is*, and every axe having it means it
+identifies the weapon, not the build. A boot that is merely +1 speed contributes to a stat. A boot that
+*ignores rough terrain* is a trait, because that is a sentence.
+
+Corollary for the layers' interaction: **fields are not resolver-invisible forever.** A field enters the
+resolver through `ctx` the moment a stat needs it (a hypothetical cleave-radius stat would receive the
+weapon in its ctx, exactly as `ABILITY_RANGE` receives the ability). The layers describe where a value is
+*authored*, not what may read it.
+
+### Equipment is a source, and it is DERIVED (v0.50.0)
+
+`ItemType.granted_traits` names the traits a worn item confers. `Player.all_traits()` returns
+**class → granted → worn gear**, deduped by reference identity, and the gear half is *computed on every
+read* rather than written into `granted_traits`.
+
+Derived, never granted, for two reasons that are both load-bearing: unequipping needs **zero
+bookkeeping** (a flat granted-array would have to remove the right copy when a boot and a potion give the
+same trait), and there is **no new wire traffic** — gear is already replicated everywhere (spawn seed,
+`equip_item` event, late-join `sync_player_field`), so every peer's derived union agrees by construction
+rather than by a synced value. This is the same argument that put `all_traits()` on `Player` in v0.49.0.
+
+### Resistances: designed for, deliberately unbuilt
+
+Jon wants fire resistance to be "its own thing that any of the above can manipulate, even an enemy could
+debuff it". That is already the STAT layer's shape, and it needs no code until elemental damage exists —
+which it does not (`kind` is *provenance*, not element; `WeaponType.damage_type` is labels-only and says
+so in its own header, though it already rides the wire). **The seam is the future-proofing.** When
+elemental damage ships, a `fire_resist` stat joins the registry and traits/items/enemy debuffs contribute
+to it the same way everything else does. Do not build it early.
 
 ---
 
@@ -107,11 +155,20 @@ out wrong in play.
 
 So it does not land in one go. The sequencing, smallest-provable-step first:
 
-1. **Build the resolver alongside the hooks.** Nothing existing moves. New work may use it.
-2. **Migrate ABILITY RANGE first.** It is the right first move because it *deletes* code rather than
-   adding any: Spellreach's four hand-threaded sites and its bespoke `Player.spell_range_bonus()` collapse
-   into one contribution. If the shape is wrong, this is where it shows, cheaply.
+1. ~~**Build the resolver alongside the hooks.**~~ **DONE v0.50.0** — `resources/stats.gd`
+   (`Stats.resolve(stat, base, sources, ctx)`) plus the `PassiveAbility.modify_stat(stat, ctx)`
+   contribution virtual. The existing hooks are untouched.
+2. ~~**Migrate ABILITY RANGE first.**~~ **DONE v0.50.0**, and it did delete more than it added:
+   `PassiveAbility.spell_range_bonus`, `Player.spell_range_bonus` and
+   `CombatReferee._spell_range_bonus_of` are gone, and the four hand-threaded sites now call one shared
+   `Player.targeted_reach(ability)` — which is also **the single rounding site**, so the host gate and the
+   client ring cannot round apart, a hazard the four-site version had no defence against.
 3. **Then one stat at a time, when something needs it.** Retire each modifier hook as its stat migrates.
+   **Next up: `WINDUP_BEATS` / `RECOVERY_BEATS`** — `_windup_duration_of` and `_recovery_duration_of` are
+   already the single funnels for every windup/recovery in the file, and the migration should absorb
+   `MonsterType.bonus_windup_beats` / `bonus_recovery_beats` in the same move (they are additive flats
+   sitting inside that very funnel). `MOVE_BEATS` is the one that forces **named-term suppression** to be
+   built, since Fleet of Foot must cancel the terrain term and leave the exhausted crawl alone.
    `modify_damage` goes LAST — it is the behaviour change (see the stacking ruling) and the most
    load-bearing.
 
@@ -129,8 +186,36 @@ with-and-without pair, and a granted second reach source would prove the stackin
 
 ---
 
+## OPEN — do traits stack, or upgrade? (Jon, undecided 2026-07-28)
+
+Left open deliberately; **do not resolve it by accident** in a version that happens to touch traits.
+Jon's words: *"part of me wants unique traits, but I also think if you want to stack archery skills, like
+having the archery trait, and boots that make you faster with a bow, there should be a way to do that."*
+Also on the table: **upgrades** — an "Archery II", possibly chosen as a **branching** decision on level-up
+(Devour upgrading either to restore more mana for less reach, *or* to reach the whole floor).
+
+**The thing that makes this less urgent than it sounds:** Jon's own example — Archery *plus* bow-speed
+boots — needs **no machinery at all**. Those are two DIFFERENT trait resources contributing to the same
+stat, and the additive ruling already sums them. Reference-identity dedupe only bites for the *same
+resource twice*, which is a duplicate, not a build. So the currently-shipped behaviour already serves the
+motivating case, and the genuinely undecided part is narrower than it first looks:
+
+- the **same** trait from two sources — does the second do nothing (today's answer), or add?
+- explicit **ranks** — should Archery II *replace* Archery I rather than stack with it?
+
+Whenever it is answered, the likely shape is a `family` + `rank` (+ per-trait `stacks` opt-out) on
+`PassiveAbility`: same family never coexists, higher rank wins, and branching upgrades are then just two
+`.tres` files in one family — no further data model. **Branching does not need deciding now**; nothing in
+today's shape forecloses it. One UX debt to pay when it lands: a trait that is silently suppressed
+(dedupe today, lower-rank tomorrow) must **say so in the tooltip**, or a player wearing a redundant item
+gets nothing and is never told why.
+
 ## Open, for whenever it is reached
 
+- **Equipment granting ACTIVE ABILITIES** (the kite shield's Shield Block) is NOT closed by v0.50.0 and
+  stays parked in ROADMAP. Traits could go derived because the trait union is an unordered set; an
+  ability is addressed by **slot index** on the wire, so a derived ability list changes what pressing "2"
+  casts. That, plus the unanswered unequip-mid-cooldown question, is why the harder half waited.
 - **Do monsters get sources?** `_passives_of` already returns `[]` for them by duck-typing, and
   `MonsterType` carries its own `bonus_*` fields that are a parallel modifier system in all but name. The
   resolver could absorb them; nothing forces it to.

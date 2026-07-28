@@ -830,6 +830,29 @@ func validate_class_traits_catalogued() -> void:
 				push_warning("[GameConfig] trait '%s' is on class '%s' but NOT in passive_catalog — it cannot be named on the wire, granted, removed or tuned. Add it to passive_catalog." % [p.display_name, c.display_name])
 
 
+## ITEM-trait coverage guard (v0.50.0) — the fourth sibling, and the exact shape of
+## validate_class_traits_catalogued above, aimed at the new second source of traits: an item's
+## `granted_traits`, worn into the union while the item is equipped.
+##
+## SAME TRAP, NEW DOOR. A trait absent from `passive_catalog` still WORKS when worn — the referee reads
+## the union, never the catalog — so the failure is silent and arrives later, at the tuning surface: `/pa`
+## and the debug panel resolve a trait through the catalog, and `/trait` grants and the `trait_granted`
+## event carry a display_name resolved through it. So an uncatalogued robe trait reads as "the panel is
+## broken" rather than "the authoring is", which is precisely what the class-trait guard was written to
+## stop happening once already.
+##
+## Walks item_catalog rather than the worn slots, deliberately: this is an AUTHORING check that must fire
+## at session start whether or not anyone ever picks the item up. Warn-only and pure — mutates nothing —
+## like every sibling.
+func validate_item_traits_catalogued() -> void:
+	for it in item_catalog:
+		if it == null:
+			continue
+		for p in it.granted_traits:
+			if p != null and passive_by_name(p.display_name) == null:
+				push_warning("[GameConfig] trait '%s' is granted by item '%s' but NOT in passive_catalog — it works when worn, but cannot be tuned with /pa, granted, removed or named on the wire. Add it to passive_catalog." % [p.display_name, it.display_name])
+
+
 ## Duplicate-name guard (v0.18.0), the sibling of validate_catalog_covers_rosters called beside it host-side
 ## at session start. Both catalogs resolve by FIRST-HIT display_name (weapon_by_name / item_by_name walk the
 ## array and return the first match), so a SECOND entry sharing a display_name silently SHADOWS the first —

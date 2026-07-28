@@ -235,6 +235,9 @@ func activate(players: Node2D, monsters: Node2D, move_referee: Node, pace: Node,
 	# v0.27.1. It mattered more once abilities became grantable — an uncatalogued one can be wielded but
 	# never granted or named on the wire.
 	GameManager.config.validate_class_abilities_catalogued()
+	# v0.50.0: and the same for the traits ITEMS grant while worn — the second source of traits, and the
+	# same silent trap (it works when worn, but is unreachable to /pa, /trait and the wire).
+	GameManager.config.validate_item_traits_catalogued()
 	# Sibling guard (v0.18.0): warn on duplicate display_names within weapon_catalog / item_catalog — a
 	# first-hit-resolution dupe silently shadows the later entry. Same host-only, once-at-startup contract.
 	GameManager.config.validate_catalogs()
@@ -717,15 +720,6 @@ func clear_condition(entity_id: int, name: String) -> void:
 ## `Object.has_method` cannot answer that — every trait "has" every hook, because the base declares them
 ## all — so this reads the script's own method list. Cached per script: the answer is fixed for the
 ## session, and a death in a busy fight must not re-scan one for every trait on every player.
-## Extra TARGETED reach this caster's traits grant (v0.49.0, Spellreach). Delegates to the player's own
-## query — the SAME function the client's targeting ring calls — so the gate and the ring cannot disagree
-## about a caster's reach. A monster has no such method and gets 0.
-func _spell_range_bonus_of(node) -> int:
-	if node == null or not node.has_method("spell_range_bonus"):
-		return 0
-	return int(node.spell_range_bonus())
-
-
 func _implements(trait_res, method: String) -> bool:
 	if trait_res == null:
 		return false
@@ -1802,10 +1796,18 @@ func _use_targeted(user_id: int, ability: ActiveAbility, data: Dictionary) -> Di
 		return { "ok": false, "reason": "Can't target your own tile." }
 	# RANGE: Chebyshev to the clicked tile ≤ the ability's authored reach, read server-side from the shared
 	# resource (never a client value). The shoot pipe's gate, same metric, same sentence.
-	# SPELLREACH (v0.49.0): the authored reach PLUS whatever this caster's traits grant. Computed ONCE into
-	# a local and reused by the resolve bind below — that is what makes "accepted at N, then judged escaped
-	# against N-1" structurally impossible rather than something two edits have to remember.
-	var reach_tiles: int = ability.range_tiles + _spell_range_bonus_of(_node_of_id(user_id))
+	# RESOLVED REACH (v0.50.0, was Spellreach's hand-threaded bonus): the authored reach with every source's
+	# contribution applied, through the caster's OWN `targeted_reach` — the SAME function the client's
+	# targeting ring calls, so the gate and the ring cannot disagree about a caster's reach OR round it
+	# apart. Duck-typed exactly like `_passives_of`: a MONSTER has no trait list and no such method, so it
+	# falls back to the ability's authored range (monster smite/heal casts do not take this path anyway —
+	# pre-existing, unchanged). Computed ONCE into a local and reused by the resolve bind below — that is
+	# what makes "accepted at N, then judged escaped against N-1" structurally impossible rather than
+	# something two edits have to remember.
+	var caster_for_reach = _node_of_id(user_id)
+	var reach_tiles: int = (caster_for_reach.targeted_reach(ability)
+			if caster_for_reach != null and caster_for_reach.has_method("targeted_reach")
+			else ability.range_tiles)
 	var cheb := maxi(absi(target_tile.x - my_tile.x), absi(target_tile.y - my_tile.y))
 	if cheb > reach_tiles:
 		return { "ok": false, "reason": "Out of range." }

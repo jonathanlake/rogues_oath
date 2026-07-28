@@ -93,9 +93,10 @@ var granted_traits: Array[PassiveAbility] = []
 var granted_abilities: Array[ActiveAbility] = []
 
 
-## THE ONE TRAIT UNION (v0.49.0) — this player's class traits followed by any granted to them
-## specifically, deduped. Every trait read in the project goes through it: the host's hook dispatch
-## (`CombatReferee._passives_of` delegates here), and the client's query reads for the targeting ring.
+## THE ONE TRAIT UNION (v0.49.0) — this player's class traits, then any granted to them specifically, then
+## any their WORN GEAR carries (v0.50.0), deduped. Every trait read in the project goes through it: the
+## host's hook dispatch (`CombatReferee._passives_of` delegates here), the resolver's source list
+## (`resolve_stat`), and the HUD's reads.
 ##
 ## IT LIVES ON THE PLAYER, not on the referee, and that move is the whole reason Spellreach can work.
 ## The referee is host-only and inert on clients, so a client that needed the union — and it does, or the
@@ -109,9 +110,23 @@ var granted_abilities: Array[ActiveAbility] = []
 ## silently. Three paths can introduce a duplicate — the `/trait` command, the `trait_granted` event, and
 ## the late-join sync — so the guard belongs at the single read rather than at each writer.
 ##
-## CLASS FIRST, THEN GRANTED. `modify_damage` chains in array order with each trait receiving the
-## previous one's output, so with two multipliers the result depends on it. The class's own identity
-## prices the blow; anything you were given modifies that.
+## CLASS FIRST, THEN GRANTED, THEN GEAR. `modify_damage` chains in array order with each trait receiving
+## the previous one's output, so with two multipliers the result depends on it. The class's own identity
+## prices the blow; anything you were given modifies that; anything you put on modifies that. (Stat
+## contributions through `Stats.resolve` are order-independent by construction — sums commute — so this
+## ordering only ever matters to the chained hooks.)
+##
+## GEAR TRAITS ARE DERIVED, NEVER GRANTED (v0.50.0, the three-layer rule: fields for what an item IS,
+## traits for the named behaviours it confers). A worn item's `granted_traits` are read THROUGH this
+## union every time it is called; they are never written into the `granted_traits` FIELD above. That is
+## the whole reason unequipping needs no bookkeeping — there is no copy to remember to undo, and no way
+## for a robe's trait to outlive the robe.
+##
+## AND IT NEEDS NO WIRE TRAFFIC. Gear is already replicated everywhere (the class-driven spawn seed, the
+## `equip_item` event, and the late-join `sync_player_field "body_armor"/"off_hand"`), and the traits
+## themselves are resources every peer loads, so every peer's derived union agrees BY CONSTRUCTION rather
+## than by a synced list. The client's targeting ring therefore sees a robe's reach the instant the host's
+## gate does.
 ##
 ## The class list is COPIED, never appended to — it is a shared resource, so appending would permanently
 ## give the class whatever this one player was granted, on every peer.
@@ -126,25 +141,80 @@ func all_traits() -> Array:
 	for t in granted_traits:
 		if t != null and not (t in out):
 			out.append(t)
+	# WORN GEAR (v0.50.0), deduped by IDENTITY exactly like the granted list — so a wizard wearing a robe
+	# whose trait their class already gives holds it ONCE (running a hook twice squares its multiplier, the
+	# v0.45.0 bug this guard was written for), while two DISTINCT resources that merely share a script —
+	# Spellreach and Farsight — are correctly both kept and stack additively.
+	for t in gear_traits():
+		if not (t in out):
+			out.append(t)
 	return out
 
 
-## Extra reach in tiles this player's traits grant to TARGETED casts (v0.49.0, Spellreach).
+## EVERY TRAIT THIS PLAYER'S WORN GEAR CONFERS, in slot order, null-safe (v0.50.0). Not deduped — the
+## caller merges it, because `all_traits()` dedupes against the class and granted lists while the HUD
+## dedupes for display and colours by provenance.
 ##
-## A QUERY, evaluated on EVERY PEER — see PassiveAbility's header for the hook-vs-query split. The host
-## adds it to its range gate and the client adds it to the targeting ring, and the two agree because both
-## read the same replicated data (the class resource, plus `granted_traits` which every peer maintains
-## from the same events) through the same union above. Not a synced value: a value would need keeping in
-## step, and this cannot drift because there is nothing to keep.
+## IT EXISTS SO THE SLOT LIST IS WRITTEN ONCE (GLM diff review). `all_traits()` above and
+## `hud._refresh_passives` both need "what are they wearing, and what does it give" — and the HUD cannot
+## just call `all_traits()`, because a merged union has thrown away the provenance the panel colours by.
+## Two hand-copied slot lists would have to be kept in step by memory, and the failure mode is the quiet
+## kind: a trait that adjudicates correctly but never appears in the panel, or the reverse.
 ##
-## SUMS across traits rather than taking a max, so two reach traits would stack — the arithmetic a player
-## would expect from two things that each say "+1 range".
-func spell_range_bonus() -> int:
-	var bonus := 0
-	for t in all_traits():
-		if t != null:
-			bonus += t.spell_range_bonus()
-	return bonus
+## WHICH SLOTS: every equipped-slot FIELD that exists on this class — `equipped_body` and
+## `equipped_off_hand`. `ItemType.EquipSlot` names seven, but the other five have no state here and no
+## referee reads them (§2.10 — they are still cosmetic HUD sockets). When one becomes real, it is added
+## HERE, once, and both callers follow automatically.
+func gear_traits() -> Array:
+	var out: Array = []
+	for item in [equipped_body, equipped_off_hand]:
+		if item == null:
+			continue
+		for t in item.granted_traits:
+			if t != null:
+				out.append(t)
+	return out
+
+
+## Resolve a NAMED STAT for this player (v0.50.0) — the thin wrapper that hands the resolver this
+## player's sources. See `resources/stats.gd` for the algorithm, the stat registry and each stat's ctx.
+##
+## IT LIVES ON THE PLAYER for the same reason `all_traits()` does, and that placement is load-bearing: a
+## referee is host-only and inert on a client, but a CLIENT must resolve presentation stats itself (the
+## targeting ring) from replicated data. So the resolve lives where both sides can reach it, and the host
+## delegates by duck-typing exactly as `CombatReferee._passives_of` already does. One implementation, so
+## the ring and the gate cannot disagree.
+##
+## Sources are `all_traits()` today — class, granted and worn-gear traits. When items and potions become
+## sources in their own right (the resolver's whole point is that they can) they join the array HERE, and
+## no adjudication site changes.
+func resolve_stat(stat: StringName, base: float, ctx: Dictionary) -> float:
+	return Stats.resolve(stat, base, all_traits(), ctx)
+
+
+## THE ONE TARGETED-CAST REACH (v0.50.0) — this ability's authored `range_tiles` plus every source's
+## contribution, in TILES. Replaces v0.49.0's four hand-threaded `spell_range_bonus()` sites.
+##
+## THE ROUNDING LIVES HERE AND NOWHERE ELSE, which is the entire safety argument for this function. The
+## resolver returns a float (a future `+50% reach` source makes fractions real); tiles are integers; and
+## the host's range gate, the client's targeting ring and the ability tooltip all need the SAME integer.
+## Two sites rounding independently — one flooring, one rounding — is a ring that draws a tile the host
+## refuses, which is precisely the failure this migration exists to make structurally impossible.
+##
+## IT FLOORS, deliberately (GLM diff review). A fraction of a tile is not a tile, and the gate is
+## `cheb > reach` — equality passes — so rounding 7.5 UP would hand out a whole extra tile of reach for
+## half a tile of bonus. Flooring fails closed, which is this codebase's instinct everywhere else, and it
+## makes a `+50%` reach source read honestly: it must buy a WHOLE tile before it grants one. No effect
+## today (every contribution is an integer flat); the choice is pinned now so the first percentage source
+## does not silently decide it.
+##
+## SCOPED TO TARGETED CASTS BY ITS CALLERS. `WeaponType.range_tiles` shares only a name with
+## `ActiveAbility.range_tiles` and is the codebase's is-this-ranged predicate in a dozen places, so a BOW
+## must never be passed through here.
+func targeted_reach(ability: ActiveAbility) -> int:
+	if ability == null:
+		return 0
+	return floori(resolve_stat(Stats.ABILITY_RANGE, float(ability.range_tiles), { "ability": ability }))
 
 
 ## THE ONE ORDERED HOTBAR READ (v0.47.0) — class abilities first, then granted ones, capped at the authored

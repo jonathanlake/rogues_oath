@@ -235,20 +235,27 @@ rough per-milestone effort signal (session-or-few each).
 
 Not scheduled — pulled in when their moment comes:
 
-- **THE MODIFIER RESOLVER — DESIGNED, AND STEP 1 IS QUEUED AS THE NEXT SESSION'S WORK** *(named
-  2026-07-28, after v0.49.0 added three hooks for four traits)*. Jon's stated ambition is that traits,
-  potions, equipment and active abilities all reach the same breadth of state — "traits buffing active
-  abilities" included. The current shape cannot get there: six of the eight `PassiveAbility` members are
-  the same *adjust-a-number-given-a-context* function under six names, hooks exist on traits ONLY (so the
-  cost of adding potions is sources × hooks), and ability numbers are read raw at ~20 adjudication sites,
-  which is why Spellreach had to be hand-threaded through four of them. **The full design, Jon's two
-  rulings, the migration order and the open questions are in `docs/modifier-resolver.md` — read it before
-  touching this.** Jon ruled 2026-07-28: **stacking is additive applied once** (not the current accidental
-  multiplicative chain — so migrating `modify_damage` is a BEHAVIOUR change and goes last), and **a source
-  may suppress a named term** (which is what Fleet of Foot needs). **Step 1 is small and self-contained:**
-  build `resolve(stat, base, ctx)` alongside the existing hooks and migrate `ActiveAbility.range_tiles`
-  onto it — that one deletes Spellreach's four-site threading rather than adding anything, so it proves or
-  disproves the shape cheaply. Do NOT migrate more than one stat per version.
+- **THE MODIFIER RESOLVER — STEP 1 SHIPPED v0.50.0; THE REST STILL PARKED** *(named
+  2026-07-28, after v0.49.0 added three hooks for four traits)*. **Done:** `Stats.resolve` +
+  `PassiveAbility.modify_stat` exist, `ABILITY_RANGE` is migrated onto them (deleting all three
+  `spell_range_bonus` members and collapsing four hand-threaded sites into one shared
+  `Player.targeted_reach`, which is also the single rounding site), and **equipment is a trait source**
+  (`ItemType.granted_traits`, derived through `all_traits()`). Jon's **three-layer rule** (field vs stat
+  vs trait) and the **open stacking/upgrade question** are both recorded in the doc. **Next stat:
+  WINDUP/RECOVERY** — `_windup_duration_of` / `_recovery_duration_of` are already single funnels and the
+  move should absorb `MonsterType.bonus_windup_beats` / `bonus_recovery_beats`; `MOVE_BEATS` is the one
+  that forces named-term suppression to be built. Still one stat per version; `modify_damage` last.
+  The reasoning still governs, so it stays stated: Jon's ambition is that traits, potions, equipment and
+  active abilities all reach the same breadth of state — "traits buffing active abilities" included. The
+  pre-resolver shape could not get there, because five numeric `PassiveAbility` hooks are the same
+  *adjust-a-number-given-a-context* function under five names, hooks exist on traits ONLY (so the cost of
+  adding potions was sources × hooks), and ability numbers are still read raw at ~20 adjudication sites —
+  which is why Spellreach had to be hand-threaded through four of them before v0.50.0. **The full design,
+  Jon's rulings, the migration order and the open questions are in `docs/modifier-resolver.md` — read it
+  before touching this.** Jon ruled 2026-07-28: **stacking is additive applied once** (not the old
+  accidental multiplicative chain — so migrating `modify_damage` is a BEHAVIOUR change and goes last), and
+  **a source may suppress a named term** (which is what Fleet of Foot needs). Do NOT migrate more than one
+  stat per version.
 
 - **EQUIPMENT GRANTS ABILITIES** *(named 2026-07-27, Jon: "we may genuinely have the shield grant this
   ability down the line")*. v0.39.0 put a real **kite shield** in the knight's off-hand with the tooltip

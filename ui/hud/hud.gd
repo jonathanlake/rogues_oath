@@ -1106,16 +1106,33 @@ func _make_slot_icon() -> Dictionary:
 func _refresh_passives(player: Player) -> void:
 	for child in _own_passives_box.get_children():
 		child.queue_free()
-	# CLASS FIRST, THEN GRANTED — the same order CombatReferee._passives_of runs them in, so the panel
-	# lists traits in the sequence they actually chain. A list that disagreed with the referee about order
-	# would mislead precisely when two multipliers meet, which is the only time order is visible.
+	# CLASS FIRST, THEN GRANTED, THEN GEAR — the same order Player.all_traits() (and so
+	# CombatReferee._passives_of) builds the union in, so the panel lists traits in the sequence they
+	# actually chain. A list that disagreed with the referee about order would mislead precisely when two
+	# multipliers meet, which is the only time order is visible.
 	var class_list: Array = player.player_class.passives if player.player_class != null else []
+	# WORN GEAR IS THE THIRD SOURCE (v0.50.0), read through `Player.gear_traits()` — the SAME function
+	# `all_traits()` uses, so the panel and the referee can never disagree about which slots are worn or in
+	# what order (GLM diff review: two hand-copied slot lists would drift the day a slot becomes real, and
+	# would drift silently). Provenance order therefore matches the union's dedupe order exactly:
+	# class → granted → gear. A trait a player holds from two of the three shows ONCE, under the earliest —
+	# the same "you have it once" fact the referee adjudicates.
+	var gear_list: Array = player.gear_traits()
+	# The panel enumerates its sources SEPARATELY rather than calling all_traits(), which is why provenance
+	# is native to its shape at all — the union deliberately forgets where a trait came from.
+	var shown: Array = []
 	var any := false
-	for entry in [{ "list": class_list, "granted": false },
-			{ "list": player.granted_traits, "granted": true }]:
+	for entry in [{ "list": class_list, "source": "class" },
+			{ "list": player.granted_traits, "source": "granted" },
+			{ "list": gear_list, "source": "gear" }]:
 		for passive in entry["list"]:
 			if passive == null or passive.display_name.is_empty():
 				continue
+			# IDENTITY dedupe, the union's own guard: a robe granting the trait your class already gives is
+			# one trait, and listing it twice would imply it applies twice.
+			if passive in shown:
+				continue
+			shown.append(passive)
 			if not any:
 				any = true
 				var header := _make_label(7)
@@ -1127,10 +1144,23 @@ func _refresh_passives(player: Player) -> void:
 			# "what my class gives me" and "what I was given" are different facts about a character and the
 			# panel is the only place either is stated. Deliberately not a separate section — they chain
 			# together in one order, so listing them apart would imply an independence they do not have.
-			var granted: bool = bool(entry["granted"])
-			label.text = ("+ %s" if granted else "• %s") % passive.display_name
-			label.add_theme_color_override("font_color",
-					Color(0.95, 0.86, 0.6, 0.95) if granted else Color(0.75, 0.8, 0.95, 0.9))
+			# GEAR TRAITS GET THE THIRD MARK (v0.50.0) and it is the one a player most needs: a trait that
+			# vanishes when you take the robe off is a different promise from one that is yours, and
+			# nothing else on screen says which is which.
+			var source: String = str(entry["source"])
+			match source:
+				"granted":
+					label.text = "+ %s" % passive.display_name
+					label.add_theme_color_override("font_color", Color(0.95, 0.86, 0.6, 0.95))
+				"gear":
+					# "»" rather than a geometric-shapes glyph: the project ships no font file, so this
+					# renders in Godot's built-in face, and a codepoint it lacks would draw as tofu. This
+					# one is Latin-1 and safe, like the "•" and "+" beside it.
+					label.text = "» %s" % passive.display_name
+					label.add_theme_color_override("font_color", Color(0.68, 0.9, 0.82, 0.95))
+				_:
+					label.text = "• %s" % passive.display_name
+					label.add_theme_color_override("font_color", Color(0.75, 0.8, 0.95, 0.9))
 			# HOVERABLE (v0.43.0): _make_label hardcodes IGNORE per the HUD discipline, which is right for
 			# every other label in this panel but is exactly what stopped traits from ever having a tooltip.
 			# PASS (not STOP) so the label answers a hover without eating a click. The IGNORE on the parent
@@ -1368,6 +1398,17 @@ func _item_tooltip(item: ItemType) -> String:
 		var flat := GameManager.config.armor_flat_for(item.armor_weight)
 		derived = "Reduces physical damage by %d%% or %d, whichever is greater." % [
 				int(round(item.phys_damage_reduction * 100.0)), flat]
+	# GRANTED TRAITS (v0.50.0) — so an item in the BAG advertises what wearing it would give you, before
+	# you wear it. Composed from the live resources like every other derived line: the trait's own name
+	# plus its own `tooltip_terms()`, which is the same delegation `_passive_tooltip` uses and the reason
+	# the HUD needs no `if item is …` arm per magical item. NUMBERS DERIVED, PROSE AUTHORED holds: the
+	# figures come from the trait's fields, so a `/pa` retune moves this text with it.
+	for t in item.granted_traits:
+		if t == null or t.display_name.is_empty():
+			continue
+		var terms := ", ".join(t.tooltip_terms())
+		var line := "Grants %s%s." % [t.display_name, (" (%s)" % terms) if not terms.is_empty() else ""]
+		derived = line if derived.is_empty() else "%s\n%s" % [derived, line]
 	return _compose_tooltip(item.display_name, derived, item.description)
 
 
@@ -1425,14 +1466,15 @@ func _ability_tooltip(ability: ActiveAbility) -> String:
 	# because the destination is random within the reach, so the number is a bound and not a promise.
 	if ability.blink_travel_tiles > 0:
 		parts.append("blinks up to %d tiles" % ability.blink_travel_tiles)
-	# SPELLREACH (v0.49.0): quote the reach this player ACTUALLY has, not the ability's authored number —
-	# a tooltip that says 6 while the ring draws 7 is the same lie in a different place. Own player only,
-	# which is all this tooltip has ever described.
+	# RESOLVED REACH (v0.49.0; through the resolver since v0.50.0): quote the reach this player ACTUALLY
+	# has, not the ability's authored number — a tooltip that says 6 while the ring draws 7 is the same lie
+	# in a different place. The SAME `targeted_reach` the ring and the host's gate use, so all three agree
+	# by construction. Own player only, which is all this tooltip has ever described.
 	var reach: int = ability.range_tiles
 	if ability.kind == ActiveAbility.Kind.TARGETED and _players != null:
 		var me := _players.get_node_or_null(str(_own_id)) as Player
 		if me != null:
-			reach += me.spell_range_bonus()
+			reach = me.targeted_reach(ability)
 	if reach > 1:
 		parts.append("range %d tiles" % reach)
 	if ability.windup_beats + ability.recovery_beats > 0.0:

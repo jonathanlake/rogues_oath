@@ -9,6 +9,36 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.50.0 (2026-07-28) - EQUIPMENT CAN GIVE YOU A TRAIT, AND ONE FUNCTION NOW ANSWERS "how far".**
+  Two halves of the same answer to a question Jon asked out loud: if this game is about builds that come
+  from items, traits and abilities all tangling together, where does a magical boot's magic actually live?
+  **THE ANSWER IS A RULE, WRITTEN DOWN.** Three layers, and everything new gets sorted into one of them.
+  What a thing *is* stays a plain number on the thing - an axe cleaves, a flaming sword burns, armour has
+  a weight. Numbers that *many* things push on - reach, speed, one day fire resistance - are named stats
+  that anything can contribute to. And a NAMED behaviour you would describe in a sentence is a **trait**.
+  So a plain boot is numbers, and a magical boot hands you a trait for as long as you wear it. The point
+  of the rule is the trait list staying worth reading: if every +1 became a trait, nobody would look at it.
+  **EQUIPMENT NOW GRANTS TRAITS, and taking it off takes them back.** Wear the new **robe of farsight** and
+  you have *Farsight*; drop it and you don't. Nothing is bookkept and nothing new goes over the wire - your
+  gear was already known to everyone, so the trait list is simply *read off* what you are wearing. Your
+  character panel shows them in their own colour, so you can tell "this is my class" from "this is my kit",
+  and an item in your bag advertises what it will give you before you put it on.
+  **AND THE FIRST NUMBER MOVED ONTO THE NEW MACHINERY.** Spell reach used to be added by hand in four
+  separate places, and keeping those four in step was the sort of thing that works until it doesn't. Now
+  one function answers it for the host's rule check, your targeting circle, and the tooltip alike - so
+  they cannot drift apart or even round differently. It came out *smaller* than what it replaced, which is
+  the whole reason this stat went first.
+  **ON PURPOSE, NOT YET:** resistances are designed for but unbuilt (nothing in the game deals fire yet -
+  the seam is what was future-proofed, not the feature), and whether traits should *stack* or *upgrade*
+  (an "Archery II", or a branching choice on level-up) is Jon's open question, deliberately left open. Worth
+  knowing while thinking about it: two DIFFERENT traits pushing the same number already add up, today, with
+  no extra machinery - the undecided part is only what happens with the same trait twice.
+  **Verified two-instance:** a wizard is accepted casting at seven tiles and refused at eight; put the robe
+  on, standing on the same tile, and eight is accepted - the class's reach and the robe's reach adding up.
+  Retuning the class trait live moves the limit immediately. A joining client that picks up and wears the
+  robe shows *Farsight* in its own panel, in the gear colour, next to its class trait - proving the
+  non-authoritative peer works it out for itself from what it already knows.
+
 - **v0.49.0 (2026-07-28) - FOUR TRAITS, AND THE FOUR SEAMS THEY NEEDED.** Every one of these needed
   somewhere to plug in that did not exist. The trait system had five hooks and they were all the
   attacker's or the wielder's own - nothing had ever asked a DEFENDER's traits anything, nothing ran

@@ -14,17 +14,25 @@ extends Resource
 ##   - `modify_damage_taken` — the DEFENDER's. The first hook to ask the target's list anything.
 ##   - `on_nearby_death` — every living player near a death, killer or not.
 ##
-## HOOKS ARE HOST-ONLY. QUERIES ARE NOT. That distinction is new in v0.49.0 and is the one thing to keep
-## straight:
+## HOOKS ARE HOST-ONLY. STAT CONTRIBUTIONS ARE NOT. v0.49.0 drew that line as a hook-vs-QUERY split;
+## v0.50.0's resolver (`resources/stats.gd`) replaced the one query with `modify_stat` and the line
+## survives unchanged:
 ##   - A HOOK mutates adjudication (a damage number, a duration, a pool) and runs only inside a referee,
 ##     all of which are inert on clients. It receives a ctx built from authoritative state and never reads
 ##     a client value.
-##   - A QUERY (today: `spell_range_bonus`) answers "what does this kit say" and is a pure function of
-##     replicated data — the class resource every peer loads, plus `granted_traits`, which every peer
-##     maintains from the same events. Any peer may evaluate one, and the client MUST: a targeting ring
-##     drawn from an unadjusted range would promise a reach the host then refuses.
-## A query must therefore stay pure — no referee reads, no host-only state — or it will answer differently
-## on a client and the UI will lie about the rules.
+##   - `modify_stat` answers "what does this kit contribute to this named number", and for a
+##     PRESENTATION-SAFE stat that answer is a pure function of replicated data — the class resource every
+##     peer loads, plus `granted_traits` and worn gear, which every peer maintains from the same events.
+##     Any peer may evaluate it, and the client MUST: a targeting ring drawn from an unadjusted range
+##     would promise a reach the host then refuses.
+## A contribution to such a stat must therefore stay pure — no referee reads, no host-only state — or it
+## will answer differently on a client and the UI will lie about the rules.
+##
+## THE RESOLVER IS WHERE NEW NUMBERS GO (v0.50.0). Do NOT add a seventh `modify_<number>` hook: name the
+## stat in `stats.gd`, resolve it at the adjudication site, and let every source contribute through the
+## one `modify_stat` below. The remaining numeric hooks are migrating there one stat per version
+## (`docs/modifier-resolver.md` carries the order); `modify_damage` goes last because it is a behaviour
+## change. The three REACTION hooks — before_attack, after_attack, on_nearby_death — stay as they are.
 ##
 ## CHAINING: when a class owns several passives, modify_damage runs them in ARRAY ORDER, each receiving
 ## the previous one's output amount (CombatReferee updates ctx.amount between calls). Deterministic.
@@ -185,17 +193,29 @@ func on_nearby_death(_ctx: Dictionary) -> void:
 	pass
 
 
-## QUERY (not a hook): extra reach in TILES this trait grants to TARGETED casts (v0.49.0, the wizard's
-## Spellreach). 0 = none, which is every other trait.
+## THE RESOLVER SEAM (v0.50.0) — this trait's contribution to a NAMED STAT, and the replacement for the
+## per-number hooks above (it retired `spell_range_bonus`, v0.49.0's one query, in the same version it
+## arrived). `stat` is one of the constants in `stats.gd`, which also documents that stat's ctx keys.
 ##
-## A QUERY, so BOTH SIDES evaluate it — see the header. The host adds it to the range gate; the client
-## adds it to the targeting ring. If only the host knew, the ring would draw a circle the host refuses at
-## its edge; if only the client knew, it would refuse to arm on tiles the host would accept. Because it is
-## a pure read of the class resource plus `granted_traits` (both replicated), the two agree by
-## construction rather than by a synced value.
+## CONTRACT for overrides. Return a Dictionary with either or both of:
+##   "flat" — added to the stat's base (float; tiles, beats, whatever the stat's unit is).
+##   "pct"  — a FRACTION added to the multiplier: 0.25 means +25%, not 25.
+## Return EMPTY (`{}`) for any stat this trait has nothing to say about — which is every stat but one, for
+## every trait. `{}` and `{"flat": 0.0}` are equivalent; the empty dict is the cheaper, clearer no-op and
+## is what this base returns for everything. `Stats.resolve` sums all flats and all pcts across sources
+## and applies them ONCE: `(base + Σflat) × (1 + Σpct)` — additive stacking, Jon's ruling.
 ##
-## Scoped to TARGETED casts by its CALLERS, not by this function — `WeaponType.range_tiles` shares only a
-## name with `ActiveAbility.range_tiles` and is the codebase's is-this-ranged predicate in a dozen places,
-## so a bow must never see this.
-func spell_range_bonus() -> int:
-	return 0
+## MUST STAY PURE for any PRESENTATION-SAFE stat (see the header). Client and host BOTH evaluate such a
+## stat — the ring and the gate — so reading referee state, a random number, or anything host-only here
+## makes the two answer differently and the UI lies about the rules. Read only this resource's own
+## authored fields and the ctx you were handed.
+##
+## GATE ON `stat` FIRST, always: `if stat == Stats.ABILITY_RANGE: return {...}` then `return {}`. A trait
+## that forgets the gate contributes its number to every stat in the game, which is exactly the class of
+## bug the named registry exists to prevent.
+##
+## SUPPRESSION is a documented FUTURE key, not an omission: a source may eventually declare it suppresses
+## a named term of a stat (Fleet of Foot vs the terrain term). It lands with the MOVE_BEATS migration, in
+## `Stats.resolve` and in this contract together — see stats.gd.
+func modify_stat(_stat: StringName, _ctx: Dictionary) -> Dictionary:
+	return {}

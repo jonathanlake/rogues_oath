@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="ItemType" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://resources/item_type.gd" id="1_item"]
+[ext_resource type="Resource" path="res://resources/passives/farsight.tres" id="2_farsight"]
+
+[resource]
+script = ExtResource("1_item")
+display_name = "robe of farsight"
+description = "Woven for someone who preferred to keep their distance."
+category = 1
+atlas_coords = Vector2i(2, 12)
+usable = false
+equip_slot = 0
+heal_amount = 0
+armor_weight = 0
+phys_damage_reduction = 0.0
+granted_traits = Array[Resource]([ExtResource("2_farsight")])
