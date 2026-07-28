@@ -170,12 +170,15 @@ Placeholder-to-possibly-final: use it for all prototyping.
 ## Status
 
 - Two-instance verification: the gate recipe, knob gotchas, and assertion patterns live in the
-  `harness-verify` project skill (`.claude/skills/harness-verify/`) — use it for every
-  "prove it works" gate. `debug/debug.gd`'s arg parser is the knob source of truth; the annotated
-  knob tables live in `docs/dev-commands.md`.
+  `harness-verify` project skill (`.claude/skills/harness-verify/`). `debug/debug.gd`'s arg parser is the
+  knob source of truth; the annotated knob tables live in `docs/dev-commands.md`.
+  **SCOPE (Jon, 2026-07-27):** the FULL gate is for milestone Done= criteria and the change classes named
+  under Effort Sizing. Routine playtest-fix batches get **one round of targeted traces** — a boot check
+  plus assertions on the thing that changed — and Jon plays the build himself. Don't run the full matrix
+  by reflex; it is the expensive option, not the default one.
 - The backtick **debug tuning panel** (the primary tuning surface) and the in-game dev slash commands
-  — `/w` `/m` `/ab` `/mi` `/config` `/class` `/item` `/god` `/stun` `/ai` `/stamina` `/winded` `/snapshot`
-  `/help`, plus the `cmd=`/`eventlog=` harness knobs — are all documented in
+  — `/w` `/m` `/ab` `/mi` `/config` `/class` `/item` `/god` `/stun` `/root` `/ai` `/stamina` `/winded`
+  `/snapshot` `/help`, plus the `cmd=`/`eventlog=` harness knobs — are all documented in
   **`docs/dev-commands.md`** (`/help` prints the live list). Read it when touching live-tuning, the
   panel, or the command framework.
 - Unattended build-verify sessions follow **`docs/overnight-runbook.md`** — read it before

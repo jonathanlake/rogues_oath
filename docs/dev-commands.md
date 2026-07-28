@@ -1,4 +1,4 @@
-# Dev slash commands, the debug panel + the harness knobs (current to v0.40.0)
+# Dev slash commands, the debug panel + the harness knobs (current to v0.41.0)
 
 Live tuning + dev toggles typed into the in-game chat box. A leading `/` marks a dev command: the
 game log intercepts it (never sends it as chat), parses it client-side into `{cmd, args}`, and submits
