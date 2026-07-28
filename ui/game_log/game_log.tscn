@@ -20,6 +20,19 @@ grow_vertical = 0
 [node name="VBox" type="VBoxContainer" parent="Panel" unique_id=1743404643]
 layout_mode = 2
 
+[node name="Header" type="HBoxContainer" parent="Panel/VBox" unique_id=1743404644]
+layout_mode = 2
+
+[node name="Spacer" type="Control" parent="Panel/VBox/Header" unique_id=1743404645]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Expand" type="Button" parent="Panel/VBox/Header" unique_id=1743404646]
+layout_mode = 2
+focus_mode = 0
+theme_override_font_sizes/font_size = 8
+text = "+"
+
 [node name="Log" type="RichTextLabel" parent="Panel/VBox" unique_id=1191652504]
 layout_mode = 2
 size_flags_vertical = 3

@@ -127,6 +127,25 @@ var _painting: bool = false
 var _snapshot: Dictionary = {}
 
 var _root: PanelContainer = null
+# EXPAND (v0.37.0, Jon: "some of us are getting older and our eyesight isn't what it used to be") — the
+# multiplier applied on top of the counter-scale in _sync_width. 1.0 = the authored size, 2.0 = double.
+#
+# WHAT IT ACTUALLY DOES, stated precisely because the obvious phrasing is wrong: at 2.0 every glyph and
+# widget doubles and the dock doubles in WIDTH, but its on-screen HEIGHT is unchanged — it already spans
+# the window top to bottom, and there is nowhere taller to grow. So you see the same column twice as
+# large, showing about half as many rows, and you scroll for the rest. That IS the legibility ask (Jon's
+# "4x the size and double the font" reads as one wish: make it bigger; only the width has room to obey).
+#
+# ONE NUMBER, applied as a SCALE on the dock root rather than as a font/size restyle, because scaling the
+# whole node means the layout never reflows — every row, label and spin box grows in lockstep, and a
+# font-size sweep would instead have to re-derive every explicit per-control override in this file and
+# would still change wrapping.
+#
+# SESSION-ONLY by Jon's call (2026-07-27): persisting it needs a prefs store the project does not have
+# (no ConfigFile, no user:// write anywhere), which was a third of the remaining budget for this batch.
+# Parked in the plan, not forgotten.
+var _zoom: float = 1.0
+var _expand_button: Button = null
 # LOCAL section (v0.31.0) — the one non-intent widget set; see the carve-out in the header block.
 var _local_box: VBoxContainer = null
 var _mute_bonk_check: CheckBox = null
@@ -194,11 +213,12 @@ func _input(event: InputEvent) -> void:
 func _build() -> void:
 	_root = PanelContainer.new()
 	# Right-side dock: anchored to the viewport's right edge, full height, fixed SCREEN width.
+	# HORIZONTAL extent + the top edge only. The VERTICAL extent (anchor_bottom / offset_bottom) is owned
+	# entirely by _sync_width since v0.37.0, because the rect's height now depends on the zoom — setting a
+	# constant here too would be dead on arrival and would read as the authority when it isn't.
 	_root.anchor_left = 1.0
 	_root.anchor_right = 1.0
-	_root.anchor_bottom = 1.0
 	_root.offset_top = 8.0
-	_root.offset_bottom = -8.0
 	_root.offset_right = -8.0
 	_root.mouse_filter = Control.MOUSE_FILTER_STOP
 	# Opaque backing — the default PanelContainer stylebox lets the world bleed through, which
@@ -230,10 +250,26 @@ func _build() -> void:
 	var outer := VBoxContainer.new()
 	outer.add_theme_constant_override("separation", 4)
 	_root.add_child(outer)
+	# Title ROW rather than a bare label (v0.37.0), so the expand toggle can sit at the far right. The
+	# spacer between them is what pins the button to the edge — the label keeps its natural width.
+	var title_row := HBoxContainer.new()
+	outer.add_child(title_row)
 	var title := Label.new()
 	title.text = "DEBUG TUNING  (` to close)"
 	title.add_theme_font_size_override("font_size", 14)
-	outer.add_child(title)
+	title_row.add_child(title)
+	var title_spacer := Control.new()
+	title_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_row.add_child(title_spacer)
+	_expand_button = Button.new()
+	_expand_button.add_theme_font_size_override("font_size", 12)
+	# Never take keyboard focus (v0.37.0): a focused Control inside the panel is read as "an edit is in
+	# progress" by _apply_snapshot's guard, and this button is not an editor. Costs nothing — it is a mouse
+	# toggle — and keeps the guard's meaning exact.
+	_expand_button.focus_mode = Control.FOCUS_NONE
+	_expand_button.pressed.connect(_toggle_expand)
+	title_row.add_child(_expand_button)
+	_sync_expand_button()
 	var toggles := HBoxContainer.new()
 	toggles.add_theme_constant_override("separation", 6)
 	outer.add_child(toggles)
@@ -284,17 +320,61 @@ func _build() -> void:
 ## after the stylebox's 8-unit left content margin. v0.31.0 grew both (430/422 → 510/502) to pay for
 ## the +2 font bump — a wider font makes every row's MINIMUM wider, and min-size beating the rect is
 ## exactly what produces the bleed. Widen here rather than trimming a row.
+##
+## ZOOM (v0.37.0) rides the SAME scale, as a plain multiplier: `_zoom / scale_factor`. That is the whole
+## expand feature — one multiply on a number this function already computes — and it is why the DPI work
+## makes this cheap rather than expensive.
+##
+## THE HEIGHT MUST BE DIVIDED BY THE ZOOM IN THE SAME BREATH. The pivot is (502, 0) — the rect's TOP —
+## so scaling 2x grows the dock DOWNWARD, and a rect that already spans the window would end up half its
+## height off the bottom of the screen. So the rect is authored at `visible_height / _zoom` and the scale
+## multiplies it back to full: the net on-screen height is the window, at any zoom.
+##
+## That is why offset_bottom is now anchored to the TOP (anchor_bottom 0) and computed, where it used to
+## be a constant -8 against anchor_bottom 1. AT _zoom == 1 THE TWO ARE ARITHMETICALLY IDENTICAL — old:
+## top 8, bottom (canvas_height - 8), height canvas_height - 16; new: top 8, bottom 8 + (canvas_height -
+## 16), same height, same place. So the unexpanded dock is provably unchanged by this refactor.
 func _sync_width() -> void:
 	if _root == null:
 		return
 	# The EFFECTIVE canvas→screen multiplier is window px over visible canvas units — under the
 	# project's canvas_items stretch this is the stretch ratio × content_scale_factor combined
 	# (reading content_scale_factor alone misses the stretch half; screenshot bug #4).
-	var canvas_width: float = maxf(get_viewport().get_visible_rect().size.x, 1.0)
+	var canvas: Vector2 = get_viewport().get_visible_rect().size
+	var canvas_width: float = maxf(canvas.x, 1.0)
 	var scale_factor: float = maxf(float(get_window().size.x) / canvas_width, 0.01)
 	_root.offset_left = -510.0
-	_root.scale = Vector2(1.0 / scale_factor, 1.0 / scale_factor)
+	_root.scale = Vector2(_zoom / scale_factor, _zoom / scale_factor)
 	_root.pivot_offset = Vector2(502.0, 0.0)
+	# Height in CANVAS units the scaled dock should end up occupying: the visible height minus the 8-unit
+	# margin top and bottom, exactly as the old constant offsets expressed it.
+	#
+	# THE SHRUNK RECT CANNOT CLIP THE CONTENT, and the reason is the ScrollContainer. Scaling the node does
+	# NOT shrink its children's minimum sizes (those stay in canvas units), so halving the rect at zoom 2
+	# would be the classic min-size-beats-the-rect trap — except the body lives in a ScrollContainer whose
+	# vertical scroll is enabled, and an enabled scroll axis contributes NO minimum on that axis. So the
+	# fixed chrome (title row, toggles, status label ≈ 60 units) is the entire vertical minimum, against
+	# ~172 units at zoom 2 on the 360-unit base canvas. Overflow scrolls, which is already how the dock
+	# behaves unexpanded on a short window. Disabling vertical scrolling here would reintroduce the trap.
+	var visible_height: float = maxf(canvas.y - 16.0, 1.0)
+	_root.anchor_bottom = 0.0
+	_root.offset_bottom = _root.offset_top + visible_height / _zoom
+
+
+## Flip the dock between authored size and 2x (v0.37.0). Everything lives in _sync_width — this just moves
+## the number and asks for a re-layout, so the expand path and the resize path can never diverge.
+func _toggle_expand() -> void:
+	_zoom = 2.0 if _zoom == 1.0 else 1.0
+	_sync_expand_button()
+	_sync_width()
+
+
+## The toggle's label states what a PRESS WILL DO, not the current state — "expand 2x" while small,
+## "shrink 1x" while big. A button that names its own state reads as a status readout you can't act on.
+func _sync_expand_button() -> void:
+	if _expand_button == null:
+		return
+	_expand_button.text = "shrink 1x" if _zoom > 1.0 else "expand 2x"
 
 
 ## A folding section: header button toggles the content VBox. Returns the content box.

@@ -1,4 +1,4 @@
-# Dev slash commands, the debug panel + the harness knobs (current to v0.35.0)
+# Dev slash commands, the debug panel + the harness knobs (current to v0.37.0)
 
 Live tuning + dev toggles typed into the in-game chat box. A leading `/` marks a dev command: the
 game log intercepts it (never sends it as chat), parses it client-side into `{cmd, args}`, and submits
@@ -111,6 +111,19 @@ fallback). **SIX sections, in build order:** **LOCAL (this machine)**, GAME/STAM
 players column vs monsters column), WEAPONS, **CLASSES** (ability `.tres` = `/ab`), MONSTER TYPES
 (shared `.tres` tuning = `/m`), LIVE INSTANCES (per-monster hp/stamina/stun/kill and per-instance stat
 forks = `/mi`).
+
+**EXPAND (v0.37.0, top-right of the title row)** — toggles the whole dock between authored size and
+**2×**: every glyph, row and spin box doubles, and the dock doubles in WIDTH. Its on-screen HEIGHT does
+not change — it already spans the window top to bottom, so there is nowhere taller to grow; you get the
+same column at twice the size showing about half as many rows, and you scroll for the rest. Implemented
+as a scale on the dock root inside `_sync_width` (one multiply on the counter-scale that function already
+computes), so the layout never reflows and the DPI/stretch handling is shared with the unexpanded path.
+**Session-only** — like everything else in LOCAL below, it resets to normal size on each launch.
+
+The CHAT/COMBAT LOG has its own expand button (its top-right, v0.37.0) on different multipliers: the box
+doubles but the text grows only 1.5×, so expanding shows MORE LINES rather than the same lines larger.
+Both multipliers are `@export`s on `game_log.gd` (`expanded_size_scale` / `expanded_font_scale`) if the
+ratio wants tuning.
 
 **LOCAL (this machine)** — v0.31.0, and the panel's ONE exception to "every widget submits a host
 intent": these are per-machine presentation preferences, not host state, so they flip a `GameManager`

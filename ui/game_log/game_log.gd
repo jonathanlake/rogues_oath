@@ -14,9 +14,29 @@ extends CanvasLayer
 ## chat + combat volume across a run that grows unbounded, so we drop the oldest past this.
 @export var max_lines: int = 200
 
+## EXPAND (v0.37.0, Jon's legibility ask). TWO multipliers, deliberately different: the BOX grows by
+## `expanded_size_scale` and the TEXT by the smaller `expanded_font_scale`, so expanding shows MORE LINES
+## rather than the same lines drawn larger. One shared multiplier would just magnify the same three rows.
+##
+## Exported so the feel is dialable in the inspector without a code edit (the designer-editable ground
+## rule); the ratio between them is the thing worth tuning, not either number alone.
+@export var expanded_size_scale: float = 2.0
+@export var expanded_font_scale: float = 1.5
+
 @onready var _panel: PanelContainer = $Panel
 @onready var _log: RichTextLabel = $Panel/VBox/Log
 @onready var _input: LineEdit = $Panel/VBox/Input
+@onready var _expand_button: Button = $Panel/VBox/Header/Expand
+
+# Expand state + the AUTHORED baseline it scales from, captured once in _ready. Captured rather than
+# hardcoded so the .tscn stays the single source of truth for the unexpanded size/fonts — retune the
+# scene and both states follow. SESSION-ONLY by Jon's call (no prefs store exists; parked in the plan).
+var _expanded: bool = false
+var _base_width: float = 0.0
+var _base_height: float = 0.0
+var _base_log_font: int = 0
+var _base_input_font: int = 0
+var _base_button_font: int = 0
 
 # The Players container, HANDED IN by main.gd via set_players() (v0.28.0, the HUD's blessed injection
 # pattern — see ui/hud/hud.gd: a UI component is GIVEN its containers, it NEVER climbs with get_parent()).
@@ -50,6 +70,59 @@ func _ready() -> void:
 	# an unreachable click and a dropped walk both get a line, so neither is ever a silent no-op.
 	GameEvents.unreachable_tile_clicked.connect(func(_tile: Vector2i): add_line("Can't reach that."))
 	GameEvents.target_walk_stopped.connect(func(): add_line("Stopped walking."))
+	# EXPAND (v0.37.0): capture the authored baseline BEFORE anything can scale it, then wire the toggle.
+	# The Panel is anchored to the BOTTOM-LEFT (anchor_top/bottom 1, grow_vertical 0), so its size is
+	# expressed as offset_right (width from the left edge) and offset_top (NEGATIVE height up from the
+	# bottom) — growing the box means pushing those two out, and the corner stays pinned for free.
+	_base_width = _panel.offset_right - _panel.offset_left
+	# bottom minus top, with both negative (offsets from the bottom edge): -8 − (−80) = 72.
+	_base_height = _panel.offset_bottom - _panel.offset_top
+	# maxi(…, 1) on every captured font: get_theme_font_size returns 0 when a node has neither an override
+	# nor a resolved theme entry, and add_theme_font_size_override(…, 0) does NOT mean "0px" — 0 is the
+	# DISABLE sentinel, so the control would silently fall back to the project theme's game-sized type.
+	# The .tscn authors all three today (6 / 6 / 8), so this floor is defence against a future scene edit
+	# quietly turning the toggle into a no-op rather than a live bug.
+	_base_log_font = maxi(_log.get_theme_font_size("normal_font_size"), 1)
+	_base_input_font = maxi(_input.get_theme_font_size("font_size"), 1)
+	_base_button_font = maxi(_expand_button.get_theme_font_size("font_size"), 1)
+	_expand_button.pressed.connect(_toggle_expand)
+	_apply_expand()
+
+
+## Flip the chat window between authored size and expanded (v0.37.0).
+##
+## THE BUTTON MUST NEVER TAKE FOCUS (focus_mode 0 in the .tscn). This file's header block states the rule
+## the whole movement gate rests on: a focused LineEdit/TextEdit IS "the player is typing", and MoveInput
+## refuses movement while one exists. A focusable Button here would not trip that gate itself, but it
+## would leave GUI focus parked inside this panel after a click, which is exactly the wedge the
+## world-click release exists to undo. Not taking focus at all keeps the invariant trivially true.
+func _toggle_expand() -> void:
+	_expanded = not _expanded
+	_apply_expand()
+
+
+## Apply the current expand state to the box and the three font overrides. Written as an idempotent
+## APPLY (rather than a toggle that mutates in place) so it can be called from _ready for the initial
+## paint and from the toggle, with no drift between the two paths and no compounding on repeated calls —
+## every value is derived from the captured baseline, never from the current one.
+func _apply_expand() -> void:
+	var size_scale := expanded_size_scale if _expanded else 1.0
+	var font_scale := expanded_font_scale if _expanded else 1.0
+	# Grow right and UP from the pinned bottom-left corner (see the anchor note in _ready).
+	_panel.offset_right = _panel.offset_left + _base_width * size_scale
+	_panel.offset_top = _panel.offset_bottom - _base_height * size_scale
+	_panel.custom_minimum_size = Vector2(_base_width * size_scale, _base_height * size_scale)
+	# RichTextLabel carries TWO sizes (bbcode bolds the speaker's name in a chat line) — both must move or
+	# an expanded log would draw its names at the old size.
+	_log.add_theme_font_size_override("normal_font_size", int(round(_base_log_font * font_scale)))
+	_log.add_theme_font_size_override("bold_font_size", int(round(_base_log_font * font_scale)))
+	_input.add_theme_font_size_override("font_size", int(round(_base_input_font * font_scale)))
+	# The button rides the FONT scale, not the size scale: it is text, and at 2x it would crowd the header
+	# row it shares with nothing else.
+	_expand_button.add_theme_font_size_override("font_size", int(round(_base_button_font * font_scale)))
+	# States what a PRESS WILL DO, not what the current state is — a button that names its own state reads
+	# as a status readout you cannot act on.
+	_expand_button.text = "-" if _expanded else "+"
 
 
 # Focus flow lives here, not on the LineEdit, so the log owns "am I typing?" end-to-end.

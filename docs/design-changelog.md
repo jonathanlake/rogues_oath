@@ -9,6 +9,32 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.37.0 (2026-07-27) — BIGGER, FOR TIRED EYES.** A legibility batch, deliberately small: Jon asked
+  for the debug panel and the chat window to be enlargeable ("some of us are getting older and our
+  eyesight isn't what it used to be"), and after seeing the cost he **cut the debug-panel
+  reorganization** — dropdowns for weapons and spells, a LEGACY section for the settled stamina dials —
+  back to the parking lot. He expected it to be "moving some things around in the menu"; it is a couple
+  of hours, because those sections are built in code and fed by a host snapshot payload rather than
+  authored in the editor. Not lost, just not now.
+  **THE DEBUG PANEL HAS AN EXPAND BUTTON** (top-right). Everything doubles — every number, label and spin
+  box — and the dock doubles in width. Its HEIGHT doesn't change, because it already runs the full height
+  of the window and there is nowhere taller to go: you get the same column at twice the size, showing
+  about half as many rows, and you scroll for the rest.
+  **THE CHAT WINDOW HAS ONE TOO**, on deliberately different numbers: the box doubles but the text only
+  grows by half, so expanding shows **more lines** rather than the same three lines drawn larger. Both
+  multipliers are editable in the inspector if the ratio feels wrong.
+  **Both reset to normal on each launch.** Making them stick needs a settings file the project has never
+  had (nothing here writes to disk today) — Jon's call to skip it for now rather than spend a third of
+  the batch on it.
+  **The scaling was the cheap part, not the expensive part.** All the past monitor/DPI fighting is
+  already concentrated in one function that works out the true canvas-to-screen multiplier and
+  counter-scales the dock; the zoom is one more multiply inside it. Nothing in the HUD's scaling system —
+  the genuinely delicate part — was touched.
+  **Verified:** boot check plus a GLM red-team pass, which caught that the code's own comment promised
+  "4× the area, both axes" when the height can't grow. The behavior was right; the comment was wrong, and
+  is now precise. It also caught the expand button being drawn at 6px — a legibility feature whose button
+  you can't read — and a font-capture edge where Godot treats 0 as "disabled" rather than "zero".
+
 - **v0.36.0 (2026-07-27) — THE ARCHER CLOSES THE GAP, AND THE SHAMAN STOPS SWINGING A CLUB AT YOU.**
   First of three batches from Jon's v0.35.0 playtest (gameplay first; the debug-panel overhaul and
   creature-targeted spells follow).
