@@ -224,6 +224,10 @@ func activate(players: Node2D, monsters: Node2D, move_referee: Node, pace: Node,
 	# but never granted, removed, named on the wire or tuned. Runs here for the identical reason: activate
 	# is host-only and fires after the config is loaded and authoritative.
 	GameManager.config.validate_class_traits_catalogued()
+	# v0.47.0: and the same for ABILITIES, closing the split-index finding ROADMAP has carried since
+	# v0.27.1. It mattered more once abilities became grantable — an uncatalogued one can be wielded but
+	# never granted or named on the wire.
+	GameManager.config.validate_class_abilities_catalogued()
 	# Sibling guard (v0.18.0): warn on duplicate display_names within weapon_catalog / item_catalog — a
 	# first-hit-resolution dupe silently shadows the later entry. Same host-only, once-at-startup contract.
 	GameManager.config.validate_catalogs()
@@ -2104,14 +2108,18 @@ func _stamp_cooldown(entity_id: int, ability: ActiveAbility) -> float:
 
 ## The ACTIVE ABILITY at `idx` on this node's class, or null (v0.20.0). Duck-typed off `player_class.active_abilities`
 ## exactly as _passives_of reads `player_class.passives` — a monster / no-class / out-of-range node yields null.
+## v0.47.0: resolves through the player's ONE ordered hotbar read (Player.ability_slots), which is the
+## class's abilities followed by any GRANTED to this player specifically, capped at the authored slot
+## count. It is a call rather than a local loop because the wire carries only an INDEX — see that
+## function for why three independent copies of the ordering would be a silent mis-cast waiting to happen.
+##
+## has_method rather than a Player type check: this referee holds its nodes untyped and this is called on
+## whatever a validator was handed. A monster has no hotbar and answers null, as it always did.
 func _ability_of(node, idx: int) -> ActiveAbility:
-	if node == null or idx < 0:
+	if node == null or idx < 0 or not node.has_method("ability_slots"):
 		return null
-	var pc = node.get("player_class")
-	if pc == null:
-		return null
-	var abilities = pc.get("active_abilities")
-	if abilities == null or idx >= abilities.size():
+	var abilities: Array = node.ability_slots()
+	if idx >= abilities.size():
 		return null
 	return abilities[idx]
 

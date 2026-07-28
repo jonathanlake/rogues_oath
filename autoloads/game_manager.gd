@@ -211,7 +211,7 @@ const DEV_GAME_FIELDS := ["tactical_beat_sec",
 		# right room, and did it leak too far through the doorway?") is a feel question about a distance, and
 		# answering it by restarting for each number is exactly what these dials exist to avoid. Host-side
 		# only, read live at each organic aggro latch, so a plain _GAME_FIELD_SPECS row is all it needs.
-		"rally_travel_tiles",
+		"rally_travel_tiles", "ability_slots",
 		# v0.35.0 — the odds a penned-in bow monster (no clean lane, no useful sidestep) shoots through its
 		# own packmate instead of holding. A live dial for the classic reason: the right number is a FEEL
 		# question about how often friendly fire should happen, which is only answerable by watching several

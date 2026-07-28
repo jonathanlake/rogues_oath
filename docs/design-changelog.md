@@ -9,6 +9,36 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.47.0 (2026-07-28) - ABILITIES CAN BE GIVEN TO ANYONE.** The same treatment traits got two versions
+  ago, applied to the hotbar. Classes still start with the abilities they always had; now any of them can
+  be handed to anybody.
+  **`/ability <name>` grants one**, `/ability <name> remove` takes it back. It lands on a per-player list,
+  never on the class - appending there would put the ability on every player of that class.
+  **A FULL BAR REFUSES THE GRANT** and says which slot count it hit (Jon's ruling). Letting a sixth ability
+  into a five-socket bar would mean owning something with no socket and no key - the "looks like it worked"
+  failure this codebase keeps writing guards against.
+  **The cap is authored and live-tunable** (`/config ability_slots N`), because Jon wants the door open to
+  more than five now that the bar sits at the bottom of the play area rather than inside the HUD column. One
+  honest caveat: going past five needs new `use_slot_N` input actions before the extra sockets have keys.
+  **Removing shifts the rest left** (Jon's ruling), so a key you had muscle memory for can end up casting
+  its neighbour. Fine for a dev command; it would want more thought as an in-run mechanic.
+  **THE ONE THING THAT MADE THIS HARDER THAN TRAITS:** a trait is an unordered set, but an ability is
+  addressed by SLOT INDEX - the entire network payload for casting is `{index}`. Three separate places
+  turned an index into an ability: the host's adjudication, the client's targeting cursor, and the HUD's
+  icons. If any two had ever disagreed about ordering, the failure would have been silent and nasty - your
+  bar shows Blink in slot 2, you press 2, the host casts Magic Missile. They now all call **one** ordering
+  function, so the only way to change the order is to change it for everyone.
+  **Also closed: a finding this project had carried since v0.27.1.** An ability on a class but missing from
+  the catalog used to render tunable-looking rows whose every edit rejected. It warns at startup now - the
+  same guard traits got in v0.45.0, which the ROADMAP entry had proposed and which mattered more once
+  abilities became grantable.
+  **Verified with the full two-instance gate**, which this earned rather than inherited: the failure mode is
+  a cross-peer index disagreement, and no single-instance trace can see one. Host and client rendered
+  identical slot order for the same player, both for a live grant and for a client joining after the fact.
+  **One GLM finding was a real race:** sending the late-join list one ability at a time meant a grant
+  broadcast landing mid-sync could interleave, giving the joiner a different order than the host. It is one
+  ordered snapshot now, which is correct whichever arrives first.
+
 - **v0.46.0 (2026-07-28) — THE DEBUG PANEL CLEANUP.** The reorganisation cut from v0.37.0 for budget, plus
   the bugs found while looking at it.
   **WEAPONS IS A DROPDOWN NOW**, like MONSTER TYPES and CLASSES already were — pick the weapon you are

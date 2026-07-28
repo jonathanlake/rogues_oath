@@ -96,10 +96,18 @@ const INV_COLS := 5
 const INV_ROWS := 4
 
 ## Ability-bar shape (v0.21.0): 5 sockets, and the gap (HUD-design px) between the bar and the world frame's
-## BOTTOM edge. ABILITY_SLOTS is its OWN const, not INV_COLS: the count is fixed by the input map's
-## use_slot_1..use_slot_5 bindings (main._unhandled_input), so retuning the inventory grid's width must not
-## silently add a sixth, unbindable ability box. It happens to equal INV_COLS today.
-const ABILITY_SLOTS := 5
+## BOTTOM edge. The socket COUNT is authored (GameConfig.ability_slots, v0.47.0) rather than a const here —
+## the same move `inventory_slots` made for the bag grid, and for the same reason: the host now enforces
+## that number when it refuses a grant with no free slot, so the panel drawing a different count would be
+## the HUD disagreeing with adjudication.
+##
+## Deliberately NOT INV_COLS, which it happens to equal: the bag's width and the hotbar's length are
+## unrelated numbers that must not move together by accident.
+##
+## RAISING IT PAST 5 NEEDS INPUT-MAP WORK — the keys are authored `use_slot_1..5` actions — which is stated
+## on the config field. The floor of 1 stops a 0 or negative authored value producing a bar with no sockets.
+static func _ability_slot_count() -> int:
+	return GameManager.config.ability_slot_count()
 const BOTTOM_PAD := 4.0
 
 ## The minimap slot's reserved square (base px) — M4b placeholder, rebudgeted down from 96 for the doubled
@@ -493,7 +501,7 @@ func refresh_self() -> void:
 	# Ability bar (v0.20.3; bottom-center since v0.21.0): repaint the 1-5 boxes from the class's active_abilities.
 	# Handles a null class (hides all). A /class change re-enters here (on_class_changed → refresh_self), so the
 	# bar swaps with the class.
-	_refresh_abilities(me.player_class)
+	_refresh_abilities(me)
 	_set_weapon_icon(me.equipped_weapon)
 	# Body armor (v0.27.0): the same one-line repaint the weapon gets. Reached from the (re)spawn seed (so a
 	# fresh spawn shows its class's starting armor) and from every own gear/class change.
@@ -721,11 +729,13 @@ func _apply_scale_policy() -> bool:
 
 
 ## The ability bar's size in HUD-DESIGN px, DERIVED from the slot constants rather than written as a literal
-## (ABILITY_SLOTS sockets + the gaps between them, one socket tall — 5·32 + 4·2 = 168 × 32 today). _relayout
-## centres the bar on this, so a retune of SLOT_PX / SLOT_GAP_PX / ABILITY_SLOTS keeps it centred and correctly
+## (one socket per authored slot plus the gaps between them, one socket tall — 5·32 + 4·2 = 168 × 32 at the
+## shipped count). _relayout centres the bar on this, so a retune of SLOT_PX / SLOT_GAP_PX / the authored
+## slot count keeps it centred and correctly
 ## sized with no second edit site — and it matches what the HBoxContainer in _build_ability_bar measures to.
 func _ability_bar_size() -> Vector2:
-	return Vector2(float(ABILITY_SLOTS) * SLOT_PX + float(ABILITY_SLOTS - 1) * SLOT_GAP_PX, SLOT_PX)
+	var slots := _ability_slot_count()
+	return Vector2(float(slots) * SLOT_PX + float(slots - 1) * SLOT_GAP_PX, SLOT_PX)
 
 
 ## Absolute-position a band/frame Control (top-left anchored) at pos with size, in base px.
@@ -1026,7 +1036,7 @@ func _build_ability_bar() -> void:
 	bar.add_theme_constant_override("separation", int(SLOT_GAP_PX))
 	_root.add_child(bar)
 	_ability_bar = bar
-	for i in ABILITY_SLOTS:
+	for i in _ability_slot_count():
 		var slot := _make_socket(true, "")
 		bar.add_child(slot)
 		# The SOCKET is kept (v0.39.0), not just its icon: the socket is the hoverable control, so it is
@@ -1176,8 +1186,11 @@ func _set_off_hand_icon(item: ItemType) -> void:
 ## each filled slot windows the ability's items.png icon (the item-icon pattern); an empty/unauthored slot hides
 ## its icon. A null class hides all. Called from refresh_self (spawn + class change), so switching class repaints
 ## the bar with its abilities. (Fixed in v0.21.0: this doc block previously carried _refresh_bag's paragraph too.)
-func _refresh_abilities(player_class: PlayerClass) -> void:
-	var abilities: Array = player_class.active_abilities if player_class != null else []
+func _refresh_abilities(player: Player) -> void:
+	# v0.47.0: the SAME ordered read the host adjudicates from (Player.ability_slots) — class abilities then
+	# granted ones. Painting from a separately-built list would be the one way a socket's picture could
+	# describe a different ability than the one its key casts.
+	var abilities: Array = player.ability_slots()
 	for i in _ability_icons.size():
 		var ability: ActiveAbility = abilities[i] if i < abilities.size() else null
 		# The TOOLTIP is set in the same breath as the icon (v0.39.0) — from the same resource, in the same

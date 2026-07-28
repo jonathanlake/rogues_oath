@@ -432,6 +432,12 @@ func _on_event_received(event: Dictionary) -> void:
 			# flows through add_line's sink escape like every line.
 			if int(data.get("entity_id", 0)) == multiplayer.get_unique_id():
 				add_line("a %s lies here — press G to pick up" % str(data.get("item", "item")))
+		"ability_granted":
+			add_line("%s learns %s." % [str(data.get("name", "Someone")),
+					str(data.get("ability", "an ability"))])
+		"ability_removed":
+			add_line("%s forgets %s." % [str(data.get("name", "Someone")),
+					str(data.get("ability", "an ability"))])
 		"trait_granted":
 			# v0.45.0. Party-wide, like class_changed: who someone IS is everyone's business in a co-op
 			# party, and a teammate suddenly hitting harder should have a line explaining it.

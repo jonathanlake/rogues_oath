@@ -82,6 +82,13 @@ const _GAME_FIELD_SPECS := {
 	# connected region" in practice while still refusing an absurd typo. Plain host-side write, read
 	# live at each organic aggro latch.
 	"rally_travel_tiles": { "min": 0, "max": 40, "int": true },
+	# v0.47.0 — the HOTBAR CAP the /ability grant validator enforces and the HUD draws from. Live-tunable so
+	# the "can we go past five?" question is answerable in play rather than by rebuilding. Ceiling of 12 is
+	# far past any plausible bar; the floor of 1 keeps a bar from vanishing.
+	#
+	# RAISING IT PAST 5 GIVES SOCKETS WITH NO KEYS until the input map gains matching `use_slot_N` actions
+	# (see the GameConfig field). That is a real limitation of the dial, not a bug in it.
+	"ability_slots": { "min": 1, "max": 12, "int": true },
 	# v0.34.0 conditions — does damage BREAK the ROOTED condition? Ships OFF: a root runs its authored beats
 	# and your own party focusing the held target does not free it. ON turns the root into a setup you spend.
 	# The A/B switch for that feel question; read live at the apply_damage seam.
@@ -155,6 +162,8 @@ func validate(sender_peer_id: int, data: Dictionary) -> Dictionary:
 			return _dev_cmd_passive(args, by)
 		"trait":
 			return _dev_cmd_trait(sender_peer_id, args, by)
+		"ability":
+			return _dev_cmd_grant_ability(sender_peer_id, args, by)
 		"god":
 			return _dev_cmd_god(sender_peer_id, by)
 		"class":
@@ -273,6 +282,70 @@ func _dev_cmd_ability(args: Array[String], by: String) -> Dictionary:
 		return { "ok": false, "reason": "unknown ability '%s'" % args[0] }
 	return _dev_tune_resource(ability, GameManager.DEV_ABILITY_FIELDS, GameManager.DEV_ABILITY_INT_FIELDS,
 			GameManager.DEV_ABILITY_CLAMPS, args.slice(1), by, ability.display_name)
+
+
+## /ability <name> [remove] — GRANT an active ability to the sender, or take it back (v0.47.0). The hotbar
+## twin of `/trait`, and host-adjudicated the same way. (`/ab` is the TUNING command and stays what it was;
+## this one hands the ability out.)
+##
+## Lands on the sender's own `granted_abilities`, never on `player_class.active_abilities` — that array is a
+## SHARED resource, so appending there would put the ability on the hotbar of every player of that class.
+##
+## THE SLOT CAP IS ENFORCED HERE (Jon, 2026-07-28): a grant with no free slot is REFUSED and says so.
+## Allowing a sixth into a five-socket bar would create an ability you own, can see in no socket, and can
+## press no key for — the "looks like it worked" failure this codebase keeps writing guards against. The cap
+## is `GameConfig.ability_slots`, authored so it can be raised (the field documents the input-map work that
+## a sixth key needs).
+##
+## REMOVAL COMPACTS LEFT (Jon's ruling), because the alternative — leaving a hole — means the array carries
+## nulls that every index-resolution site would have to reason about. The cost is honest and worth naming:
+## removing a mid-bar ability SHIFTS the ones after it, so a key you had muscle memory for now casts its
+## neighbour. Acceptable for a dev command; it would not be for an in-run acquisition mechanic.
+##
+## A CLASS ABILITY CANNOT BE GRANTED OR REMOVED through this: it is already in your slots, and duplicating
+## it would give you two sockets sharing one cooldown key that drain together. Same refusal shape `/trait`
+## uses for a class trait.
+func _dev_cmd_grant_ability(sender_peer_id: int, args: Array[String], by: String) -> Dictionary:
+	if args.is_empty():
+		return { "ok": false, "reason": "usage: /ability <name> [remove]" }
+	var removing: bool = args.size() > 1 and args[args.size() - 1] == "remove"
+	var name_tokens := args.slice(0, args.size() - 1) if removing else args
+	if name_tokens.is_empty():
+		return { "ok": false, "reason": "usage: /ability <name> [remove]" }
+	var wanted := " ".join(name_tokens)
+	var ability := GameManager.config.ability_by_name(wanted)
+	if ability == null:
+		return { "ok": false, "reason": "unknown ability '%s'" % wanted }
+	var player_node := _players.get_node_or_null(str(sender_peer_id)) as Player
+	if player_node == null:
+		return { "ok": false, "reason": "not in session" }
+	var from_class: bool = player_node.player_class != null 			and ability in player_node.player_class.active_abilities
+	var held: bool = ability in player_node.granted_abilities
+	if from_class:
+		return { "ok": false, "reason": "%s already has %s from their class" % [by, ability.display_name] }
+	if removing and not held:
+		return { "ok": false, "reason": "%s was not granted %s" % [by, ability.display_name] }
+	if not removing:
+		if held:
+			return { "ok": false, "reason": "%s already has %s" % [by, ability.display_name] }
+		# Measured against the ORDERED read, not against either raw array — that function applies the cap and
+		# the de-duplication, so it is the only honest answer to "is there room".
+		if player_node.ability_slots().size() >= GameManager.config.ability_slot_count():
+			return { "ok": false, "reason": "%s has no free ability slot (%d/%d)" % [
+					by, player_node.ability_slots().size(), GameManager.config.ability_slot_count()] }
+	# Host-side first (authoritative), then broadcast — the /class and /trait shape. `erase` compacts, which
+	# is the ruling above.
+	if removing:
+		player_node.granted_abilities.erase(ability)
+	else:
+		player_node.granted_abilities.append(ability)
+	NetEvents.post_event("ability_removed" if removing else "ability_granted", {
+		"entity_id": sender_peer_id,
+		"name": player_node.display_name,
+		"ability": ability.display_name,
+		"by": by,
+	})
+	return { "ok": true, "deferred": true }
 
 
 ## /pa <trait> <field> <value|reset> — tune a TRAIT (v0.45.0). The fourth caller of the shared tune

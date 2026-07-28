@@ -76,6 +76,53 @@ var player_class: PlayerClass = null
 ## it. Nothing to erase means nothing that can be forgotten in one of the three paths.
 var granted_traits: Array[PassiveAbility] = []
 
+## ACTIVE ABILITIES GRANTED TO THIS PLAYER SPECIFICALLY (v0.47.0) — the hotbar twin of `granted_traits`
+## above, and it exists for the identical reason: `player_class.active_abilities` is a SHARED resource
+## array, so granting by appending there would put the ability on every player of that class.
+##
+## Replicated as NAMES through `ability_granted` / `ability_removed` and the late-join `sync_player_field`
+## RPC, resolved on each peer via `GameConfig.ability_by_name`. Dies with the player, like the traits and
+## the bag — it is state on the node, and every death, disconnect and F5 frees the node.
+##
+## ORDER IS WIRE-VISIBLE HERE, which is the one way this differs from traits and the reason
+## `ability_slots()` below exists. Traits are an unordered set whose order only affects chaining math; an
+## ability is addressed by SLOT INDEX — `use_ability {index}` is the entire payload — so every peer must
+## agree on the ordering or pressing "2" casts something other than what your bar shows. Append order is
+## therefore load-bearing: grants append, removals compact left (Jon, 2026-07-28), and every peer applies
+## the same events in the same order, so the arrays converge by construction.
+var granted_abilities: Array[ActiveAbility] = []
+
+
+## THE ONE ORDERED HOTBAR READ (v0.47.0) — class abilities first, then granted ones, capped at the authored
+## `GameConfig.ability_slots`. Every site that turns a slot INDEX into an ability calls this: the host's
+## adjudication (`CombatReferee._ability_of`), the client's targeting-cursor routing
+## (`main._ability_in_slot`), and the HUD's icon/tooltip/cooldown painter (`hud._refresh_abilities`).
+##
+## IT IS A FUNCTION RATHER THAN THREE LOOPS ON PURPOSE, and this is the whole safety story of the feature.
+## The wire carries an index and nothing else, so if those three sites each built their own "class then
+## granted" list and one ever diverged — a filter added in one place, a different cap, a null skipped
+## differently — the failure would be SILENT and horrible: your bar shows Blink in slot 2, you press 2, the
+## host resolves slot 2 to Magic Missile and casts that. One function means they cannot disagree; the only
+## way to change the order is to change it for everybody.
+##
+## The CAP is applied here too, so a hotbar can never present a slot the input map and the grant validator
+## do not both agree exists.
+func ability_slots() -> Array[ActiveAbility]:
+	var out: Array[ActiveAbility] = []
+	if player_class != null:
+		for a in player_class.active_abilities:
+			if a != null:
+				out.append(a)
+	for a in granted_abilities:
+		# Skip a duplicate rather than showing the same ability twice: two sockets that share a cooldown
+		# key would drain together and read as a bug. The grant validator refuses this case up front; this
+		# is the belt, and it also covers the event/late-join paths.
+		if a != null and not (a in out):
+			out.append(a)
+	var cap: int = GameManager.config.ability_slot_count()
+	return out.slice(0, cap) if out.size() > cap else out
+
+
 ## Client-side inventory MIRROR (v0.18.0 chunk B): the item display_names this player carries, adopted from
 ## the host's item_picked_up events (main.gd appends here, in slot order). PRESENTATION TRUTH ONLY — the
 ## authoritative bag lives in the host's InventoryReferee._inventories; this exists so every peer's HUD hotbar

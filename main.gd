@@ -909,10 +909,12 @@ func _press_ability_slot(index: int) -> void:
 ## walks the same class resource every peer resolves from shared config, never authoritative state. Null for
 ## an empty slot, a classless player, or an out-of-range index.
 func _ability_in_slot(player: Player, index: int) -> ActiveAbility:
-	if player.player_class == null:
+	if index < 0:
 		return null
-	var abilities := player.player_class.active_abilities
-	if index < 0 or index >= abilities.size():
+	# v0.47.0: the SAME ordered read the host adjudicates from and the HUD paints from. A classless player
+	# can still hold granted abilities, so this no longer returns early on a null class.
+	var abilities := player.ability_slots()
+	if index >= abilities.size():
 		return null
 	return abilities[index]
 
@@ -1103,6 +1105,12 @@ func _on_net_event(event: Dictionary) -> void:
 			# A caster's mana pool changed (v0.43.0, host-authored: a spend, an explore refill, or a class
 			# reconcile). Own-player HUD renders the blue bar; a max of 0 takes the bar down entirely.
 			_handle_mana_event(event)
+		"ability_granted", "ability_removed":
+			# An active ability was given to (or taken from) one player (v0.47.0). Every peer updates that
+			# player's granted list from the ability NAME and repaints the hotbar if it is our own. ORDER
+			# MATTERS here in a way it does not for traits — the wire addresses abilities by slot index —
+			# so both arms apply the same append/erase every peer does, in event order.
+			_handle_ability_grant_event(event)
 		"trait_granted", "trait_removed":
 			# A trait was given to (or taken from) one player specifically (v0.45.0). Every peer updates
 			# that player's granted list from the trait NAME — the codebase-wide name-resolution model —
@@ -2028,6 +2036,37 @@ func _handle_trait_event(event: Dictionary) -> void:
 	# union, so it needs no trait-specific entry point. Own-player filtered inside, like every HUD fan-out.
 	_hud.on_class_changed(entity_id)
 
+
+## All peers: an active ability was GRANTED to, or REMOVED from, one player (v0.47.0). The hotbar twin of
+## _handle_trait_event, with one extra consequence worth stating: because the wire addresses abilities by
+## SLOT INDEX, this handler is what keeps every peer's slot ordering identical to the host's. It works
+## because the events are reliable and ordered and every peer applies the same append/erase — so the arrays
+## converge by construction rather than by anyone re-deriving an order.
+##
+## Idempotent both ways for the same reason the trait handler is: a replayed grant must not create a second
+## socket sharing one cooldown key, and a replayed removal must not error.
+func _handle_ability_grant_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var entity_id := int(data.get("entity_id", 0))
+	var player := _players.get_node_or_null(str(entity_id)) as Player
+	if player == null:
+		return
+	var ability_name := str(data.get("ability", ""))
+	var ability := GameManager.config.ability_by_name(ability_name)
+	if ability == null:
+		push_warning("[Main] ability grant event names '%s', which ability_catalog cannot resolve — this peer's hotbar for player %d is now WRONG (config drift)." % [ability_name, entity_id])
+		return
+	var action := str(event.get("action", ""))
+	if action == "ability_granted":
+		if not (ability in player.granted_abilities):
+			player.granted_abilities.append(ability)
+	elif action == "ability_removed":
+		player.granted_abilities.erase(ability)
+	else:
+		return
+	# Repaint through the class hook — it rebuilds the whole bar from the ordered read, so it needs no
+	# ability-specific entry point. Own-player filtered inside, like every HUD fan-out.
+	_hud.on_class_changed(entity_id)
 
 ## All peers: adopt a host-resolved pace flip (Tactical Zones v1, §2.8.7). Mirrors EVERY player's pace
 ## (both directions, seeds included) into _tactical_players so the F7 overlay can ring every tactical
@@ -3202,6 +3241,25 @@ func peer_ready(p_name: String, client_version: String) -> void:
 			for granted_trait in existing.granted_traits:
 				if granted_trait != null:
 					sync_player_field.rpc_id(peer_id, existing.entity_id, "trait", granted_trait.display_name)
+			# GRANTED ABILITIES (v0.47.0) — ONE call carrying the WHOLE ORDERED LIST, unlike the traits
+			# above which go one per call. The difference is the race GLM's diff review found, and it is
+			# specific to abilities because their order is wire-load-bearing.
+			#
+			# WITH N APPENDS: the host sends A then B, and if an `ability_granted` broadcast for C lands
+			# BETWEEN them (an admin granting while someone joins), the joiner builds [A, C, B] against the
+			# host's [A, B, C]. Every index after the first then addresses a different ability than the bar
+			# shows — the exact silent mis-cast this version exists to prevent.
+			#
+			# WITH ONE SNAPSHOT applied as a REPLACE, both interleavings are correct: an event that arrives
+			# BEFORE the snapshot is superseded by it (and the snapshot already contains that grant, because
+			# the host appended before broadcasting), and one that arrives AFTER appends onto an authoritative
+			# base. There is no ordering left for the network to get wrong.
+			var granted_names := PackedStringArray()
+			for granted_ability in existing.granted_abilities:
+				if granted_ability != null:
+					granted_names.append(granted_ability.display_name)
+			if not granted_names.is_empty():
+				sync_granted_abilities.rpc_id(peer_id, existing.entity_id, granted_names)
 			# BODY ARMOR (v0.27.0 equipment phase 2), the same filter logic one field over: the joiner's copy
 			# of this player seeds its body from the SLOT-DEFAULT class's starting_body_armor in Player._ready
 			# (the class sync above repaints the sprite but deliberately never touches gear), so only a
@@ -3271,6 +3329,38 @@ func sync_tempo(beat_sec: float, tactical_beat_sec: float) -> void:
 ## outlasts that window by orders of magnitude; only a genuinely absent player (left during the join) drops
 ## the sync, and its state corrects on any later swap/attack anyway (the §2.7 dev-facility mend, not full
 ## mid-run join support). No log line: this is silent state sync, like a join snap.
+## Late-join snapshot of ONE player's GRANTED ABILITIES, in the host's exact slot order (v0.47.0).
+##
+## A REPLACE, not a merge, and a whole list rather than one call each — see the send site for the race that
+## forced it. In short: an ability's slot INDEX is its wire identity, so a joiner that assembled the list
+## from interleaved sources could end up addressing different abilities than its own bar draws. Taking the
+## host's ordering wholesale removes the possibility rather than narrowing it.
+##
+## Unresolvable names are SKIPPED rather than aborting the whole list: one missing catalog entry should cost
+## that one ability, not every ability after it (which would shift every later index — the same failure by
+## another route). It warns, because a name the host could resolve and this peer cannot is config drift.
+##
+## Retries like sync_player_field for the same reason: the RPC can land before the player node replicates.
+@rpc("authority", "call_remote", "reliable")
+func sync_granted_abilities(entity_id: int, names: PackedStringArray, is_retry: bool = false) -> void:
+	var player := _players.get_node_or_null(str(entity_id)) as Player
+	if player == null:
+		if not is_retry:
+			get_tree().create_timer(0.5).timeout.connect(
+					sync_granted_abilities.bind(entity_id, names, true))
+		return
+	var rebuilt: Array[ActiveAbility] = []
+	for n in names:
+		var ability := GameManager.config.ability_by_name(n)
+		if ability == null:
+			push_warning("[Main] late-join ability sync names '%s', which ability_catalog cannot resolve — skipping it; this peer's hotbar for player %d is missing one entry (config drift)." % [n, entity_id])
+			continue
+		if not (ability in rebuilt):
+			rebuilt.append(ability)
+	player.granted_abilities = rebuilt
+	_hud.on_class_changed(entity_id)
+
+
 @rpc("authority", "call_remote", "reliable")
 func sync_player_field(entity_id: int, kind: String, value_name: String, is_retry: bool = false) -> void:
 	var player := _players.get_node_or_null(str(entity_id)) as Player

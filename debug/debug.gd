@@ -1118,6 +1118,9 @@ func _log_net_event(event: Dictionary) -> void:
 			# v0.45.0: a granted trait is otherwise INVISIBLE in a trace — it changes no HP and posts no
 			# other event, so "did the grant land" and "did the hook fire" would both be unanswerable.
 			"trait_granted", "trait_removed",
+			# v0.47.0: the hotbar grants. Their whole risk is SLOT ORDER agreement between peers, and these
+			# two events are the only record of the order each peer applied.
+			"ability_granted", "ability_removed",
 			"projectile_launched", "projectile_ended",
 			"dev_snapshot"]):
 		return

@@ -590,6 +590,35 @@ func armor_flat_for(weight: int) -> int:
 ## with every other beats dial. 0 = no lockout (refill on every explore edge; the exploit is then live).
 @export var mana_refill_lockout_beats: float = 20.0
 
+## HOTBAR CAPACITY in slots (v0.47.0) — the AUTHORITATIVE number of active abilities a player can carry,
+## and the exact mirror of `inventory_slots` above: read HOST-side by the `/ability` grant validator (which
+## refuses a grant with no free slot) and CLIENT-side by the HUD, which draws this many sockets and sizes
+## the bar from it. One authored value instead of a constant repeated in two files.
+##
+## IT EXISTS TO BE RAISED (Jon, 2026-07-28). Abilities became grantable this version, so "how many can you
+## hold" stopped being a fact about the class roster and became a real cap the host enforces — and the bar
+## moved out of the HUD column to the bottom of the play area in v0.21.0, so it no longer competes with the
+## inventory grid for width. Raising this grows the bar automatically.
+##
+## THE ONE THING THAT DOES NOT FOLLOW AUTOMATICALLY IS THE INPUT MAP. The keys are authored actions
+## (`use_slot_1` … `use_slot_5` in project.godot), so a 6th socket would draw and be grantable but have no
+## key until a `use_slot_6` action exists and main.gd's press loop covers it. That is the whole cost of
+## going past 5 — stated here because it is the only non-obvious part.
+@export var ability_slots: int = 5
+
+
+## The hotbar's slot count with its floor applied — THE one answer, because three sites need it and they
+## disagreed (GLM diff review): `Player.ability_slots` and the grant validator floored at 0 while the HUD
+## floored at 1, so a hand-edited `ability_slots = 0` would have produced a host that refuses every grant
+## and a bar that still draws one socket. The live `/config` dial already refuses values below 1; this
+## covers the authored resource, which the dial cannot.
+##
+## Floored at 1 rather than 0 because a 0-slot bar is not a meaningful "abilities off" setting — it is a
+## negative width in `_ability_bar_size` and a hotbar that silently swallows every grant. Turn abilities off
+## by authoring them off a class, not by shrinking the bar to nothing.
+func ability_slot_count() -> int:
+	return maxi(ability_slots, 1)
+
 ## The MASTER TRAIT catalog (v0.45.0) — every PassiveAbility a name may resolve to. The fourth catalog,
 ## and the one that finally makes a trait a first-class object rather than a property of a class.
 ##
@@ -736,6 +765,30 @@ func validate_catalog_covers_rosters() -> void:
 		for w in roster:
 			if w != null and weapon_by_name(w.display_name) == null:
 				push_warning("[GameConfig] weapon '%s' is in a roster but NOT in weapon_catalog — it will resolve to null on peers and desync a swap/equip. Add it to weapon_catalog." % w.display_name)
+
+
+## Class-ABILITY coverage guard (v0.47.0) — the third sibling, and the one this codebase has owed itself
+## since v0.27.1. It closes ROADMAP's long-standing "ability_catalog vs class_roster is a SPLIT INDEX"
+## finding, whose own proposed fix shape was "warn at startup for any class ability missing from the
+## catalog".
+##
+## THE TRAP IT CLOSES: `/ab` and the debug panel's TRAITS-style sections resolve an ability through
+## `ability_catalog`, while the panel's CLASSES section enumerates abilities off `class_roster` → each
+## class's `active_abilities`. Give a class an ability and forget to register it, and the panel renders
+## tunable-looking rows whose every edit rejects "unknown ability" — a GUI that looks like it works and
+## doesn't, with no error anywhere to explain it.
+##
+## v0.47.0 made it sharper than a tuning annoyance: abilities are GRANTABLE now, and a grant resolves the
+## name through the catalog. An uncatalogued class ability can be wielded but never granted, removed or
+## named on the wire — so the guard stopped being about the panel and started being about the feature.
+## Byte-for-byte the shape validate_class_traits_catalogued uses. Pure diagnostic — mutates nothing.
+func validate_class_abilities_catalogued() -> void:
+	for c in class_roster:
+		if c == null:
+			continue
+		for a in c.active_abilities:
+			if a != null and ability_by_name(a.display_name) == null:
+				push_warning("[GameConfig] ability '%s' is on class '%s' but NOT in ability_catalog — it cannot be tuned with /ab, granted, or named on the wire. Add it to ability_catalog." % [a.display_name, c.display_name])
 
 
 ## Class-trait coverage guard (v0.45.0) — the trait twin of validate_catalog_covers_rosters above, called

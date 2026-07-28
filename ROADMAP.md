@@ -439,13 +439,11 @@ Not scheduled — pulled in when their moment comes:
   type/instance grids did not merely permit values the host would refuse, it made host-LEGAL ones
   UNREACHABLE — the three signed monster bonus dials could only be increased from the GUI, and
   `utility_alone_move_factor` [0, 1] at step 0.5 offered exactly three of its values.
-- ~~**`ability_catalog` vs `class_roster` is a SPLIT INDEX**~~ (v0.27.1 review finding) — **STILL OPEN for
-  abilities, PREVENTED for traits (v0.45.0).** The trait catalog shipped with a startup guard
-  (`GameConfig.validate_class_traits_catalogued`) that warns for any class trait missing from the catalog,
-  which is the "warn at startup" fix shape this entry proposed. The same guard has NOT been written for
-  abilities, so the original trap stands there: give a class an ability, forget to register it, and the
-  panel renders rows whose every edit rejects. Doing for `ability_catalog` what v0.45.0 did for
-  `passive_catalog` is a ~10-line copy of that function.
+- ~~**`ability_catalog` vs `class_roster` is a SPLIT INDEX**~~ (v0.27.1 review finding) - **CLOSED v0.47.0**,
+  for both halves. `GameConfig.validate_class_abilities_catalogued` warns at startup for any class ability
+  missing from the catalog, which is the fix shape this entry proposed; traits got the same guard in
+  v0.45.0. It stopped being only a panel annoyance when v0.47.0 made abilities grantable - an uncatalogued
+  class ability can be wielded but never granted, removed or named on the wire.
 - ~~**Debug-panel reorganisation**~~ (cut from v0.37.0 for budget: "dropdowns for weapons and spells, a
   LEGACY section for the settled stamina dials… Not lost, just not now") — **DONE v0.46.0**, along with
   4-column grids and four bug fixes found while in the file. Recorded here late: it was parked in the
