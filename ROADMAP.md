@@ -433,25 +433,23 @@ Not scheduled — pulled in when their moment comes:
   piece setting the band — a no-op while body is the only armor slot), and the envisioned spellcasting /
   mobility penalties the heavy band should carry. Shield Block (§2.11.1) is still "the kite shield at class
   level" until a real off-hand item lands.
-- **Panel spin ranges exceed the host clamps** (v0.27.1 review finding, recorded 2026-07-26 — it fell
-  below that pass's report cap and was never written down). `docs/dev-commands.md` says every panel
-  widget submits the same intent the typed command would, which is true of the PIPE but not of the
-  BOUNDS: only the GAME rows derive their SpinBox range from `DevCommands._GAME_FIELD_SPECS`. The
-  WEAPONS spins are a flat 0–100 against host clamps of `damage_min`/`damage_max` [0, 999],
-  `windup_beats` [0, 30], `recovery_beats` [0.05, 30]; the CLASSES spins are 0–600 for
-  `cooldown_beats` and 0–100 otherwise, against `stun_beats` [0, 60] and `windup`/`recovery` [0, 30].
-  So a widget can offer a value the host rejects, and can hide one it would accept. Fix shape: derive
-  both spin ranges from `GameManager.DEV_*_CLAMPS` the way the game rows already do. Cosmetic today
-  (the reject is distinct and harmless); the doc carries the caveat until then.
-- **`ability_catalog` vs `class_roster` is a SPLIT INDEX** (v0.27.1 review finding, same pass, LATENT).
-  `/ab` resolves an ability only through `GameConfig.ability_catalog` (`dev_commands._dev_cmd_ability`),
-  while the debug panel's CLASSES section enumerates abilities from the `dev_snapshot`'s `classes`
-  dictionary, which is built off `class_roster` → each class's `active_abilities`. The two agree today
-  (all four abilities are catalogued), so nothing is broken. The trap: give a class an ability and
-  forget to register it in `ability_catalog`, and the panel renders rows for it whose every edit
-  rejects "unknown ability" — a GUI that looks tunable and isn't. Fix shape: either derive the catalog
-  from the roster, or warn at startup for any class ability missing from the catalog (the same shape as
-  the cross-catalog `display_name` collision guard below).
+- ~~**Panel spin ranges exceed the host clamps**~~ (v0.27.1 review finding) — **CLOSED v0.46.0.** Every
+  panel spin now derives its range and step from `GameManager.DEV_*_CLAMPS`, the way the GAME rows always
+  did. The finding understated it in one direction that mattered: the hardcoded `0..999 step 0.5` on the
+  type/instance grids did not merely permit values the host would refuse, it made host-LEGAL ones
+  UNREACHABLE — the three signed monster bonus dials could only be increased from the GUI, and
+  `utility_alone_move_factor` [0, 1] at step 0.5 offered exactly three of its values.
+- ~~**`ability_catalog` vs `class_roster` is a SPLIT INDEX**~~ (v0.27.1 review finding) — **STILL OPEN for
+  abilities, PREVENTED for traits (v0.45.0).** The trait catalog shipped with a startup guard
+  (`GameConfig.validate_class_traits_catalogued`) that warns for any class trait missing from the catalog,
+  which is the "warn at startup" fix shape this entry proposed. The same guard has NOT been written for
+  abilities, so the original trap stands there: give a class an ability, forget to register it, and the
+  panel renders rows whose every edit rejects. Doing for `ability_catalog` what v0.45.0 did for
+  `passive_catalog` is a ~10-line copy of that function.
+- ~~**Debug-panel reorganisation**~~ (cut from v0.37.0 for budget: "dropdowns for weapons and spells, a
+  LEGACY section for the settled stamina dials… Not lost, just not now") — **DONE v0.46.0**, along with
+  4-column grids and four bug fixes found while in the file. Recorded here late: it was parked in the
+  changelog and never written into this list, which is why it was nearly lost.
 - Ability-bar occlusion (v0.21.0, accepted at ship): the bottom-center bar covers ~10×2 tiles at the
   world frame's bottom edge — clicks pass through (`MOUSE_FILTER_IGNORE`), so it is occlusion only —
   and at very small window sizes it can overlap the bottom-left game-log CanvasLayer (identity-scaled
