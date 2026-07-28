@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="Spellreach" format=3]
+
+[ext_resource type="Script" path="res://resources/passives/spellreach.gd" id="1_spellreach"]
+
+[resource]
+script = ExtResource("1_spellreach")
+display_name = "Spellreach"
+description = "Your aimed spells find targets a little further out than anyone else's."

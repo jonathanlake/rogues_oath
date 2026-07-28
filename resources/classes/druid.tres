@@ -1,6 +1,7 @@
-[gd_resource type="Resource" script_class="PlayerClass" load_steps=7 format=3]
+[gd_resource type="Resource" script_class="PlayerClass" load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://resources/player_class.gd" id="1_class"]
+[ext_resource type="Resource" path="res://resources/passives/devour.tres" id="90_devour"]
 [ext_resource type="Resource" path="res://resources/abilities/entangling_roots.tres" id="2_roots"]
 [ext_resource type="Resource" path="res://resources/abilities/insect_plague.tres" id="6_plague"]
 [ext_resource type="Resource" path="res://resources/items/leather_armor.tres" id="3_leather"]
@@ -15,3 +16,4 @@ active_abilities = Array[ActiveAbility]([ExtResource("2_roots"), ExtResource("6_
 max_mana = 10
 starting_body_armor = ExtResource("3_leather")
 weapon_roster = Array[ExtResource("5_weapon")]([ExtResource("4_club")])
+passives = Array[PassiveAbility]([ExtResource("90_devour")])

@@ -87,9 +87,14 @@ const DEV_ABILITY_CLAMPS := {
 ## that does not exist is a SILENT no-op, so `_dev_cmd_passive` checks the field exists on THIS trait before
 ## tuning and rejects if not — otherwise `/pa backstab windup_beats_delta 2` would report success and change
 ## nothing, which is exactly the "GUI that looks like it works" failure the catalog guard exists to prevent.
-const DEV_PASSIVE_FIELDS := ["damage_multiplier", "windup_beats_delta", "recovery_beats_delta"]
+## v0.49.0 adds the four new traits' dials. Still a UNION across subclasses — no single trait has all of
+## these — so `/pa` checks the field exists on the named trait before setting it (Object.set on a missing
+## property is a silent no-op). Fleet of Foot contributes nothing: it is binary, and inventing a dial so
+## the panel has a row to draw would be worse than an empty section.
+const DEV_PASSIVE_FIELDS := ["damage_multiplier", "windup_beats_delta", "recovery_beats_delta",
+	"brace_beats", "damage_reduction", "range_bonus", "radius_tiles", "mana_fraction"]
 ## No int fields today — every trait number is a multiplier or a beats delta.
-const DEV_PASSIVE_INT_FIELDS := []
+const DEV_PASSIVE_INT_FIELDS := ["range_bonus", "radius_tiles"]
 const DEV_PASSIVE_CLAMPS := {
 	# 0 disables the bonus outright (a 0x sneak attack deals nothing, which is a legitimate "off"); 10x is
 	# far past any real design and still refuses a runaway.
@@ -99,6 +104,14 @@ const DEV_PASSIVE_CLAMPS := {
 	# result at 0, so an over-generous delta yields an instant action rather than a negative one.
 	"windup_beats_delta": [-30.0, 30.0],
 	"recovery_beats_delta": [-30.0, 30.0],
+	# v0.49.0. brace_beats 0 = always braced (a legitimate "what does this feel like with no wait?" probe);
+	# 120 is far past any real design. The two FRACTIONS cap at 1.0 — a reduction above 100% would heal and
+	# a mana restore above the pool is already clamped, so offering more would be a dial that lies.
+	"brace_beats": [0.0, 120.0],
+	"damage_reduction": [0.0, 1.0],
+	"range_bonus": [0, 12],
+	"radius_tiles": [0, 30],
+	"mana_fraction": [0.0, 1.0],
 }
 
 const DEV_MONSTER_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles",

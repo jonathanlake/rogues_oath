@@ -9,6 +9,38 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.49.0 (2026-07-28) - FOUR TRAITS, AND THE FOUR SEAMS THEY NEEDED.** Every one of these needed
+  somewhere to plug in that did not exist. The trait system had five hooks and they were all the
+  attacker's or the wielder's own - nothing had ever asked a DEFENDER's traits anything, nothing ran
+  outside the damage and timing seams, and nothing was ever evaluated on a client.
+  **FLEET OF FOOT (ranger)** - rough ground does not slow you. Cancels the terrain penalty and *only* that:
+  a Fleet-of-Foot ranger who is out of stamina still crawls, because the trait is handed the terrain cost
+  rather than the final one.
+  **HOLD THE LINE (knight)** - stand still for ten beats and everything lands 15% softer, magic included.
+  Attack, cast and drink freely; only MOVING breaks it, which is what "hold the line" should mean. A blink
+  or a knockback breaks it too, since those move the body.
+  **SPELLREACH (wizard)** - aimed spells reach one tile further. The only trait so far that both the host
+  and your own screen have to agree about, since the targeting ring would otherwise draw a circle the host
+  refuses at its edge.
+  **DEVOUR (druid)** - an enemy dying within five tiles gives back a quarter of your mana. It does not have
+  to be your kill, and the reach is wall-bounded, so a death two rooms away through a wall feeds nothing.
+  **ONE FUNCTION NOW ANSWERS "what traits does this body have"**, on the host and on every client. That
+  move is what makes Spellreach possible at all: the referee is host-only, so a client needing the same
+  answer would have had to re-derive it, and a ring that quietly disagrees with the gate is exactly the
+  kind of bug you would never catch by looking.
+  **A REVIEW CAUGHT THE WORST BUG OF THE BATCH**, and it was backwards in both directions at once: the
+  brace clock was being reset by *committed actions* rather than by movement, so swinging your sword broke
+  your own brace - the behaviour Jon explicitly declined - while blinking across the room did not break it
+  at all. Both fixed and both re-verified.
+  **Verified:** a ranger crosses rough at normal speed where a rogue takes five times as long, and a rogue
+  GRANTED the trait crosses it at normal speed too. A wizard casts at exactly seven tiles and is accepted;
+  with the trait's bonus dialled to zero the same tile answers "out of range". A knight's brace survived
+  three Shield Bashes in a row.
+  **One thing for the next playtest, said plainly: Hold the Line currently does nothing you can see.** At
+  the damage a goblin deals through chainmail - one or two points - a 15% reduction rounds away, and the
+  rule that enemies must always land at least 1 finishes the job. The trait is live and correct; it needs
+  bigger hits, a bigger percentage, or both, before it changes a fight.
+
 - **v0.48.0 (2026-07-28) - ROUGH TERRAIN.** Some ground is slow to cross.
   **A patch of it in the room to the right of where you start** - seven tiles together plus a couple of
   strays, deliberately off the corridor so crossing between rooms never forces a slow step. The patch is

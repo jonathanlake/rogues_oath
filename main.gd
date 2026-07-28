@@ -904,7 +904,7 @@ func _press_ability_slot(index: int) -> void:
 						% [ability.display_name, ability.mana_cost, _hud.own_mana()])
 			return
 		me.arm_targeting(index)
-		_range_overlay.set_targeting(me.tile, ability.range_tiles)
+		_range_overlay.set_targeting(me.tile, ability.range_tiles + me.spell_range_bonus())
 		# Feedback rule (§2.3.4): arming is a state change, so it says so — and names BOTH ways out, because
 		# a cursor with no visible exit is the thing that makes a new mode feel like a trap. The CANCEL is
 		# deliberately silent: it is pre-commit, and the ring vanishing is already the cue.
@@ -943,7 +943,7 @@ func _update_targeting_ring() -> void:
 	if ability == null:
 		_range_overlay.clear_targeting()
 		return
-	_range_overlay.set_targeting(me.tile, ability.range_tiles)
+	_range_overlay.set_targeting(me.tile, ability.range_tiles + me.spell_range_bonus())
 
 
 ## Detect and repair the ONE illegitimate window state: WINDOWED at (or beyond) the full screen size.

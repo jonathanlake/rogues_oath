@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="FleetOfFoot" format=3]
+
+[ext_resource type="Script" path="res://resources/passives/fleet_of_foot.gd" id="1_fleet_of_foot"]
+
+[resource]
+script = ExtResource("1_fleet_of_foot")
+display_name = "Fleet of Foot"
+description = "Rough ground does not slow you down. Where others pick their way across, you simply keep walking."

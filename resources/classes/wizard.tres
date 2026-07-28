@@ -1,6 +1,7 @@
-[gd_resource type="Resource" script_class="PlayerClass" load_steps=4 format=3]
+[gd_resource type="Resource" script_class="PlayerClass" load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://resources/player_class.gd" id="1_class"]
+[ext_resource type="Resource" path="res://resources/passives/spellreach.tres" id="90_reach"]
 [ext_resource type="Resource" path="res://resources/abilities/blink.tres" id="2_blink"]
 [ext_resource type="Resource" path="res://resources/abilities/magic_missile.tres" id="3_missile"]
 
@@ -10,3 +11,4 @@ display_name = "wizard"
 atlas_coords = Vector2i(0, 4)
 active_abilities = Array[ActiveAbility]([ExtResource("2_blink"), ExtResource("3_missile")])
 max_mana = 15
+passives = Array[PassiveAbility]([ExtResource("90_reach")])

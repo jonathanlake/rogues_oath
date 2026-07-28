@@ -109,6 +109,13 @@ var _condition_gen: Dictionary = {}
 # every non-caster, and a 0-max entity is never given an entry — so "has no mana" and "has an empty pool"
 # are different states by construction, which is what lets the HUD decide whether to draw a bar at all.
 # Monsters never appear: shaman casts stay free (out of scope, stated in the v0.43.0 plan).
+## How far a death is fanned out to nearby-death traits (v0.49.0), in WALL-BOUNDED travel tiles. The
+## referee's outer bound; a trait may be pickier using ctx.distance. Generous enough that the shipped
+## Devour (5) sits inside it without the referee having to know that number.
+const _NEARBY_DEATH_TILES := 12
+## script path + method -> does that script define it (see _implements). Session-lifetime, never cleared.
+var _implements_cache: Dictionary = {}
+
 var _mana: Dictionary = {}
 # entity id -> MONOTONIC counter, bumped on every refill and NEVER erased — not at death, not at teardown.
 # Same contract and same reason as `_condition_gen`: a refill is scheduled against a peer id, and peer ids
@@ -314,6 +321,29 @@ func spend_mana(entity_id: int, cost: int) -> void:
 	if not _mana.has(entity_id):
 		return
 	_mana[entity_id] = maxi(0, int(_mana[entity_id]) - cost)
+	_post_mana(entity_id)
+
+
+## Restore PART of a pool (v0.49.0, the druid's Devour) — the partial the mana API never had. Host-only.
+##
+## Modelled on `apply_heal`: floor the request at 0 so a negative can never become a stealth drain, clamp
+## to the max, and post NOTHING when nothing changed (a full caster killing something should not spam the
+## HUD with an event that says the same number).
+##
+## IT DELIBERATELY NEITHER READS NOR WRITES THE REFILL LOCKOUT. That guard exists to stop a player farming
+## FULL refills by flicking pace at a bubble edge; a kill-triggered partial has no such loop to close —
+## you had to kill something — and letting it consult the lockout would mean a trait that silently does
+## nothing for twenty beats after an ordinary refill. Not stamping it is the other half: a partial restore
+## must not delay the next genuine explore refill either. Stated as a ruling, not an omission.
+func restore_mana(entity_id: int, amount: int) -> void:
+	if amount <= 0 or not GameManager.config.mana_enabled or not _mana.has(entity_id):
+		return
+	var max_mana := max_mana_of(entity_id)
+	var before: int = int(_mana[entity_id])
+	var after: int = mini(max_mana, before + amount)
+	if after == before:
+		return
+	_mana[entity_id] = after
 	_post_mana(entity_id)
 
 
@@ -662,6 +692,89 @@ func clear_condition(entity_id: int, name: String) -> void:
 	})
 
 
+## Tell every living player NEAR a death about it (v0.49.0). Host-only.
+##
+## GATED ON SOMEONE ACTUALLY CARING. The flood fill and the player walk are skipped entirely unless some
+## living player carries a trait that implements the hook — checked against the HOOK, not against Devour
+## by name, so a second nearby-death trait added later needs no edit here. An ordinary fight pays nothing
+## for a mechanic nobody has.
+##
+## WALL-BOUNDED REACH via tiles_within_travel, not a raw Chebyshev radius: a kill two rooms away through a
+## wall should not feed a trait. The older Chebyshev scan in the banter picker survives only because a
+## CLIENT has to reproduce it for its log line and cannot run the host's fill; this is pure adjudication
+## and has no such constraint. The fill includes its origin at distance 0, so a kill on the bearer's own
+## tile counts.
+##
+## FIRES FOR ANY DEATH, PLAYER OR MONSTER, and deliberately so — "an ally fell beside me" is as legitimate
+## a trigger as a kill, and a trait that only wants enemies asks (Devour gates on `is_hostile_to` against
+## the `dead` node in the ctx). The referee does not pre-judge which deaths are interesting.
+##
+## SAFE AGAINST THE ITERATION even so: the dying entity's `_hp` was erased before this runs, so the
+## `is_alive` filter below excludes it from its own fan-out, and the only referee API a trait reaches from
+## here (restore_mana) adds a number and posts an event — it cannot kill, so it cannot re-enter
+## _kill_entity and mutate what is being walked.
+## Does this trait's OWN script define `method`, as opposed to inheriting the base's inert version?
+## `Object.has_method` cannot answer that — every trait "has" every hook, because the base declares them
+## all — so this reads the script's own method list. Cached per script: the answer is fixed for the
+## session, and a death in a busy fight must not re-scan one for every trait on every player.
+## Extra TARGETED reach this caster's traits grant (v0.49.0, Spellreach). Delegates to the player's own
+## query — the SAME function the client's targeting ring calls — so the gate and the ring cannot disagree
+## about a caster's reach. A monster has no such method and gets 0.
+func _spell_range_bonus_of(node) -> int:
+	if node == null or not node.has_method("spell_range_bonus"):
+		return 0
+	return int(node.spell_range_bonus())
+
+
+func _implements(trait_res, method: String) -> bool:
+	if trait_res == null:
+		return false
+	var script = trait_res.get_script()
+	if script == null:
+		return false
+	var key := "%s:%s" % [script.resource_path, method]
+	if _implements_cache.has(key):
+		return bool(_implements_cache[key])
+	var found := false
+	for m in script.get_script_method_list():
+		if str(m.get("name", "")) == method:
+			found = true
+			break
+	_implements_cache[key] = found
+	return found
+
+
+func _fire_nearby_death(dead_id: int, dead_name: String, death_tile: Vector2i, dead_node) -> void:
+	if _players == null or WorldGrid.is_wall(death_tile):
+		return
+	var listeners: Array = []
+	for child in _players.get_children():
+		if not (child is Entity) or not is_alive(child.entity_id):
+			continue
+		for t in _passives_of(child):
+			if _implements(t, "on_nearby_death"):
+				listeners.append(child)
+				break
+	if listeners.is_empty():
+		return
+	var reached: Dictionary = WorldGrid.tiles_within_travel(death_tile, _NEARBY_DEATH_TILES)
+	for bearer in listeners:
+		var tile: Vector2i = _move_referee.tile_of_entity(bearer.entity_id)
+		if WorldGrid.is_wall(tile) or not reached.has(tile):
+			continue
+		var ctx := {
+			"dead_id": dead_id, "dead_name": dead_name, "death_tile": death_tile,
+			# The dead NODE rides the ctx so a trait can ask about it (hostility, type) without reaching
+			# for a private accessor. Still valid here: queue_free is deferred to end of frame.
+			"dead": dead_node,
+			"bearer": bearer, "bearer_id": bearer.entity_id,
+			"distance": int(reached[tile]), "combat": self,
+		}
+		for t in _passives_of(bearer):
+			if t != null:
+				t.on_nearby_death(ctx)
+
+
 ## Resolve the FIRST live monster whose display_name matches `name` (case-insensitive) → its entity id, or 0 if
 ## none (v0.20.0, for the /stun dev command). Host-only, scans the Monsters container. Targets a LIVE instance by
 ## name (unlike /m, which tunes the shared MonsterType).
@@ -828,6 +941,45 @@ func apply_damage(attacker_id: int, target_id: int, amount: int, kind: String, d
 				absorbed = amount - reduced
 				amount = reduced
 				tags.append("armor")
+	# THE DEFENDER'S TRAIT PASS (v0.49.0, the knight's Hold the Line) — the first place in this file to run
+	# the TARGET's list rather than the attacker's.
+	#
+	# HERE, between armour and the HP write, for two reasons stated so the position is not moved by
+	# accident. (1) It runs AFTER armour, so a reduction COMPOUNDS with plate instead of competing with it
+	# in armour's min — a knight's own trait losing to the knight's own armour would be the worst of both.
+	# (2) It runs OUTSIDE the `_is_physical_kind` guard above, so it reaches magic, which is most of what
+	# armour deliberately cannot touch (Jon chose all-damage).
+	#
+	# The monster-damage floor is applied below rather than above, so it stays the LAST word — "enemies
+	# must always be able to hurt you" survives any stack of reductions.
+	# "admin" IS EXEMPT, the same carve-out shield block takes and for the same reason: the dev pokes
+	# (/mi hp, /mi kill) must land on the exact number they name or the tuning tools lie. Every other kind
+	# is fair game — unlike armour, this pass is not about physicality.
+	var defender_traits := _passives_of(target) if kind != "admin" else []
+	if not defender_traits.is_empty() and amount > 0:
+		var taken_ctx := {
+			"amount": amount, "attacker": attacker, "target": target,
+			"attacker_id": attacker_id, "target_id": target_id, "kind": kind, "tags": tags,
+			# The defender's stillness, read from the move referee and PASSED IN — a trait is handed
+			# authoritative state rather than fetching it (the passive contract).
+			"beats_since_move": _move_referee.beats_since_move(target_id),
+		}
+		for p in defender_traits:
+			taken_ctx["amount"] = p.modify_damage_taken(taken_ctx)
+		var after_traits: int = maxi(0, int(taken_ctx["amount"]))
+		# The MONSTER FLOOR again, because this pass can push a hit below it after armour already
+		# floored one. Same rule, same reason, applied to whatever this pass produced.
+		if attacker_id < 0 and target_id > 0:
+			after_traits = maxi(1, after_traits)
+		if after_traits != amount:
+			# `absorbed` accumulates rather than overwrites: armour may already have turned some aside,
+			# and the popup reports one number for what the defender shrugged off in total.
+			absorbed += amount - after_traits
+			amount = after_traits
+			# NO "armor" TAG (GLM diff review). That tag drives game_log's literal "(armor absorbs N)"
+			# clause, and a knight's brace turning aside a PLAGUE tick is not armour doing it. `absorbed`
+			# still accumulates, so the number is right; it simply goes unnarrated until a brace earns its
+			# own cue. Under-reporting beats mislabelling.
 	var new_hp: int = maxi(0, int(_hp[target_id]) - amount)
 	_hp[target_id] = new_hp
 	var target_name := _name_of(target)
@@ -1650,8 +1802,12 @@ func _use_targeted(user_id: int, ability: ActiveAbility, data: Dictionary) -> Di
 		return { "ok": false, "reason": "Can't target your own tile." }
 	# RANGE: Chebyshev to the clicked tile ≤ the ability's authored reach, read server-side from the shared
 	# resource (never a client value). The shoot pipe's gate, same metric, same sentence.
+	# SPELLREACH (v0.49.0): the authored reach PLUS whatever this caster's traits grant. Computed ONCE into
+	# a local and reused by the resolve bind below — that is what makes "accepted at N, then judged escaped
+	# against N-1" structurally impossible rather than something two edits have to remember.
+	var reach_tiles: int = ability.range_tiles + _spell_range_bonus_of(_node_of_id(user_id))
 	var cheb := maxi(absi(target_tile.x - my_tile.x), absi(target_tile.y - my_tile.y))
-	if cheb > ability.range_tiles:
+	if cheb > reach_tiles:
 		return { "ok": false, "reason": "Out of range." }
 	# CREATURE MODE (v0.38.0) — resolve the clicked tile to a BODY, here, from the referee's own occupancy.
 	# THE WIRE IS UNCHANGED: the client still sends only a tile, and the host does the tile→entity lookup
@@ -1750,7 +1906,7 @@ func _use_targeted(user_id: int, ability: ActiveAbility, data: Dictionary) -> Di
 	}
 	get_tree().create_timer(cast_sec).timeout.connect(
 			_resolve_targeted.bind(user_id, target_tile, payload, recovery_sec,
-					_move_referee.interrupt_gen_of(user_id), locked_id, ability.range_tiles))
+					_move_referee.interrupt_gen_of(user_id), locked_id, reach_tiles))
 	return { "ok": true, "deferred": true }
 
 
@@ -3065,6 +3221,10 @@ func _kill_entity(entity_id: int, ent_name: String) -> void:
 	_last_mana_refill_msec.erase(entity_id)
 	_move_referee.clear_entity(entity_id)
 	NetEvents.post_event("died", { "entity_id": entity_id, "name": ent_name })
+	# NEARBY-DEATH TRAIT FAN-OUT (v0.49.0, the druid's Devour) — the first player-side scan this file has
+	# ever run from a death. AFTER the `died` post on purpose: anything a trait does because of the death
+	# should land behind it in the ordered stream, which is the same reasoning break-on-damage uses.
+	_fire_nearby_death(entity_id, ent_name, death_tile, node)
 	# Goblin banter (v0.24.4): a MONSTER death makes a living packmate IN THE FIGHT bark revenge — Jon's
 	# marquee moment ("the healer dies and a goblin says 'you'll pay for that'"). Forced past the
 	# chance roll (the moment should reliably land) but still cooldown-gated. AFTER the erases above,
@@ -3209,30 +3369,9 @@ func _on_entity_exiting(node: Node) -> void:
 ## That is the same hazard `Player.granted_traits` exists to avoid, one level down; the bug it would cause
 ## is silent and permanent, so the copy is not an optimization to remove later.
 func _passives_of(node) -> Array:
-	if node == null:
+	if node == null or not node.has_method("all_traits"):
 		return []
-	var granted = node.get("granted_traits")
-	var pc = node.get("player_class")
-	var class_list = pc.get("passives") if pc != null else null
-	if granted == null or granted.is_empty():
-		return class_list if class_list != null else []
-	var out: Array = []
-	if class_list != null:
-		out.assign(class_list)
-	# DEDUPED, and this is the load-bearing guard rather than a tidiness pass (GLM diff review, reproduced:
-	# a ranger granted the Archery its class already gives shot with a 1.25s tail instead of 1.5s — the -1
-	# beat delta applied TWICE). A trait appearing twice in this array runs its hook twice, which squares a
-	# multiplier and doubles a delta, silently.
-	#
-	# IT LIVES HERE because this is the single seam every hook reads through, and there are three ways a
-	# duplicate can arrive: the `/trait` command, the `trait_granted` event handler, and the late-join sync.
-	# Guarding only the command would leave the other two, and the failure is invisible — no error, just
-	# wrong numbers. The command guards too, but for the FEEDBACK (it can say why); this guards for the
-	# CORRECTNESS.
-	for t in granted:
-		if t != null and not (t in out):
-			out.append(t)
-	return out
+	return node.all_traits()
 
 
 ## Build the modify_damage / after_attack context dict (v0.11.0). Authoritative throughout: tiles and

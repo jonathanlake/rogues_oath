@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="HoldTheLine" format=3]
+
+[ext_resource type="Script" path="res://resources/passives/hold_the_line.gd" id="1_hold_the_line"]
+
+[resource]
+script = ExtResource("1_hold_the_line")
+display_name = "Hold the Line"
+description = "Stand your ground and you weather what comes. Keep still and blows of every kind land softer — magic included. Swing, cast and drink freely; only moving breaks it."

@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="Devour" format=3]
+
+[ext_resource type="Script" path="res://resources/passives/devour.gd" id="1_devour"]
+
+[resource]
+script = ExtResource("1_devour")
+display_name = "Devour"
+description = "Something dying near you feeds your magic back. It does not have to be your kill."

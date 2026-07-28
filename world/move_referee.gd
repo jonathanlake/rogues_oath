@@ -139,6 +139,12 @@ var _stamina_generation: Dictionary = {}
 # pool — only a genuinely fresh fight refills. Written by note_tactical_exit (wired to
 # PaceReferee.tactical_exited); erased with the other per-entity records.
 var _last_tactical_exit_msec: Dictionary = {}
+## entity id -> Time.get_ticks_msec() of its last MOVE (v0.49.0). Written on an accepted glide and on the
+## forced-movement door; SEEDED at entity-enter so a fresh spawn must earn its brace like anyone else —
+## an absent entry reads as "just moved", never as "still forever", because the failure of the other
+## direction is an invisible free bonus. Erased at both teardown sites so a recycled peer id cannot
+## inherit a dead life's stamp.
+var _last_move_msec: Dictionary = {}
 # REST-WAIT DEADLINE (v0.28.0): entity_id -> Time.get_ticks_msec() at which the armed rest-to-recover
 # idle wait will fire. Written by note_activity at the same moment it arms the timer (the SAME stamped
 # seconds the `stamina_recovery` event carries, so the bar and this number can never disagree) and read
@@ -385,6 +391,10 @@ func commit_in_place(entity_id: int, duration_sec: float) -> bool:
 	# in-progress rest-to-recover regen and restarts the idle clock (v0.24.0, Jon: "moving or doing
 	# an action will stop the regeneration"). Attacks still never SPEND points — this only gates rest.
 	note_activity(entity_id)
+	# NO MOVE-CLOCK STAMP HERE (v0.49.0). This function commits every in-place window — a bump swing, a
+	# wind-up, a cast, a drink — and Hold the Line's clock is MOVEMENT-only by Jon's ruling: you brace by
+	# standing your ground, not by standing idle. Stamping here would make swinging break your own brace,
+	# which is the action-scoped reading he explicitly declined.
 	return true
 
 
@@ -529,7 +539,25 @@ func teleport_entity(entity_id: int, to: Vector2i) -> bool:
 	# unrooted mover, which is the overwhelmingly common case.
 	if _combat != null:
 		_combat.clear_condition(entity_id, "rooted")
+	# A teleport IS movement (v0.49.0), so it BREAKS a brace — a body that was just moved is not holding a
+	# line. Stamped HERE rather than by enumerating vectors: this function is the one forced-movement door
+	# (see the header), so a future knockback, pull or trap inherits the rule without touching this file.
+	_last_move_msec[entity_id] = Time.get_ticks_msec()
 	return true
+
+
+## BEATS since this entity last MOVED (v0.49.0) — the read behind Hold the Line. A never-stamped entity
+## reads 0 ("just moved"), the conservative direction.
+##
+## CONVERTED AT READ TIME through the mover's live resolved pace, which misreports if the pace changed
+## during the window. At shipped values both dials are 0.25s so the drift is nil; the honest alternative
+## is a per-frame beat integrator, which is far more machinery than a ten-beat brace is worth. Recorded
+## as a known simplification rather than left to be discovered.
+func beats_since_move(entity_id: int) -> float:
+	if not _last_move_msec.has(entity_id):
+		return 0.0
+	var beat: float = maxf(PaceReferee.beat_or_explore(_pace, entity_id), 0.001)
+	return float(Time.get_ticks_msec() - int(_last_move_msec[entity_id])) / 1000.0 / beat
 
 
 ## Pick a uniformly-random legal BLINK destination for `entity_id`, or return the entity's CURRENT tile
@@ -742,6 +770,7 @@ func clear_entity(entity_id: int) -> void:
 	_stamina.erase(entity_id)
 	_stamina_generation[entity_id] = int(_stamina_generation.get(entity_id, 0)) + 1
 	_last_tactical_exit_msec.erase(entity_id)
+	_last_move_msec.erase(entity_id)
 	_passive_regen_running.erase(entity_id)
 	# v0.28.0: the armed rest-wait deadline goes with the pool it belongs to — a respawned peer id must
 	# never inherit the previous life's "recovery ends at" estimate.
@@ -961,6 +990,11 @@ func _validate_glide(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# EVERY accepted glide — budgeted, exhausted, or explore-pace — is ACTIVITY: it cancels any
 	# rest-to-recover regen in progress (Jon: "moving... will stop the regeneration").
 	note_activity(sender_peer_id)
+	# THE MOVE CLOCK (v0.49.0, the knight's Hold the Line). Stamped HERE rather than inside note_activity
+	# because that one is ACTIVITY-scoped — it fires for every swing, cast and drink — and because it
+	# returns early at a max-1 stamina pool, so most steps record nothing at all. This site fires only on
+	# an accepted glide, which is exactly "moved".
+	_last_move_msec[sender_peer_id] = Time.get_ticks_msec()
 
 	# Stamp THREE windows ONCE here (stamp-and-bake, DESIGN §2.8), so a live tempo change never
 	# re-derives this in-flight commit. glide_sec is the GLIDE term (tier beats × beat × diagonal
@@ -1082,9 +1116,27 @@ func _step_duration(mover, dir: Vector2i, mover_id: int, to: Vector2i,
 			_warned_null_speed = true
 	else:
 		tier_beats = mover.glide_speed.glide_beats
+	var is_rough := WorldGrid.is_rough(to)
 	var rough_beats := tier_beats
-	if WorldGrid.is_rough(to):
+	if is_rough:
 		rough_beats = maxf(0.0, GameManager.config.rough_step_beats)
+	# THE TRAIT PASS (v0.49.0) — step 3 of the chain, on the ROUGH candidate only. Chained in array order
+	# like every other modifier. Floored at 0 afterwards, the same defence the beats hooks take: a trait
+	# may shorten a step to instant, never to negative.
+	# Read the mover's traits DIRECTLY rather than through the combat referee: Player.all_traits() is the
+	# one union (see its docstring), and routing a movement question through the combat referee would add
+	# a dependency this file does not otherwise need here. A Monster has no such method and answers no
+	# traits, which is correct — monsters carry none today.
+	if mover != null and mover.has_method("all_traits"):
+		var move_traits: Array = mover.all_traits()
+		if not move_traits.is_empty():
+			var ctx := {
+				"beats": rough_beats, "mover": mover, "mover_id": mover_id,
+				"tier_beats": tier_beats, "to_tile": to, "is_rough": is_rough,
+			}
+			for t in move_traits:
+				ctx["beats"] = t.modify_move_beats(ctx)
+			rough_beats = maxf(0.0, float(ctx["beats"]))
 	var crawl_beats := tier_beats
 	if exhausted_crawl:
 		crawl_beats = _exhausted_step_beats_of(mover_id)
@@ -1330,6 +1382,8 @@ func _tile_of_peer(peer_id: int) -> Vector2i:
 func _on_entity_entered(node: Node) -> void:
 	if node is Entity:
 		_occupied[node.tile] = node.entity_id
+		# Seed the move clock so a fresh spawn earns its brace (v0.49.0) — see _last_move_msec.
+		_last_move_msec[node.entity_id] = Time.get_ticks_msec()
 		# Stamina experiment (v0.24.0): seed a full pool at enter. A monster that spawns already
 		# engaged gets exactly what the tactical-entry reset would grant, so the no-transition spawn
 		# case is covered by construction. Seeded even while /stamina is off (enable reseeds anyway).
@@ -1568,6 +1622,7 @@ func _on_entity_exiting(node: Node) -> void:
 	_stamina.erase(entity_id)
 	_stamina_generation[entity_id] = int(_stamina_generation.get(entity_id, 0)) + 1
 	_last_tactical_exit_msec.erase(entity_id)
+	_last_move_msec.erase(entity_id)
 	_passive_regen_running.erase(entity_id)
 	# v0.28.0: the armed rest-wait deadline goes with the pool it belongs to — a respawned peer id must
 	# never inherit the previous life's "recovery ends at" estimate.

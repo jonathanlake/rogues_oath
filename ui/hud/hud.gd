@@ -1425,8 +1425,16 @@ func _ability_tooltip(ability: ActiveAbility) -> String:
 	# because the destination is random within the reach, so the number is a bound and not a promise.
 	if ability.blink_travel_tiles > 0:
 		parts.append("blinks up to %d tiles" % ability.blink_travel_tiles)
-	if ability.range_tiles > 1:
-		parts.append("range %d tiles" % ability.range_tiles)
+	# SPELLREACH (v0.49.0): quote the reach this player ACTUALLY has, not the ability's authored number —
+	# a tooltip that says 6 while the ring draws 7 is the same lie in a different place. Own player only,
+	# which is all this tooltip has ever described.
+	var reach: int = ability.range_tiles
+	if ability.kind == ActiveAbility.Kind.TARGETED and _players != null:
+		var me := _players.get_node_or_null(str(_own_id)) as Player
+		if me != null:
+			reach += me.spell_range_bonus()
+	if reach > 1:
+		parts.append("range %d tiles" % reach)
 	if ability.windup_beats + ability.recovery_beats > 0.0:
 		parts.append("%s cast" % _secs(ability.windup_beats + ability.recovery_beats))
 	if ability.mana_cost > 0:

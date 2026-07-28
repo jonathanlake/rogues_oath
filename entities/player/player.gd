@@ -93,6 +93,60 @@ var granted_traits: Array[PassiveAbility] = []
 var granted_abilities: Array[ActiveAbility] = []
 
 
+## THE ONE TRAIT UNION (v0.49.0) — this player's class traits followed by any granted to them
+## specifically, deduped. Every trait read in the project goes through it: the host's hook dispatch
+## (`CombatReferee._passives_of` delegates here), and the client's query reads for the targeting ring.
+##
+## IT LIVES ON THE PLAYER, not on the referee, and that move is the whole reason Spellreach can work.
+## The referee is host-only and inert on clients, so a client that needed the union — and it does, or the
+## targeting ring would draw a reach the host refuses — would have had to re-walk class-then-granted
+## itself. Two copies of that walk is exactly the drift this codebase keeps writing guards against, and
+## the failure would be invisible: a ring that quietly disagrees with the gate.
+##
+## DEDUPED, and that guard is load-bearing rather than tidiness (reproduced in v0.45.0: a ranger granted
+## the Archery its class already gives applied the -1 beat delta TWICE, shooting with a 1.25s tail instead
+## of 1.5s). A trait appearing twice runs its hook twice, squaring a multiplier or doubling a delta,
+## silently. Three paths can introduce a duplicate — the `/trait` command, the `trait_granted` event, and
+## the late-join sync — so the guard belongs at the single read rather than at each writer.
+##
+## CLASS FIRST, THEN GRANTED. `modify_damage` chains in array order with each trait receiving the
+## previous one's output, so with two multipliers the result depends on it. The class's own identity
+## prices the blow; anything you were given modifies that.
+##
+## The class list is COPIED, never appended to — it is a shared resource, so appending would permanently
+## give the class whatever this one player was granted, on every peer.
+func all_traits() -> Array:
+	# ALWAYS A COPY, including the no-granted-traits path (GLM diff review). Returning
+	# `player_class.passives` by reference handed every caller a live handle on a SHARED resource array —
+	# one append or sort anywhere would permanently rewrite that class for every player on every peer, and
+	# this method is public and called from three files. The docstring above promised a copy; now it is one.
+	var out: Array = []
+	if player_class != null:
+		out.assign(player_class.passives)
+	for t in granted_traits:
+		if t != null and not (t in out):
+			out.append(t)
+	return out
+
+
+## Extra reach in tiles this player's traits grant to TARGETED casts (v0.49.0, Spellreach).
+##
+## A QUERY, evaluated on EVERY PEER — see PassiveAbility's header for the hook-vs-query split. The host
+## adds it to its range gate and the client adds it to the targeting ring, and the two agree because both
+## read the same replicated data (the class resource, plus `granted_traits` which every peer maintains
+## from the same events) through the same union above. Not a synced value: a value would need keeping in
+## step, and this cannot drift because there is nothing to keep.
+##
+## SUMS across traits rather than taking a max, so two reach traits would stack — the arithmetic a player
+## would expect from two things that each say "+1 range".
+func spell_range_bonus() -> int:
+	var bonus := 0
+	for t in all_traits():
+		if t != null:
+			bonus += t.spell_range_bonus()
+	return bonus
+
+
 ## THE ONE ORDERED HOTBAR READ (v0.47.0) — class abilities first, then granted ones, capped at the authored
 ## `GameConfig.ability_slots`. Every site that turns a slot INDEX into an ability calls this: the host's
 ## adjudication (`CombatReferee._ability_of`), the client's targeting-cursor routing
