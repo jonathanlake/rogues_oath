@@ -6,5 +6,6 @@
 [resource]
 script = ExtResource("1_backstab")
 display_name = "Sneak Attack"
+description = "A dagger finds the gap. Catch a foe who is already dealing with someone else — flanked by an ally, or reeling from a stun — and the blow lands where it hurts. Your own Kick sets it up."
 damage_multiplier = 2.0
 required_weapon = ExtResource("2_dagger")

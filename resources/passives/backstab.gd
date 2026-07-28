@@ -31,6 +31,28 @@ extends PassiveAbility
 @export var required_weapon: WeaponType = null
 
 
+## The DERIVED tooltip half (v0.43.0) — see PassiveAbility.tooltip_terms for the contract. Quotes the two
+## things a player can act on: what the multiplier is worth, and which weapon it demands. The TRIGGERS
+## (flanked or stunned) are deliberately left to the authored prose — they are a mechanic, not a number,
+## and spelling out "×2.0 when flanked_by_ally or target_stunned" would be the math-not-mechanic failure
+## the house rule exists to prevent.
+##
+## The weapon name is read LIVE off `required_weapon`, so re-pointing the .tres at a different weapon
+## retunes the tooltip in the same edit. A null required_weapon quotes no weapon clause rather than
+## printing "<null>" — that authoring state already disables the trait, so the tooltip stays honest about
+## it doing nothing.
+## (Note the number formatting: GDScript's `%` has no `%g`, so a whole multiplier is printed as an int and
+## a fractional one to one place — "2× damage", not "2.000000×". Mirrors hud.gd's `_secs` idiom.)
+func tooltip_terms() -> Array[String]:
+	var out: Array[String] = []
+	var mult := ("%d" % int(damage_multiplier)) if is_equal_approx(damage_multiplier, roundf(damage_multiplier)) \
+			else ("%.1f" % damage_multiplier)
+	out.append("%s× damage" % mult)
+	if required_weapon != null:
+		out.append("%s only" % required_weapon.display_name)
+	return out
+
+
 ## modify_damage (v0.27.0 triggers): multiply the blow when the attacker wields the required weapon AND
 ## the target is COMPROMISED — either FLANKED BY AN ALLY (a living, non-hostile entity stands on the tile
 ## directly opposite the attacker, i.e. the target is sandwiched) or STUNNED. Both booleans are

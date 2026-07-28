@@ -30,6 +30,37 @@ extends PassiveAbility
 @export var recovery_beats_delta: float = -1.0
 
 
+## The DERIVED tooltip half (v0.43.0) — see PassiveAbility.tooltip_terms for the contract. Both numbers are
+## BEATS, which never reach a player (v0.41.0's plain-English pass), so they are multiplied here through
+## `GameManager.tactical_beat_sec` — the same conversion `hud.gd`'s `_secs` does, reachable from a Resource
+## because GameManager is an autoload.
+##
+## PHRASED AS THE PLAYER EXPERIENCES IT, not as the field is stored: the deltas are NEGATIVE (a delta added
+## to the base, so a future "heavy draw" can author +1 with the same field), but "-0.25s draw" reads like a
+## penalty. So the sign is interpreted — a negative delta becomes "faster", a positive one "slower" — and
+## the magnitude is printed. A zero delta contributes no phrase at all rather than "0s draw", which is the
+## right answer for a half-disabled authoring state.
+func tooltip_terms() -> Array[String]:
+	var out: Array[String] = []
+	if not is_zero_approx(windup_beats_delta):
+		out.append("draw %s %s" % [_secs(absf(windup_beats_delta)),
+				"faster" if windup_beats_delta < 0.0 else "slower"])
+	if not is_zero_approx(recovery_beats_delta):
+		out.append("recovery %s %s" % [_secs(absf(recovery_beats_delta)),
+				"faster" if recovery_beats_delta < 0.0 else "slower"])
+	out.append("bows only")
+	return out
+
+
+## Beats → a player-facing seconds string. A local twin of hud.gd's `_secs` rather than a call into it: a
+## Resource must not reach into a UI node, and GameManager is the autoload both of them read. Same rule
+## (whole numbers print without a decimal, GDScript has no `%g`) and same live read of the TACTICAL beat, so
+## a `/config tactical_beat_sec` retune moves this text exactly as it moves every ability tooltip.
+func _secs(beats: float) -> String:
+	var s := beats * GameManager.tactical_beat_sec
+	return "%.0fs" % s if is_equal_approx(s, roundf(s)) else "%.1fs" % s
+
+
 ## Shorten the DRAW when the wielder is holding a ranged weapon. A melee weapon, or no weapon at all,
 ## returns the beats untouched.
 func modify_windup_beats(ctx: Dictionary) -> float:

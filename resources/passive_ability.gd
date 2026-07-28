@@ -26,6 +26,37 @@ extends Resource
 ## without a code edit. Never adjudication — presentation only, read client-side by the HUD.
 @export var display_name: String = ""
 
+## PROSE for the HUD tooltip (v0.43.0), shown beneath the trait's name. PRESENTATION ONLY — no referee
+## reads it and it never crosses the wire (every peer loads the same resource).
+##
+## NUMBERS ARE DERIVED, PROSE IS AUTHORED — the same rule `ActiveAbility.description` and
+## `ItemType.description` carry. Do NOT type a multiplier or a beat count in here; the tooltip builder
+## appends those from `tooltip_terms()` below, so a `/w`-style retune can never leave this text quoting a
+## stale number. WRITE THE MECHANIC, NOT THE MATH: say that Sneak Attack rewards catching someone
+## distracted; do not say it doubles damage.
+@export_multiline var description: String = ""
+
+
+## The DERIVED half of this trait's tooltip (v0.43.0): the short phrases naming what it actually does,
+## built from the subclass's own live fields. The base returns EMPTY, which is correct for a purely
+## mechanical trait with nothing worth quoting — the tooltip then shows just the name and the prose.
+##
+## WHY THIS IS A VIRTUAL RATHER THAN A hud.gd FUNCTION: a trait's numbers live on its SUBCLASS
+## (`Backstab.damage_multiplier`, `Archery.windup_beats_delta`), which the HUD cannot reach through the
+## `PassiveAbility` base type — a `_passive_tooltip` doing `if passive is Backstab` would put a growing
+## per-trait switch in the presentation layer and re-couple the HUD to every trait ever added. This keeps
+## the existing split intact: the referee owns WHEN a hook runs, the passive owns WHETHER it applies —
+## and now also owns how it DESCRIBES itself.
+##
+## CONTRACT for overrides: return `Array[String]`, exactly this type, built as a local typed array rather
+## than a bare literal (GDScript's typed-array assignment is where a mismatch actually bites). Each entry
+## is one short phrase, already formatted with its units — the HUD only joins them with ", ". A trait whose
+## numbers are BEATS converts them itself (× `GameManager.tactical_beat_sec`, the autoload reachable from a
+## Resource, which is the same multiply `hud.gd`'s `_secs` does): "beats" is a dev unit and must never reach
+## a player (v0.41.0's plain-English pass).
+func tooltip_terms() -> Array[String]:
+	return []
+
 
 ## Read-only OBSERVATION seam fired the moment an attack is committed, BEFORE any damage is computed
 ## (MoveReferee._begin_bump entry for a player bump, CombatReferee.wind_up entry for a telegraphed

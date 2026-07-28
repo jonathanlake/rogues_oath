@@ -36,9 +36,17 @@ const DEV_WEAPON_CLAMPS := {
 ## while 120 still refuses "permanent" outright.
 ## v0.40.0: the three DoT fields joined, so Jon can answer his own "does that sound balanced?" in play
 ## rather than by rebuilding — the plague's whole design question is a feel question about pacing.
+## v0.43.0: the wizard's two spells bring five more — `mana_cost` (every caster ability's price), the three
+## `orb_*` volley fields, and `blink_travel_tiles`. Same reasoning as the DoT block: these are all FEEL
+## questions ("is 3 mana right for a blink?", "do 3 orbs read as a volley or a stutter?") and answering them
+## by editing a `.tres` and restarting is exactly the loop this allowlist exists to remove. `range_tiles` is
+## deliberately still ABSENT — it is a targeting-geometry field the client's range ring is drawn from, so a
+## live retune would desync the ring from the host's gate until the next arm.
 const DEV_ABILITY_FIELDS := ["damage", "stun_beats", "windup_beats", "recovery_beats", "cooldown_beats",
-	"root_beats", "dot_damage", "dot_ticks", "dot_interval_beats"]
-const DEV_ABILITY_INT_FIELDS := ["damage", "dot_damage", "dot_ticks"]
+	"root_beats", "dot_damage", "dot_ticks", "dot_interval_beats",
+	"mana_cost", "orb_count", "orb_damage", "orb_interval_beats", "blink_travel_tiles"]
+const DEV_ABILITY_INT_FIELDS := ["damage", "dot_damage", "dot_ticks",
+	"mana_cost", "orb_count", "orb_damage", "blink_travel_tiles"]
 const DEV_ABILITY_CLAMPS := {
 	"damage": [0, 999],
 	"stun_beats": [0.0, 60.0],
@@ -53,6 +61,19 @@ const DEV_ABILITY_CLAMPS := {
 	"dot_damage": [0, 99],
 	"dot_ticks": [0, 20],
 	"dot_interval_beats": [0.5, 60.0],
+	# v0.43.0. `mana_cost` tops out at 99 — well past any pool a class could plausibly carry, so it can
+	# express "unaffordable" for testing the gate without reaching a number that looks like a typo.
+	"mana_cost": [0, 99],
+	# The orb volley. Its interval floors at 0.1 rather than the DoT's 0.5: orbs are a VISUAL cadence
+	# inside one cast (a fifth of a second still reads as three distinct impacts), where a DoT interval is
+	# a pacing decision measured in seconds. 0 stays out of reach for the same reason it does there — the
+	# whole payload would land in one frame, which is a different spell than the one authored.
+	"orb_count": [0, 12],
+	"orb_damage": [0, 99],
+	"orb_interval_beats": [0.1, 30.0],
+	# Blink reach. 20 travel-tiles is larger than any authored room, so the flood fill's wall bound is
+	# what actually limits it long before this does — which is the intended relationship.
+	"blink_travel_tiles": [0, 20],
 }
 
 const DEV_MONSTER_FIELDS := ["max_hp", "aggro_range_tiles", "tactical_radius_tiles",

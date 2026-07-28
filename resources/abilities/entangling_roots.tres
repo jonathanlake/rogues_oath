@@ -15,5 +15,6 @@ stun_beats = 0.0
 windup_beats = 2.0
 recovery_beats = 2.0
 range_tiles = 6
+mana_cost = 1
 cooldown_beats = 40.0
 root_beats = 30.0

@@ -865,6 +865,15 @@ func _log_ability_reject(reason: String) -> void:
 			# A never-moved body faces nowhere, so "backwards" has no meaning yet (MoveReferee.facing_of ZERO).
 			add_line("Take a step first — you have no direction to step back from.")
 		_:
+			# MANA (v0.43.0) — a PREFIX test, exactly like the cooldown arm at the top of this function and
+			# for the same reason: the host stamps the real numbers into the reason string ("not enough mana
+			# (3/1)"), and reprinting them here from a client-side guess would be a second source of truth
+			# that can disagree. So the host's figures are surfaced verbatim and only the sentence around
+			# them is local. Handled in the fallthrough rather than as its own `match` arm because the arm
+			# would have to be a literal, and the string carries data.
+			if reason.begins_with("not enough mana"):
+				add_line("Not enough mana %s." % reason.trim_prefix("not enough mana "))
+				return
 			add_line("Ability refused (%s)." % reason)
 
 

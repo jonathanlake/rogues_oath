@@ -6,3 +6,4 @@
 script = ExtResource("1_class")
 display_name = "priest"
 atlas_coords = Vector2i(1, 2)
+max_mana = 15

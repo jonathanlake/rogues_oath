@@ -585,6 +585,17 @@ func _ready() -> void:
 		# reaching up to Main (its invariant). Inert on clients (this whole branch is host-only).
 		_combat.activate(_players, _monsters, _referee, _pace, _spawn_item_at)
 		_referee.set_combat(_combat)
+		# MANA refills on the return to EXPLORE (v0.43.0, Jon's rule: out of combat means topped up) — the
+		# same pace edge the two stamina hooks above use, a different referee, wired here for the same
+		# component reason (referees never reach sideways). Placed AFTER _combat.activate so the referee
+		# holds its pace reference before any refill can consult it for the lockout conversion.
+		#
+		# NOTE the deliberate asymmetry with stamina: stamina refills on the ENTRY edge and treats this exit
+		# as nothing but a lockout stamp, precisely because refilling ON the exit is pace-flicker
+		# exploitable. Mana keeps the explore rule Jon asked for and pays for it with its own lockout inside
+		# refill_mana (plus that function's already-full early return, which is what stops a caster who
+		# never spent from arming a lockout at all).
+		_pace.tactical_exited.connect(_combat.refill_mana)
 		# Host-only: activate the inventory referee (v0.18.0 chunk B) with the Players + Items containers (it
 		# wires the players' child_exiting_tree to drop a leaving player's bag — inventory dies with the player,
 		# permadeath), then inject it into the move referee so a completed glide's arrival tile routes a walk-over
@@ -862,6 +873,17 @@ func _press_ability_slot(index: int) -> void:
 			if is_instance_valid(_game_log):
 				_game_log.add_line("%s — on cooldown (%.1fs)." % [ability.display_name, cooling])
 			return
+		# MANA (v0.43.0) — the same "don't offer a ring you can't use" courtesy, and ORDERED AFTER the
+		# cooldown check ON PURPOSE: the host's gate is cooldown-then-mana, so a spell that is both on
+		# cooldown and unaffordable must name the same one here as it would there. Getting the order wrong
+		# would make the local line and the host's eventual reject disagree about why, which is worse than
+		# having no local line at all. A mirror read, never authority — the host re-checks anything that
+		# does reach it, so a stale HUD value costs nothing but the pre-v0.43.0 behaviour.
+		if ability.mana_cost > 0 and _hud.own_mana() < ability.mana_cost:
+			if is_instance_valid(_game_log):
+				_game_log.add_line("%s — not enough mana (%d/%d)."
+						% [ability.display_name, ability.mana_cost, _hud.own_mana()])
+			return
 		me.arm_targeting(index)
 		_range_overlay.set_targeting(me.tile, ability.range_tiles)
 		# Feedback rule (§2.3.4): arming is a state change, so it says so — and names BOTH ways out, because
@@ -1067,6 +1089,19 @@ func _on_net_event(event: Dictionary) -> void:
 			# An instant ability fired (v0.26.0), or a deferred cooldown was charged when a raised guard
 			# absorbed a hit. Own-player HUD only — it drains the cooldown overlay on that ability's socket.
 			_handle_ability_cooldown_event(event)
+		"mana":
+			# A caster's mana pool changed (v0.43.0, host-authored: a spend, an explore refill, or a class
+			# reconcile). Own-player HUD renders the blue bar; a max of 0 takes the bar down entirely.
+			_handle_mana_event(event)
+		"self_cast":
+			# A PLAYER's SELF cast channel starting (v0.43.0 — the wizard's Blink). A tell over the caster
+			# for the committed window; the LAND is the later `blink` event (or its `fizzled` twin).
+			_handle_self_cast_event(event)
+		"missile_volley":
+			# A landed Magic Missile volley (v0.43.0). PURE CHOREOGRAPHY: the orbs bloom from the wizard and
+			# peel off one at a time into the target. The DAMAGE rides the normal `attack` events (kind
+			# "missile") that follow, so this event carries no gameplay authority whatsoever.
+			_handle_missile_volley_event(event)
 
 
 ## Play back an accepted glide. Resolve the mover by entity id: positive is a player, negative a
@@ -1661,6 +1696,48 @@ func _handle_stamina_event(event: Dictionary) -> void:
 				int(data.get("points", 0)), int(data.get("max", 0)))
 
 
+## All peers: a caster's MANA pool changed (v0.43.0). Own-player HUD only — the bar is a personal resource
+## read, exactly like the stamina pips above, and a teammate's pool is not our business (the party reads
+## each other's state through the world, not through each other's UI). A `max` of 0 is the signal to take
+## the bar down entirely — that is how a non-caster class, or a `/class` change away from one, removes it.
+func _handle_mana_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	if _hud != null:
+		_hud.note_mana(int(data.get("entity_id", 0)),
+				int(data.get("points", 0)), int(data.get("max", 0)))
+
+
+## All peers: a PLAYER's SELF cast channel started (v0.43.0 — the wizard's Blink). The caster's own
+## spell-cast tell for the committed window, in a cold arcane BLUE that matches the mana bar and reads as
+## neither the druid's green control magic nor a monster's red smite (§2.3.4 — a distinct cast, a distinct
+## colour). NO ground paint and NO target mark: a self-cast has no square and no victim to warn, and the
+## thing worth telegraphing is simply "the wizard is doing something and is committed to it". The LAND is
+## the later `blink` event, which is its own cue.
+func _handle_self_cast_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var caster := _node_for_peer(int(data.get("entity_id", 0))) as Entity
+	if caster != null:
+		caster.play_spell_cast(float(data.get("cast_sec", 0.0)), Color(0.45, 0.62, 1.0))
+
+
+## All peers: play a landed Magic Missile volley (v0.43.0). PURE PRESENTATION — the damage arrives on its
+## own `attack` events (kind "missile") and this renders nothing about numbers; if this handler did nothing
+## at all the spell would still work, it would just be invisible.
+##
+## BOTH NODES ARE GUARDED because this choreography is longer-running than a single burst: on a peer where
+## the caster or the target has already despawned (their `died` event won the race), starting a flight
+## between two points one of which no longer exists would be a tween against a freed node. Rendering
+## nothing is the correct answer — the death the peer already saw is the story.
+func _handle_missile_volley_event(event: Dictionary) -> void:
+	var data: Dictionary = event.get("data", {})
+	var caster := _node_for_peer(int(data.get("caster_id", 0))) as Entity
+	var target := _node_for_peer(int(data.get("target_id", 0))) as Entity
+	if caster == null or target == null:
+		return
+	_fx.missile_volley(caster, target, int(data.get("orb_count", 0)),
+			float(data.get("interval_sec", 0.0)))
+
+
 ## All peers: show the thinking cue over a hesitating monster (v0.24.0). The `reason` field
 ## (v0.24.3) picks the flavor: "engaged" leads with the "!" alert pop ("it noticed you") before the
 ## dots; the story beats (retarget / last_stand / cornered) are dots only — the fight already
@@ -2241,6 +2318,13 @@ func _on_player_spawned_host(node: Node) -> void:
 	# starts right — normally explore, but corrected in one event if it spawned into a fight. Host-only
 	# (this hook is inside the is_server branch); the pace referee dedups against _last_broadcast.
 	_pace.on_player_spawned(node.entity_id)
+	# MANA SEED (v0.43.0), DEFERRED — and the deferral is the whole point. This hook is
+	# `child_entered_tree`, which fires BEFORE `_ready`, and a Player's `player_class` is assigned inside
+	# `_ready` (Player._ready → set_class from the spawn slot's roster entry). Seeding synchronously here
+	# would therefore read a null class and hand every caster a pool of 0. `call_deferred` runs it after the
+	# frame's tree work, by which time the class is real. reconcile_mana is idempotent and is the same
+	# function the /class path calls, so spawn and class-change share one seeding rule.
+	_combat.reconcile_mana.call_deferred(node.entity_id)
 
 
 ## HOST-ONLY (v0.26.0 recovery-on-contact): the move referee released an in-place window EARLY (a

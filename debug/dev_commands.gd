@@ -555,6 +555,12 @@ func _dev_cmd_class(sender_peer_id: int, args: Array[String], by: String) -> Dic
 	# Apply host-side FIRST (authoritative), then broadcast — mirrors _validate_swap_weapon. set_class
 	# repaints the host's own sprite at validator time too; the call_local re-apply stays idempotent.
 	player_node.set_class(player_class)
+	# MANA RECONCILE (v0.43.0) — immediately after the class is authoritative, because the pool's max IS a
+	# property of the class. CLAMPS DOWN ONLY: becoming a druid (10) while holding 14 leaves you at 10, and
+	# becoming a barbarian drops the pool entirely (the HUD bar goes with it). It never refunds and never
+	# tops you up mid-session — a class swap is a dev tool, not a mana potion — EXCEPT for a player who had
+	# no pool at all, who starts full simply because they have not spent anything yet.
+	_combat.reconcile_mana(sender_peer_id)
 	# Class loadout (v0.17.0): a class with its own weapon_roster equips its FIRST weapon (roster[0]) on the
 	# switch — a ranger becomes a ranger holding the longsword, no bare-hands gap. Equipping RIDES the existing
 	# swap_weapon event (host-side set_weapon first, then broadcast so every peer adopts it) — NEVER a

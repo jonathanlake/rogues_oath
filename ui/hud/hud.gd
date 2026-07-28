@@ -169,6 +169,19 @@ const _STAMINA_EMPTY := Color(0.1, 0.16, 0.2)
 # Own-player HP bar (transplanted party-frame mechanics), fed by note_attack/note_died filtered to our id.
 var _own_hp_fill: ColorRect = null
 var _own_hp_text: Label = null
+# MANA bar (v0.43.0) — the caster resource, directly under the HP bar. The WRAPPER is held (unlike the HP
+# bar's) because this one is conditionally VISIBLE: only a class with a non-zero PlayerClass.max_mana shows
+# it, and a hidden Control contributes zero height, so a knight's column measures exactly as it did before
+# mana existed. Fed by host-pushed `mana` events, never queried — the stamina pattern, for the same reason
+# (a pool changes on casts that may deal no damage, so it cannot ride an attack event the way HP does).
+var _own_mana_bar: Control = null
+var _own_mana_fill: ColorRect = null
+var _own_mana_text: Label = null
+# Last own-pool values, kept so the client-side "can I afford to arm this cursor?" pre-check in main.gd can
+# read them without a query. Mirror only — the host re-checks anything that reaches it.
+var _own_mana: int = 0
+const _MANA_FULL := Color(0.34, 0.52, 0.95)     # arcane blue — deliberately not HP green/red or stamina teal
+const _MANA_EMPTY := Color(0.12, 0.14, 0.28)
 # Primary-hand weapon icon: an AtlasTexture over ITEMS_TEX, region re-pointed by refresh_self / on_weapon_swap.
 var _own_weapon_icon: TextureRect = null
 var _own_weapon_atlas := AtlasTexture.new()
@@ -318,6 +331,43 @@ func note_stamina(entity_id: int, points: int, max_points: int) -> void:
 	if not _own_stamina_row.visible:
 		_own_stamina_row.visible = true
 		_relayout()
+
+
+## Own-player MANA changed (v0.43.0; fanned out by main.gd from the host's `mana` event). OWN PLAYER ONLY,
+## like the pips and the HP bar — a teammate's pool is read through the world, not through our UI.
+##
+## `max_points <= 0` is the TAKE-IT-DOWN signal, not a bad value: it is exactly what a non-caster class
+## reports, and what a `/class` change away from a caster posts. So the bar's whole visibility rule is
+## "does this class have a pool", pushed rather than inferred, and the knight never sees an empty blue
+## strip. Both visibility flips call `_relayout()` because the bar's 9px enter and leave the column's
+## measured min-height, which is what the integer HUD zoom is fitted against.
+func note_mana(entity_id: int, points: int, max_points: int) -> void:
+	if entity_id != _own_id or _own_mana_bar == null:
+		return
+	_own_mana = points
+	if max_points <= 0:
+		if _own_mana_bar.visible:
+			_own_mana_bar.visible = false
+			_relayout()
+		return
+	var frac := clampf(float(points) / float(maxi(max_points, 1)), 0.0, 1.0)
+	_own_mana_fill.anchor_right = frac
+	_own_mana_fill.offset_right = 0.0
+	# ONE colour at every level, deliberately — see _build_mana_bar. An empty pool is a budgeting fact, and
+	# the LENGTH already says it; recolouring would borrow the HP bar's "you are in danger" grammar for
+	# something that is not danger.
+	_own_mana_fill.color = _MANA_FULL
+	_own_mana_text.text = "%d/%d" % [points, max_points]
+	if not _own_mana_bar.visible:
+		_own_mana_bar.visible = true
+		_relayout()
+
+
+## Our own current mana (v0.43.0). A MIRROR read for main.gd's "don't arm a cursor you can't pay for"
+## pre-check — client-side routing convenience (§2.2.9), never authority: the host re-validates every press
+## that reaches it, so a stale value here costs nothing but the pre-v0.43.0 behaviour.
+func own_mana() -> int:
+	return _own_mana
 
 
 ## An instant ability fired or had its cooldown charged (v0.26.0 instants experiment; fanned out by main.gd
@@ -746,6 +796,14 @@ func _build_char_info() -> void:
 	level_label.add_theme_color_override("font_color", Color(0.75, 0.8, 0.95, 0.7))
 	vbox.add_child(level_label)
 	vbox.add_child(_build_hp_bar())
+	# MANA bar (v0.43.0), directly under the HP bar and above the stamina pips — the reading order a player
+	# expects (what I have, then what I can spend, then what I can do right now). Starts HIDDEN by the same
+	# rule the stamina row below documents: invisible means zero height, so the column min-height and the
+	# integer HUD zoom fit are untouched for every non-caster class, and the visibility flip re-measures
+	# through _relayout.
+	_own_mana_bar = _build_mana_bar()
+	_own_mana_bar.visible = false
+	vbox.add_child(_own_mana_bar)
 	# Stamina pips row (v0.24.0), directly under the HP bar. Starts hidden (zero height while
 	# invisible, so the column's min-height — and thus the integer HUD zoom fit — is untouched until
 	# the experiment actually posts a value; the visibility flip re-measures via _relayout).
@@ -783,6 +841,38 @@ func _build_hp_bar() -> Control:
 	_own_hp_text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_own_hp_text.text = "—"
 	bar.add_child(_own_hp_text)
+	return bar
+
+
+## The own MANA bar (v0.43.0) — the HP bar's twin, deliberately built as a near-copy rather than a shared
+## parameterised builder. The two look alike today but answer different questions: HP lerps green→red
+## because the COLOUR is the warning, while mana keeps ONE blue at every level because running dry is a
+## budgeting fact, not an emergency. Folding them together would mean a builder with a colour-policy flag
+## and two callers, which is more coupling than the eleven duplicated lines it would save.
+##
+## Shorter than the HP bar (9px vs 11) on purpose: it is the secondary resource, and the size difference is
+## what keeps the two readable at a glance in a 174px-wide column at HUD zoom 1.
+func _build_mana_bar() -> Control:
+	var bar := Control.new()
+	bar.custom_minimum_size = Vector2(0, 9)
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var track := ColorRect.new()
+	track.set_anchors_preset(Control.PRESET_FULL_RECT)
+	track.color = Color(0.05, 0.06, 0.16, 1.0)
+	track.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.add_child(track)
+	_own_mana_fill = ColorRect.new()
+	_own_mana_fill.anchor_bottom = 1.0
+	_own_mana_fill.anchor_right = 1.0
+	_own_mana_fill.color = _MANA_FULL
+	_own_mana_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.add_child(_own_mana_fill)
+	_own_mana_text = _make_label(6)
+	_own_mana_text.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_own_mana_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_own_mana_text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_own_mana_text.text = "—"
+	bar.add_child(_own_mana_text)
 	return bar
 
 
@@ -988,16 +1078,40 @@ func _make_slot_icon() -> Dictionary:
 	return { "rect": icon, "atlas": atlas }
 
 
-## Rebuild the own-player passive list from its class (one label per passive that has a display name).
+## Rebuild the own-player TRAIT list from its class (one label per trait that has a display name).
+##
+## "TRAITS" IS THE PLAYER-FACING NAME (v0.43.0, Jon). The code keeps `PassiveAbility` / `PlayerClass.passives`
+## / `resources/passives/` — renaming those is a `.tres` schema break, and this repo has a written precedent
+## for an internal name diverging from the displayed one (`backstab.gd` is what the file is called; "Sneak
+## Attack" is what the player reads). So the rename cost exactly one header label, because until now the
+## concept had NO name on screen at all: the panel listed bare bullets and never said what they were.
+##
+## The header is built HERE rather than in `_build_char_info` so it can be hidden for the four trait-less
+## classes — a heading over nothing is worse than no heading. Hidden means zero height, so those classes'
+## columns measure exactly as before.
 func _refresh_passives(player_class: PlayerClass) -> void:
 	for child in _own_passives_box.get_children():
 		child.queue_free()
+	var any := false
 	for passive in player_class.passives:
 		if passive == null or passive.display_name.is_empty():
 			continue
+		if not any:
+			any = true
+			var header := _make_label(7)
+			header.text = "Traits"
+			header.add_theme_color_override("font_color", Color(0.62, 0.68, 0.85, 0.75))
+			_own_passives_box.add_child(header)
 		var label := _make_label(7)
 		label.text = "• %s" % passive.display_name
 		label.add_theme_color_override("font_color", Color(0.75, 0.8, 0.95, 0.9))
+		# HOVERABLE (v0.43.0): _make_label hardcodes IGNORE per the HUD discipline, which is right for every
+		# other label in this panel but is exactly what stopped traits from ever having a tooltip. PASS (not
+		# STOP) so the label answers a hover without eating a click — the char-info panel sits over nothing
+		# clickable, but PASS is the honest filter for "I want hover, not input". The IGNORE on the parent
+		# boxes does NOT block this: an IGNORE parent still lets its children be hit-tested.
+		label.mouse_filter = Control.MOUSE_FILTER_PASS
+		label.tooltip_text = _passive_tooltip(passive)
 		_own_passives_box.add_child(label)
 
 
@@ -1185,6 +1299,26 @@ func _attack_speed_word(total_beats: float) -> String:
 	return "normal" if total_beats <= _SPEED_NORMAL_MAX else "slow"
 
 
+## Tooltip for a class TRAIT (v0.43.0) — what the character panel's hover shows.
+##
+## The DERIVED half is delegated to the trait itself (`PassiveAbility.tooltip_terms`) rather than computed
+## here, and that is the whole design of this feature: a trait's numbers live on its SUBCLASS
+## (`Backstab.damage_multiplier`, `Archery.windup_beats_delta`), which this file cannot reach through the
+## `PassiveAbility` base type. Doing it here would mean `if passive is Backstab: …` growing an arm per
+## trait — a presentation file re-coupled to every ability ever written. Asking the trait keeps the
+## existing split: the referee owns WHEN a hook fires, the trait owns WHETHER it applies, and now also how
+## it describes itself.
+##
+## Composed through the SAME `_compose_tooltip` every other tooltip uses, so a trait with neither terms nor
+## prose degrades to just its name — the identical no-content behaviour an ability with no description
+## already has.
+func _passive_tooltip(passive: PassiveAbility) -> String:
+	if passive == null:
+		return ""
+	return _compose_tooltip(passive.display_name, ", ".join(passive.tooltip_terms()),
+			passive.description)
+
+
 ## Tooltip for a consumable / worn ITEM.
 ##
 ## The ARMOUR line states the real two-term rule (DESIGN §2.3.8) rather than just the percentage, because
@@ -1246,14 +1380,29 @@ func _ability_tooltip(ability: ActiveAbility) -> String:
 		else:
 			parts.append("%d damage every %s, %d times" % [
 					ability.dot_damage, _secs(ability.dot_interval_beats), ability.dot_ticks])
+	# ORB VOLLEY (v0.43.0) — the TOTAL leads, because "6 damage" is the number a player budgets against;
+	# the shape follows so the spread over time is not a surprise. A single orb drops the "in N orbs"
+	# clause, which would be a strange way to describe one projectile.
+	if ability.orb_damage > 0 and ability.orb_count > 0:
+		if ability.orb_count == 1:
+			parts.append("%d damage" % ability.orb_damage)
+		else:
+			parts.append("%d damage in %d orbs" % [ability.orb_damage * ability.orb_count,
+					ability.orb_count])
 	if ability.stun_beats > 0.0:
 		parts.append("stuns for %s" % _secs(ability.stun_beats))
 	if ability.root_beats > 0.0:
 		parts.append("holds for %s" % _secs(ability.root_beats))
+	# BLINK REACH (v0.43.0) — phrased as the distance it can move you, not as the field name. "up to"
+	# because the destination is random within the reach, so the number is a bound and not a promise.
+	if ability.blink_travel_tiles > 0:
+		parts.append("blinks up to %d tiles" % ability.blink_travel_tiles)
 	if ability.range_tiles > 1:
 		parts.append("range %d tiles" % ability.range_tiles)
 	if ability.windup_beats + ability.recovery_beats > 0.0:
 		parts.append("%s cast" % _secs(ability.windup_beats + ability.recovery_beats))
+	if ability.mana_cost > 0:
+		parts.append("%d mana" % ability.mana_cost)
 	if ability.cooldown_beats > 0.0:
 		parts.append("%s cooldown" % _secs(ability.cooldown_beats))
 	var derived := (", ".join(parts) + ".") if not parts.is_empty() else ""

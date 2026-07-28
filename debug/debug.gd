@@ -1107,6 +1107,14 @@ func _log_net_event(event: Dictionary) -> void:
 			"item_picked_up", "item_pickup_full", "item_pickup_available", "item_used", "equip_item",
 			"ai_decision", "stamina", "stamina_recovery", "thinking", "exhausted", "banter",
 			"blink", "ability_used", "ability_cooldown",
+			# v0.43.0: `mana` is the only observable for a SPEND — a cast that pays 3 and lands nothing
+			# visible would otherwise be untraceable — and for the explore refill and its lockout, whose
+			# whole assertion is "exactly one of these, not two". `self_cast` is the wizard Blink's
+			# accepted-and-committed marker, the exact role targeted_cast plays for the druid (its LAND is
+			# a `blink`, so without this a refused press and a fizzled cast read identically).
+			# `missile_volley` is pure FX and carries no adjudication, but it is the cheapest proof that a
+			# volley resolved at all, distinct from the three `attack` events it precedes.
+			"mana", "self_cast", "missile_volley",
 			"projectile_launched", "projectile_ended",
 			"dev_snapshot"]):
 		return

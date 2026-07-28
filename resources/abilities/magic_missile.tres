@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="ActiveAbility" format=3]
+
+[ext_resource type="Script" path="res://resources/active_ability.gd" id="1_aa"]
+
+[resource]
+script = ExtResource("1_aa")
+kind = 3
+target_mode = 1
+description = "Three orbs bloom from your hand and go looking for one enemy. They arrive one after another and they do not miss — but the cast locks on before they fly, so a target that outruns your reach is never hit at all."
+display_name = "Magic Missile"
+atlas_coords = Vector2i(5, 10)
+log_verb = "blasts"
+damage = 0
+stun_beats = 0.0
+windup_beats = 2.0
+recovery_beats = 1.0
+range_tiles = 6
+orb_count = 3
+orb_damage = 2
+orb_interval_beats = 0.5
+mana_cost = 3
+cooldown_beats = 0.0
+root_beats = 0.0

@@ -98,6 +98,28 @@ var _conditions: Dictionary = {}
 # to outlive its entry. Cost: one small int per (entity, condition) ever applied, for the session.
 var _condition_gen: Dictionary = {}
 
+# ── MANA (v0.43.0) — the spell resource ───────────────────────────────────────────────────────────
+#
+# entity id -> current points. Host-only authority, and it lives HERE rather than in a referee of its own
+# because every one of its readers and writers is already in this file: the ability validators gate on it,
+# the accept branches spend it, and the seed/teardown hooks that own `_hp` are exactly the hooks a pool
+# needs. A fourth referee would have to be handed all three of those seams to do nothing new.
+#
+# ONLY PLAYERS OF A CASTER CLASS APPEAR HERE. The max comes from `PlayerClass.max_mana`, which is 0 for
+# every non-caster, and a 0-max entity is never given an entry — so "has no mana" and "has an empty pool"
+# are different states by construction, which is what lets the HUD decide whether to draw a bar at all.
+# Monsters never appear: shaman casts stay free (out of scope, stated in the v0.43.0 plan).
+var _mana: Dictionary = {}
+# entity id -> MONOTONIC counter, bumped on every refill and NEVER erased — not at death, not at teardown.
+# Same contract and same reason as `_condition_gen`: a refill is scheduled against a peer id, and peer ids
+# are RECYCLED on reconnect / F5 respawn. An erased-and-restarted counter would let a stale timer from a
+# previous life match a fresh pool's number. Cost is one small int per caster per session.
+var _mana_gen: Dictionary = {}
+# entity id -> Time.get_ticks_msec() of the last GENUINE refill (see refill_mana's already-full early
+# return). The anti-flicker lockout reads this: an explore edge within `mana_refill_lockout_beats` of this
+# stamp is refused. Erased with the pool.
+var _last_mana_refill_msec: Dictionary = {}
+
 # PENDING SMITES (v0.22.0, weighted utility AI): the set of GROUND TILES with a smite already committed and
 # still in flight (tile -> true). Set at smite_cast, erased at the TOP of _resolve_smite (before every early
 # return, so a caster killed or stunned mid-cast still releases its tile) and cleared by reset_round().
@@ -201,6 +223,18 @@ func activate(players: Node2D, monsters: Node2D, move_referee: Node, pace: Node,
 	# Sibling guard (v0.18.0): warn on duplicate display_names within weapon_catalog / item_catalog — a
 	# first-hit-resolution dupe silently shadows the later entry. Same host-only, once-at-startup contract.
 	GameManager.config.validate_catalogs()
+	# The explore-pace mana refill sweep (v0.43.0) — see _sweep_explore_refills for why the `tactical_exited`
+	# edge alone is not enough. Server-internal polling, NOT wire traffic: `refill_mana` posts only when a
+	# pool actually changes, so a party standing around at full mana produces nothing. 2s is deliberately
+	# slow — this is a backstop for a state the edge missed, not the primary path, and the edge already
+	# makes the post-fight refill instant.
+	var mana_timer := Timer.new()
+	mana_timer.name = "ManaRefillSweep"
+	mana_timer.wait_time = 2.0
+	mana_timer.one_shot = false
+	mana_timer.autostart = true
+	mana_timer.timeout.connect(_sweep_explore_refills)
+	add_child(mana_timer)
 
 
 # ── Public methods ────────────────────────────────────────────────────────────
@@ -226,6 +260,131 @@ func hp_of(entity_id: int) -> int:
 ## with hp_of above; a 0 return means "unknown" and the caller must not divide by it.
 func max_hp_of(entity_id: int) -> int:
 	return _max_hp_of(_node_of_id(entity_id))
+
+
+# ── Mana (v0.43.0) ────────────────────────────────────────────────────────────
+
+## This entity's AUTHORED maximum mana, or 0 for anyone who has none (every monster, every non-caster
+## class, an untracked id). Resolved LIVE off the player's current class every call — never cached at
+## spawn — so a `/class` change re-resolves at once, the same live-read stance MoveReferee takes for the
+## armour band. `mana_enabled` off reports 0 for everyone, which is what makes the whole system inert.
+func max_mana_of(entity_id: int) -> int:
+	if not GameManager.config.mana_enabled or entity_id <= 0:
+		return 0
+	var node := _node_of_id(entity_id)
+	if node == null:
+		return 0
+	var pc = node.get("player_class")
+	if pc == null:
+		return 0
+	return maxi(0, int(pc.max_mana))
+
+
+## Current mana, 0 for an entity with no pool. Host-only truth; never trusted from the wire.
+func mana_of(entity_id: int) -> int:
+	return int(_mana.get(entity_id, 0))
+
+
+## Can this entity afford `cost` right now? The ONE affordability predicate both gates read, so the two
+## call sites can never disagree about what "enough" means. A cost of 0 (every pre-v0.43.0 ability) and a
+## disabled mana system both read TRUE, which is what makes the gate a no-op in those cases. An entity
+## with NO pool at all (max 0) can afford only free things — a barbarian cannot cast a 3-mana spell by
+## virtue of having no mana rather than by a special case.
+func can_afford_mana(entity_id: int, cost: int) -> bool:
+	if cost <= 0 or not GameManager.config.mana_enabled:
+		return true
+	return mana_of(entity_id) >= cost
+
+
+## Spend `cost` mana and broadcast the new pool. Host-only, called at ACCEPT — the moment the commit
+## succeeded and the decision became irrevocable — beside the cooldown charge. NEVER REFUNDED: a whiffed
+## or blink-fizzled cast still paid, exactly as `_charge_strike_cooldown` documents for cooldowns. A
+## no-cost ability or a disabled system is a silent no-op (no event, no floor write).
+func spend_mana(entity_id: int, cost: int) -> void:
+	if cost <= 0 or not GameManager.config.mana_enabled:
+		return
+	if not _mana.has(entity_id):
+		return
+	_mana[entity_id] = maxi(0, int(_mana[entity_id]) - cost)
+	_post_mana(entity_id)
+
+
+## Refill a caster to full — wired by Main to PaceReferee.tactical_exited, i.e. the return to EXPLORE
+## (Jon's rule: out of combat means topped up). Host-only.
+##
+## TWO GUARDS, and they work as a pair:
+##  - ALREADY FULL → return doing nothing, posting nothing. This is what keeps the lockout honest: a
+##    caster who never spent is never "refilled", so a trivial pace skim cannot arm a lockout and lock
+##    them out of their first real refill. It also spares the HUD a redundant event and relayout.
+##  - INSIDE THE LOCKOUT → refuse. Pace flips repeatedly when a player skims a monster's bubble edge, and
+##    without this each flip out would hand back a full pool — infinite mana by walking in circles at the
+##    edge of aggro. The stamina system hit this exact hole (v0.24.3) and answered it by refilling on the
+##    ENTRY edge; mana keeps the explore rule and pays for it here instead.
+##
+## The lockout window converts beats→msec against the entity's LIVE resolved beat, never a cached one.
+func refill_mana(entity_id: int) -> void:
+	if not GameManager.config.mana_enabled or not _mana.has(entity_id):
+		return
+	var max_mana := max_mana_of(entity_id)
+	if int(_mana[entity_id]) >= max_mana:
+		return
+	var lockout_ms := int(maxf(0.0, GameManager.config.mana_refill_lockout_beats)
+			* PaceReferee.beat_or_explore(_pace, entity_id) * 1000.0)
+	if _last_mana_refill_msec.has(entity_id) \
+			and Time.get_ticks_msec() - int(_last_mana_refill_msec[entity_id]) < lockout_ms:
+		return
+	_last_mana_refill_msec[entity_id] = Time.get_ticks_msec()
+	_mana_gen[entity_id] = int(_mana_gen.get(entity_id, 0)) + 1
+	_mana[entity_id] = max_mana
+	_post_mana(entity_id)
+
+
+## The EXPLORE-PACE refill sweep (v0.43.0), host-only, driven by a slow repeating Timer armed in activate().
+##
+## WHY THIS EXISTS BESIDE THE `tactical_exited` HOOK, which looks like it already covers the rule: that hook
+## is an EDGE, and an edge only fires for someone who was in a fight. A caster who spends while exploring —
+## blinking around a corridor, testing a spell, casting at nothing — has no tactical exit to wait for, and
+## would stay drained until the end of their NEXT fight. That is the opposite of the rule ("out of combat
+## means topped up"), and it means walking into a fight empty.
+##
+## So the edge stays (it makes the post-fight refill instant, on the frame the fight ends) and this is the
+## STATE backstop: anyone resolved EXPLORE gets topped up shortly after. Both funnel through `refill_mana`,
+## which returns silently when the pool is already full — so this sweep is free and posts nothing in the
+## overwhelmingly common case, and its lockout still governs how often a genuine refill may happen.
+func _sweep_explore_refills() -> void:
+	if not GameManager.config.mana_enabled or _players == null or _pace == null:
+		return
+	for child in _players.get_children():
+		if child is Entity and child.entity_id > 0 and not _pace.is_tactical(child.entity_id):
+			refill_mana(child.entity_id)
+
+
+## Re-resolve an entity's pool against its CURRENT class max (v0.43.0), called by Main after a `/class`
+## change. CLAMPS DOWN ONLY — a class swap is not a mana potion, so it never refunds and never grants.
+## A player who becomes a caster gains an empty-to-max seed (they have not spent anything yet, so full is
+## the honest start); one who stops being a caster loses their entry entirely, and the HUD's bar with it.
+func reconcile_mana(entity_id: int) -> void:
+	var max_mana := max_mana_of(entity_id)
+	if max_mana <= 0:
+		if _mana.erase(entity_id):
+			_post_mana(entity_id)
+		return
+	var had := _mana.has(entity_id)
+	_mana[entity_id] = mini(int(_mana.get(entity_id, max_mana)), max_mana) if had else max_mana
+	_post_mana(entity_id)
+
+
+## Broadcast this entity's pool (v0.43.0) — the twin of MoveReferee._post_stamina, and mana needs its own
+## push event for the reason stamina does and HP does not: HP only ever changes on an `attack` / `heal`
+## that already carries `hp_after`, whereas mana changes on a cast that may deal no damage at all, so
+## there is no existing event to ride. A pool that no longer exists posts max 0, which is the HUD's signal
+## to take the bar down.
+func _post_mana(entity_id: int) -> void:
+	NetEvents.post_event("mana", {
+		"entity_id": entity_id,
+		"points": mana_of(entity_id),
+		"max": max_mana_of(entity_id),
+	})
 
 
 ## Does this entity id belong to a BRAINED monster (v0.22.0)? The utility AI's "do I have backup?" and
@@ -400,6 +559,65 @@ func _dot_tick(target_id: int, source_id: int, damage: int, remaining: int, inte
 		return
 	get_tree().create_timer(interval_sec).timeout.connect(
 			_dot_tick.bind(target_id, source_id, damage, remaining - 1, interval_sec, gen))
+
+
+## Fire a homing ORB VOLLEY at a target (v0.43.0, the wizard's Magic Missile). Host-only. `damage` per orb,
+## `count` orbs, `interval_beats` apart, attributed to `source_id`.
+##
+## THE FIRST ORB LANDS NOW, synchronously, and the rest are chained — apply_dot's shape and apply_dot's
+## reasoning: a spell that visibly does nothing for a beat reads as a spell that failed. So the volley spans
+## (count - 1) × interval, not count × interval.
+##
+## IT IS NOT A PROJECTILE, and the choice is deliberate. The arrow pipeline bakes a straight Bresenham path
+## at launch with no re-aim hook, clips on walls, and stops at the first stoppable occupant including
+## allies — three properties that each contradict "these orbs home in on the body I locked onto". So the
+## damage is a timer chain and the orbs are pure per-peer FX, driven by the ONE `missile_volley` event
+## posted below.
+##
+## THE FX EVENT IS POSTED BEFORE THE FIRST ORB'S DAMAGE, and that ordering is load-bearing: `apply_damage`
+## posts an `attack` event synchronously, so posting the choreography afterwards would let a peer render a
+## hit popup before the orbs it belongs to had left the wizard.
+##
+## GUARDED ON `_round_gen` AND LIVENESS rather than on the condition registry. A DoT rides the registry
+## because it IS a condition with an overhead cue and refresh semantics; a volley is neither — it carries no
+## icon, and a second cast should genuinely fire a second volley rather than replacing the first. The round
+## generation covers the case the registry was protecting against (an F5 mid-volley must not damage into the
+## fresh round on a recycled peer id).
+##
+## Damage kind "missile" is NON-PHYSICAL, so armour does not apply — the same call as "plague", for the same
+## reason: at 2 a hit, a flat band reduction would not soften the spell, it would erase it.
+func fire_orb_volley(target_id: int, source_id: int, damage: int, count: int,
+		interval_beats: float) -> void:
+	if damage <= 0 or count <= 0 or not is_alive(target_id):
+		return
+	# FLOORED like the DoT's interval, and for the same reason: is_valid_ability already refuses a
+	# multi-orb ability authored with no interval, and this is the second belt against a same-frame burst.
+	var interval_sec := maxf(interval_beats, 0.01) * PaceReferee.beat_or_explore(_pace, target_id)
+	NetEvents.post_event("missile_volley", {
+		"caster_id": source_id,
+		"target_id": target_id,
+		"orb_count": count,
+		"interval_sec": interval_sec,
+	}, source_id)
+	_orb_tick(target_id, source_id, damage, count, interval_sec, _round_gen)
+
+
+## One orb of a volley, then re-arm if any remain (v0.43.0). Mirrors `_dot_tick` step for step.
+##
+## A KILL ENDS THE VOLLEY: liveness is re-checked AFTER the hit, so orbs never fire into a corpse — a 2 HP
+## goblin eats one orb, not three. That is inherited behaviour rather than a new rule, and it is the visible
+## playtest answer to "does a 3×2 volley overkill a 2 HP target".
+func _orb_tick(target_id: int, source_id: int, damage: int, remaining: int, interval_sec: float,
+		round_gen: int) -> void:
+	if round_gen != _round_gen:
+		return
+	if not is_alive(target_id):
+		return
+	apply_damage(source_id, target_id, damage, "missile", 0.0)
+	if not is_alive(target_id) or remaining <= 1:
+		return
+	get_tree().create_timer(interval_sec).timeout.connect(
+			_orb_tick.bind(target_id, source_id, damage, remaining - 1, interval_sec, round_gen))
 
 
 ## Does this entity currently carry `name`? The one presence predicate; an untracked id reads false.
@@ -1182,6 +1400,14 @@ func _validate_use_ability(sender_peer_id: int, data: Dictionary) -> Dictionary:
 	# its handler re-runs the SAME remaining ladder a STRIKE does — cooldown, then busy — before it commits.
 	if ability.kind == ActiveAbility.Kind.TARGETED:
 		return _use_targeted(sender_peer_id, ability, data)
+	# SELF DISPATCH (v0.43.0, the wizard's Blink) — beside the TARGETED arm and ABOVE the instants block for
+	# the identical reason: a self-cast is a COMMITTED action with a real occupied window, not an instant, so
+	# it must never be gated on `instant_abilities_enabled`. Keeping it here is what stops this spell from
+	# widening the §2.11.1 experiment (CLAUDE.md: do not widen it again or build on it) — the wizard's blink
+	# and the rogue's Shadow Step share a word and nothing else. Its handler re-runs the same remaining
+	# ladder — cooldown, mana, busy — before it commits.
+	if ability.kind == ActiveAbility.Kind.SELF:
+		return _use_self_cast(sender_peer_id, ability)
 	# INSTANT DISPATCH (v0.26.0), ahead of the busy gate. Both handlers are fully SYNCHRONOUS — they validate
 	# and execute inside this one callback with no timer and no fire delay — so neither needs an interrupt_gen
 	# capture of its own: on the single-threaded host nothing can move the actor between the check and the
@@ -1224,6 +1450,16 @@ func _validate_use_ability(sender_peer_id: int, data: Dictionary) -> Dictionary:
 		var strike_remaining := _cooldown_remaining_sec(sender_peer_id, ability)
 		if strike_remaining > 0.0:
 			return { "ok": false, "reason": "on cooldown (%.1fs)" % strike_remaining }
+	# MANA (v0.43.0) — positioned deliberately BETWEEN cooldown and busy, and duplicated at exactly the two
+	# sites the cooldown check is (here and _use_targeted). It belongs on the cooldown's side of the busy
+	# gate for the two properties this file's precedence note (see the block above the cooldown check)
+	# already names: it is the MORE INFORMATIVE refusal when several are true ("you cannot pay for this" is
+	# a fact about the ability, "busy" is a fact about the moment), and it is PURE — no state is touched by
+	# a mana reject. NOT gated on `instant_abilities_enabled`: mana is its own system with its own dial, so
+	# reverting the instants experiment must never make every spell free.
+	if not can_afford_mana(sender_peer_id, ability.mana_cost):
+		return { "ok": false, "reason": "not enough mana (%d/%d)"
+				% [ability.mana_cost, mana_of(sender_peer_id)] }
 	if _move_referee.is_entity_moving(sender_peer_id):
 		return { "ok": false, "reason": "busy" }
 	# Target: the first ADJACENT hostile (facing neighbour preferred). No target → a clean reject, not a whiff —
@@ -1245,12 +1481,14 @@ func _validate_use_ability(sender_peer_id: int, data: Dictionary) -> Dictionary:
 		if not _move_referee.commit_in_place(sender_peer_id, recovery_sec):
 			return { "ok": false, "reason": "busy" }
 		_charge_strike_cooldown(sender_peer_id, ability)
+		spend_mana(sender_peer_id, ability.mana_cost)
 		_resolve_ability(sender_peer_id, target_tile, ability.damage, ability.stun_beats, ability.log_verb, recovery_sec)
 		return { "ok": true, "deferred": true }
 	# Telegraphed (windup > 0) — commit the FULL window, resolve at windup end (dodgeable), like a monster windup.
 	if not _move_referee.commit_in_place(sender_peer_id, windup_sec + recovery_sec):
 		return { "ok": false, "reason": "busy" }
 	_charge_strike_cooldown(sender_peer_id, ability)
+	spend_mana(sender_peer_id, ability.mana_cost)
 	# interrupt_gen captured AT COMMIT (v0.26.0) and re-checked at fire: a caster who SHADOW-STEPPED out of
 	# this telegraph never lands the strike (see _resolve_ability's guard).
 	get_tree().create_timer(windup_sec).timeout.connect(
@@ -1384,6 +1622,11 @@ func _use_targeted(user_id: int, ability: ActiveAbility, data: Dictionary) -> Di
 		var remaining := _cooldown_remaining_sec(user_id, ability)
 		if remaining > 0.0:
 			return { "ok": false, "reason": "on cooldown (%.1fs)" % remaining }
+	# MANA (v0.43.0) — same position and same wording as the STRIKE path's gate: after cooldown, before
+	# busy, pure, and NOT gated on the instants toggle. See that site for the precedence reasoning.
+	if not can_afford_mana(user_id, ability.mana_cost):
+		return { "ok": false, "reason": "not enough mana (%d/%d)"
+				% [ability.mana_cost, mana_of(user_id)] }
 	# BUSY — the Commitment Rule backstop every committed action shares (is_entity_moving covers a glide AND
 	# an in-place record), so a cast can never overlap or interrupt something already committed.
 	if _move_referee.is_entity_moving(user_id):
@@ -1434,6 +1677,7 @@ func _use_targeted(user_id: int, ability: ActiveAbility, data: Dictionary) -> Di
 		return { "ok": false, "reason": "busy" }
 	_move_referee.set_facing(user_id, (target_tile - my_tile).sign())
 	_charge_strike_cooldown(user_id, ability)
+	spend_mana(user_id, ability.mana_cost)
 	var caster := _node_of_id(user_id)
 	# Name the CURRENT occupant. In TILE mode this is best-effort telegraph text only (the resolve re-reads
 	# the square, so a dodge turns it into a fizzle); in CREATURE mode it is the body we just locked, which
@@ -1465,7 +1709,12 @@ func _use_targeted(user_id: int, ability: ActiveAbility, data: Dictionary) -> Di
 		#     cannot drift from the payload, because it IS the payload.
 		#   `ability` — the display name, for the log to SAY. Naming a thing and branching on a thing are
 		#     different jobs; only the second one has to be stable.
-		"effect": "plague" if ability.dot_ticks > 0 and ability.dot_damage > 0 else "root",
+		# v0.43.0 adds the third value, "missile", and keeps the derivation payload-based for exactly the
+		# reason the note above gives. Ordered most-specific-first: an ability carrying orbs is a missile
+		# volley whatever else it also does, and "root" stays the fallthrough, so no already-authored
+		# `.tres` changes meaning merely by this arm existing.
+		"effect": ("missile" if ability.orb_count > 0 and ability.orb_damage > 0
+				else ("plague" if ability.dot_ticks > 0 and ability.dot_damage > 0 else "root")),
 		"ability": ability.display_name,
 	}
 	if locked_id != _NO_ENTITY:
@@ -1485,6 +1734,11 @@ func _use_targeted(user_id: int, ability: ActiveAbility, data: Dictionary) -> Di
 		"dot_damage": ability.dot_damage,
 		"dot_ticks": ability.dot_ticks,
 		"dot_interval_beats": ability.dot_interval_beats,
+		# v0.43.0 — the orb volley rides the SAME payload dict for the same reason the DoT does: an ability
+		# authored with several payloads lands all of them, and adding a third needs no new plumbing.
+		"orb_count": ability.orb_count,
+		"orb_damage": ability.orb_damage,
+		"orb_interval_beats": ability.orb_interval_beats,
 	}
 	get_tree().create_timer(cast_sec).timeout.connect(
 			_resolve_targeted.bind(user_id, target_tile, payload, recovery_sec,
@@ -1577,6 +1831,14 @@ func _resolve_targeted(caster_id: int, target_tile: Vector2i, payload: Dictionar
 				apply_dot(occ_id, caster_id, int(payload["dot_damage"]), int(payload["dot_ticks"]),
 						float(payload.get("dot_interval_beats", 0.0)))
 				landed = true
+			# ORB VOLLEY (v0.43.0, Magic Missile) — the third payload, applied last so its first orb's
+			# damage event follows a root/plague that landed in the same resolve. The ESCAPE was already
+			# adjudicated above (this is the land branch), so from here every orb connects: the counterplay
+			# is outrunning the channel, not the volley.
+			if int(payload.get("orb_count", 0)) > 0 and int(payload.get("orb_damage", 0)) > 0:
+				fire_orb_volley(occ_id, caster_id, int(payload["orb_damage"]), int(payload["orb_count"]),
+						float(payload.get("orb_interval_beats", 0.0)))
+				landed = true
 			if not landed:
 				push_warning("[CombatReferee] targeted cast by %d landed with NO authored payload — check the ability's root_beats / dot_* fields." % caster_id)
 			# A HOSTILE CAST IS AN AGGRO SOURCE (v0.35.0, Jon's playtest) — the same wake apply_damage
@@ -1642,6 +1904,101 @@ func _resolve_targeted(caster_id: int, target_tile: Vector2i, payload: Dictionar
 # The whole experiment lives in this section plus the consumption branch in apply_damage and
 # MoveReferee.teleport_entity. Everything here is unreachable with GameConfig.instant_abilities_enabled
 # off (the validator rejects before dispatch), which is the property that makes the toggle a true revert.
+
+## The SELF cast (v0.43.0, the wizard's Blink) — a COMMITTED action aimed at yourself. Host-only.
+##
+## Runs the same remaining ladder every committed ability does (cooldown → mana → busy), commits ONE busy
+## record covering channel + tail, then resolves at the END of that whole window.
+##
+## WHY THE EFFECT LANDS AT THE WINDOW'S END rather than at the channel's end (which is where a TARGETED
+## cast resolves): `MoveReferee.teleport_entity` ERASES the mover's busy record — it must, being the
+## forced-movement door — so a blink firing mid-window would delete the caster's own remaining tail and
+## hand them a free self-interrupt. That is precisely §2.1.3's prohibition, and precisely the carve-out
+## Shadow Step needed an experiment toggle for. Resolving at the end means there is no tail left to
+## destroy, so this spell needs no carve-out at all and the Commitment Rule is untouched. The authored
+## `.tres` therefore puts the whole cost in `windup_beats` with `recovery_beats = 0`.
+##
+## The cooldown and the mana are charged AT ACCEPT, beside each other, exactly as every other committed
+## ability charges them: a blink whose destination search comes up empty still paid. That is the
+## documented rule (see _charge_strike_cooldown) and it is the honest one — you committed to the cast, and
+## the channel played out in front of everyone.
+##
+## Returns a DEFERRED accept: the `blink` event at the end of the window IS the outcome.
+func _use_self_cast(user_id: int, ability: ActiveAbility) -> Dictionary:
+	if GameManager.config.instant_abilities_enabled:
+		var remaining := _cooldown_remaining_sec(user_id, ability)
+		if remaining > 0.0:
+			return { "ok": false, "reason": "on cooldown (%.1fs)" % remaining }
+	if not can_afford_mana(user_id, ability.mana_cost):
+		return { "ok": false, "reason": "not enough mana (%d/%d)" % [ability.mana_cost, mana_of(user_id)] }
+	if _move_referee.is_entity_moving(user_id):
+		return { "ok": false, "reason": "busy" }
+
+	# ── Accept ──
+	# NO report_hostile_action: a self-cast is not an attack, so it must not pin the caster tactical the way
+	# a swing or a hostile cast does. Blinking away from a fight is the opposite of starting one.
+	var beat := PaceReferee.beat_or_explore(_pace, user_id)
+	var cast_sec := maxf(0.0, ability.windup_beats) * beat
+	var recovery_sec := maxf(0.0, ability.recovery_beats) * beat
+	if not _move_referee.commit_in_place(user_id, cast_sec + recovery_sec):
+		return { "ok": false, "reason": "busy" }
+	_charge_strike_cooldown(user_id, ability)
+	spend_mana(user_id, ability.mana_cost)
+	# The channel telegraph, on the caster's own node. `ability_used` doubles as the HUD's cooldown feed
+	# (main.gd routes it to note_ability_cooldown), so the socket starts draining the moment the cast
+	# commits rather than when it lands.
+	NetEvents.post_event("self_cast", {
+		"entity_id": user_id,
+		"name": _name_of(_node_of_id(user_id)),
+		"ability": ability.display_name,
+		"cast_sec": cast_sec,
+	}, user_id)
+	NetEvents.post_event("ability_used", {
+		"entity_id": user_id,
+		"ability": ability.display_name,
+		"cooldown_sec": _cooldown_remaining_sec(user_id, ability),
+	}, user_id)
+	# Resolve at the END of the WHOLE window (see the header). Bound by VALUE, captured primitives only —
+	# the v0.17.1 arrow idiom this file uses everywhere — plus the interrupt generation, so a caster who was
+	# forcibly moved mid-channel (a Shadow Step, a future knockback) never lands the blink.
+	get_tree().create_timer(cast_sec + recovery_sec).timeout.connect(
+			_resolve_self_cast.bind(user_id, ability.blink_travel_tiles, ability.display_name,
+					_round_gen, _move_referee.interrupt_gen_of(user_id)))
+	return { "ok": true, "deferred": true }
+
+
+## Land a SELF cast at the end of its committed window (v0.43.0). Host-only, from the cast timer.
+##
+## The three fizzle guards mirror every other deferred resolve in this file, and all three are SILENT: the
+## cast played to completion and its effect simply no longer has a valid subject, which is a
+## Commitment-Rule outcome rather than a failure to report. Round generation first (an F5 mid-cast lands
+## nothing in the fresh round — a same-peer respawn reuses the id and would pass the liveness check), then
+## liveness, then the forced-movement interrupt.
+func _resolve_self_cast(user_id: int, travel_tiles: int, ability_name: String,
+		round_gen: int, interrupt_gen: int) -> void:
+	if round_gen != _round_gen:
+		return
+	if not is_alive(user_id):
+		return
+	if _move_referee.interrupt_gen_of(user_id) != interrupt_gen:
+		return
+	if travel_tiles <= 0:
+		return  # not a blink-shaped self cast; nothing else is authored yet.
+	var from: Vector2i = _move_referee.tile_of_entity(user_id)
+	var dest: Vector2i = _move_referee.pick_random_reachable_tile(user_id, travel_tiles)
+	# The SAME event and the SAME fizzle shape the potion posts (InventoryReferee._resolve_blink), because
+	# it is the same outcome seen from the same seat — one blink plumbing, one `fizzled` flag, one teardown.
+	# `ability` rides it instead of the potion's `item` so a trace can tell the three blink sources apart.
+	if dest == from or not _move_referee.teleport_entity(user_id, dest):
+		NetEvents.post_event("blink", {
+			"entity_id": user_id, "from": from, "to": from,
+			"ability": ability_name, "fizzled": true,
+		}, user_id)
+		return
+	NetEvents.post_event("blink", {
+		"entity_id": user_id, "from": from, "to": dest, "ability": ability_name,
+	}, user_id)
+
 
 ## Raise the knight's one-shot GUARD (BLOCK kind). Host-only, fully synchronous, NO occupied window — this is
 ## the §2.1.3 suspension made concrete: pressing it while mid-swing or mid-glide is exactly the point, so it
@@ -2689,6 +3046,11 @@ func _kill_entity(entity_id: int, ent_name: String) -> void:
 	# _condition_gen is deliberately NOT erased here: it is the monotonic guard that stops a previous life's
 	# pending expiry timer from clearing a fresh life's condition (see its declaration).
 	_conditions.erase(entity_id)
+	# Mana (v0.43.0): the pool dies with the caster, so a same-id respawn is seeded fresh rather than
+	# inheriting a drained one. `_mana_gen` is deliberately NOT erased — like `_condition_gen`, it is the
+	# monotonic anti-id-reuse guard, and erasing it would let a previous life's numbering repeat.
+	_mana.erase(entity_id)
+	_last_mana_refill_msec.erase(entity_id)
 	_move_referee.clear_entity(entity_id)
 	NetEvents.post_event("died", { "entity_id": entity_id, "name": ent_name })
 	# Goblin banter (v0.24.4): a MONSTER death makes a living packmate IN THE FIGHT bark revenge — Jon's
@@ -2810,6 +3172,11 @@ func _on_entity_exiting(node: Node) -> void:
 		# respawn starts free of every condition. Idempotent with _kill_entity's erase. _condition_gen
 		# survives on purpose (see its declaration) — it is the anti-reuse guard, not per-life state.
 		_conditions.erase(node.entity_id)
+		# Mana (v0.43.0), same contract and same idempotence: the pool and its refill stamp are per-life,
+		# `_mana_gen` is the surviving anti-reuse guard. No `mana` event is posted here — the node is
+		# leaving, so every peer drops its bar with it.
+		_mana.erase(node.entity_id)
+		_last_mana_refill_msec.erase(node.entity_id)
 
 
 ## Null-safe passive accessor (v0.11.0): the ATTACKER's PassiveAbility list, or [] for anything without
@@ -3116,8 +3483,13 @@ func _armor_flat_of(weight: int) -> int:
 ## 1-3 points, and a DoT tick is 2 — so mitigating it would not reduce the plague, it would DELETE it
 ## against anything wearing metal, and "a disease is not stopped by mail" is the reading that keeps the
 ## spell meaningful against exactly the enemies you would want to soften.
+## v0.43.0: "missile" joins them, by the identical arithmetic — an orb is 2 damage against a flat band of
+## 1-3, so armour would not soften Magic Missile, it would erase it. It is also plainly magic. NOTE the
+## deliberate ASYMMETRY with the root-break dial, where "missile" is NOT exempt: armour asks "is this
+## physical", and an orb is not; the root dial asks "did someone choose to strike this held target", and an
+## orb emphatically is. Two different questions, two different answers, which is why they are two lists.
 func _is_physical_kind(kind: String) -> bool:
-	return kind != "smite" and kind != "admin" and kind != "plague"
+	return kind != "smite" and kind != "admin" and kind != "plague" and kind != "missile"
 
 
 ## Wielder MELEE windup bonus in BEATS (v0.19.0): monsters only (MonsterType.bonus_windup_beats) — a player

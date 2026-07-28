@@ -18,5 +18,6 @@ range_tiles = 6
 dot_damage = 2
 dot_ticks = 4
 dot_interval_beats = 6.0
+mana_cost = 2
 cooldown_beats = 40.0
 root_beats = 0.0

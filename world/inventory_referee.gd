@@ -330,7 +330,10 @@ func _resolve_use(round_gen: int, user_id: int, heal_amount: int, item_name: Str
 ## existing blink plumbing already carries it.
 func _resolve_blink(user_id: int, travel_tiles: int, item_name: String) -> void:
 	var from: Vector2i = _move_referee.tile_of_entity(user_id)
-	var dest := _pick_blink_tile(user_id, from, travel_tiles)
+	# v0.43.0: the picker MOVED to MoveReferee (pick_random_reachable_tile) when the wizard's Blink spell
+	# became a second caller — one referee owns "where may a body legally be put", so a spell and a potion
+	# can never drift apart on what counts as a legal landing spot. Behaviour here is unchanged.
+	var dest: Vector2i = _move_referee.pick_random_reachable_tile(user_id, travel_tiles)
 	# teleport_entity re-derives membership, origin, walkability and freeness from its OWN state before it
 	# mutates anything, so a false return is a genuine "not legal after all" that changed nothing — and it is
 	# folded into the same fizzle branch as "no candidate existed" because the player-visible outcome is
@@ -349,28 +352,9 @@ func _resolve_blink(user_id: int, travel_tiles: int, item_name: String) -> void:
 	}, user_id)
 
 
-## Pick a uniformly-random legal blink destination, or return `from` when there is none (the fizzle signal).
-## Host-only — the destination is chosen from the HOST's authoritative occupancy and grid, never proposed by
-## a client (§2.5), which is why the wire only ever carries the resulting tile.
-##
-## THE CANDIDATE SET IS WALL-BOUNDED, not a Chebyshev box: `tiles_within_travel` is a flood fill, so every
-## candidate is somewhere the drinker could have WALKED to. That is what makes "blinked into a sealed room
-## and ended the run" unreachable by construction rather than by a length check. See
-## ItemType.blink_travel_tiles for why reachability rather than line of sight.
-func _pick_blink_tile(user_id: int, from: Vector2i, travel_tiles: int) -> Vector2i:
-	if not WorldGrid.is_walkable(from):
-		return from  # off-grid / untracked drinker — nothing to blink out of.
-	var candidates: Array[Vector2i] = []
-	# tiles_within_travel already guarantees in-bounds + non-wall for every key, so is_tile_free is the only
-	# remaining test — it covers BOTH standing bodies (_occupied) and destinations another mover has already
-	# reserved mid-glide (_reserved), so a blink can never land on top of an arrival that is still in flight.
-	# The drinker's OWN tile needs no special case: it holds their occupancy entry, so it fails is_tile_free.
-	for tile in WorldGrid.tiles_within_travel(from, travel_tiles):
-		if _move_referee.is_tile_free(tile):
-			candidates.append(tile)
-	if candidates.is_empty():
-		return from
-	return candidates[randi() % candidates.size()]
+## (v0.43.0: `_pick_blink_tile` used to live here — it MOVED to MoveReferee.pick_random_reachable_tile when
+## the wizard's Blink spell became a second caller. See the note at that function for why the referee that
+## owns occupancy owns the question.)
 
 
 ## The "equip_item" intent validator (host-only, v0.19.x loot). A player left-clicks a looted WEAPON in their bag;

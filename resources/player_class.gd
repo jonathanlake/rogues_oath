@@ -63,6 +63,26 @@ extends Resource
 ## carry a deeper pool.
 @export var bonus_stamina: int = 0
 
+## MANA POOL for this class (v0.43.0) — the spell resource, and the SECOND per-class stat field after
+## bonus_stamina. **0 (the default) means this class has NO MANA AT ALL**, which is why every existing
+## class was untouched by this field's mere existence: the HUD draws no mana bar for a 0-max class (a
+## hidden row contributes zero column height), and the ability validator's mana gate is a no-op for a
+## class that can't spend.
+##
+## AN ABSOLUTE MAX, NOT A BONUS — deliberately the opposite shape from `bonus_stamina` directly above.
+## Stamina is a global baseline every class offsets, because the stamina rule is universal and the ONE
+## `/config stamina_max` knob is meant to scale everyone together. Mana is the reverse: only casters have
+## it, they have DIFFERENT amounts on purpose (wizard/priest 15, druid 10 — the druid trades pool for
+## having the two cheapest spells), and there is no meaningful global baseline for a resource most
+## classes don't possess. A `bonus_mana` on top of a global would make 0 mean "baseline", and then a
+## barbarian would silently have a pool.
+##
+## Resolved HOST-side and LAZILY at every read (CombatReferee.max_mana_of), never cached at spawn, so a
+## mid-session `/class` change re-resolves at once — the same live-read stance `_regen_idle_beats_of`
+## takes for the armour band. A class change CLAMPS a current pool down to the new max (never refunds,
+## never grants — a class swap is not a mana potion).
+@export var max_mana: int = 0
+
 ## The class's STARTING BODY ARMOR (v0.27.0 equipment phase 2) — the EQUIPMENT-category ItemType a player
 ## of this class begins WEARING. Null (default) = starts unarmored. Exactly two host-side consumers:
 ## Player._ready SEEDS it right after the class seed (so a fresh spawn / F5 respawn is dressed on every

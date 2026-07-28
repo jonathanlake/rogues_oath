@@ -560,6 +560,36 @@ func armor_flat_for(weight: int) -> int:
 			return armor_flat_reduction_heavy
 	return 0
 
+## MANA (v0.43.0) — the spell resource. Master switch: false makes every mana gate a no-op (spells cost
+## nothing and cast freely) and the HUD bar never shows, i.e. exactly the pre-v0.43.0 game. Ships ON.
+##
+## NOT GATED ON `instant_abilities_enabled`, deliberately. Ability COOLDOWNS ride that toggle because they
+## are part of the pending §2.11.1 verdict — mana is a separate system that stands on its own, so reverting
+## the instants experiment must not silently make every spell free. Its own dial, its own revert.
+##
+## The POOL SIZE is per-class (`PlayerClass.max_mana`, 0 = no mana at all), not a global baseline with
+## per-class offsets — see that field for why mana takes the opposite shape from stamina.
+@export var mana_enabled: bool = true
+
+## MANA REFILL LOCKOUT in EXPLORE BEATS (v0.43.0). Casters refill to full on the return to EXPLORE pace
+## (Jon's rule: out of combat means topped up). This is the anti-flicker guard on that edge: a refill within
+## this many beats of the PREVIOUS refill is refused.
+##
+## WHY IT EXISTS, stated so nobody removes it as redundant: pace is not a clean binary in play. A player
+## skimming a monster's tactical bubble flips explore↔tactical repeatedly, and without this, each flip out
+## would hand back a full pool — a mid-fight infinite-mana exploit reachable by walking in circles at the
+## edge of a goblin's aggro. The stamina system hit this exact hole in its first playtest (v0.24.3's "free
+## refill") and answered it by refilling on the ENTRY edge instead; mana keeps the explore rule Jon asked
+## for and pays for it with this guard instead.
+##
+## PAIRED WITH `refill_mana`'s ALREADY-FULL EARLY RETURN, and the pair is what makes it correct: a caster
+## who never spent anything is not refilled, so no lockout is armed, so a trivial pace skim cannot lock a
+## caster out of their first genuine refill. The lockout only ever starts ticking after real spending.
+##
+## Beats, converted at READ time through the entity's live resolved beat — never a cached one, consistent
+## with every other beats dial. 0 = no lockout (refill on every explore edge; the exploit is then live).
+@export var mana_refill_lockout_beats: float = 20.0
+
 ## The MASTER ability catalog (v0.27.0) — every ActiveAbility a dev-command / panel token may resolve to,
 ## the mirror of weapon_catalog for abilities. `ability_by_name` resolves from THIS (by display_name slug),
 ## which is what makes `/ab kick cooldown_beats 30` and the panel's CLASSES section possible: an ability

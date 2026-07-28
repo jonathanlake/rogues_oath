@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="ActiveAbility" format=3]
+
+[ext_resource type="Script" path="res://resources/active_ability.gd" id="1_aa"]
+
+[resource]
+script = ExtResource("1_aa")
+kind = 4
+description = "Tear yourself loose from where you stand. Where you land is the spell's business, not yours — but it will never put you anywhere you could not have walked to."
+display_name = "Blink"
+atlas_coords = Vector2i(4, 10)
+log_verb = "blinks"
+damage = 0
+stun_beats = 0.0
+windup_beats = 2.0
+recovery_beats = 0.0
+range_tiles = 1
+blink_travel_tiles = 3
+mana_cost = 3
+cooldown_beats = 10.0
+root_beats = 0.0

@@ -36,7 +36,16 @@ extends Resource
 ##
 ## ORDINALS ARE SERIALIZED: `kind` is stored in each `.tres` as a plain int, so this enum is APPEND-ONLY —
 ## never reorder or insert, or every authored ability silently changes shape.
-enum Kind { STRIKE, BLOCK, BLINK, TARGETED }
+##  - SELF — v0.43.0, the wizard's Blink. A COMMITTED cast on YOURSELF: no aim, no target, no tile on the
+##    wire. `windup_beats` channels, `recovery_beats` is the spent tail, and the effect lands at the END of
+##    the whole window. Today the only authored effect is `blink_travel_tiles` (teleport to a random
+##    reachable tile), but the Kind is deliberately named for the SHAPE — "a cast aimed at me" — not for
+##    that one effect, so a future self-buff is a `.tres` edit and not a sixth Kind.
+##    NOT AN INSTANT, and that distinction is load-bearing: it opens a real occupied window and respects
+##    every Commitment-Rule gate, so it is NOT gated on `instant_abilities_enabled` and does not widen the
+##    §2.11.1 experiment (CLAUDE.md: do not widen it again or build on it). See `blink_travel_tiles` for
+##    why the effect fires at the window's END rather than mid-cast.
+enum Kind { STRIKE, BLOCK, BLINK, TARGETED, SELF }
 
 ## This ability's shape (see Kind). Defaults to STRIKE, so every pre-v0.26.0 `.tres` keeps its exact behavior.
 @export var kind: Kind = Kind.STRIKE
@@ -143,6 +152,71 @@ enum TargetMode { TILE, CREATURE }
 @export var dot_ticks: int = 0
 @export var dot_interval_beats: float = 0.0
 
+## ── SELF: BLINK REACH in TRAVEL TILES (v0.43.0, the wizard's Blink) ───────────────────────────────
+##
+## 0 (the default) = this ability does not blink, so every other `.tres` is untouched. When > 0 on a SELF
+## ability, the caster teleports to a RANDOM free tile within this many travel-tiles at the end of the cast.
+##
+## SAME UNITS AND SAME PICKER AS THE POTION (`ItemType.blink_travel_tiles`): the destination comes from
+## `MoveReferee.pick_random_reachable_tile`, which draws from `WorldGrid.tiles_within_travel` — a
+## WALL-BOUNDED flood fill — so the spell can only ever land you somewhere you could have WALKED to. The
+## full reasoning for reachability-over-line-of-sight lives on the ItemType field; it is not repeated here
+## because there is exactly one rule and one implementation, and the wizard's version must not drift from
+## the potion's.
+##
+## THE TELEPORT FIRES AT THE END OF THE WHOLE COMMITTED WINDOW, and that is a correctness requirement
+## rather than a pacing choice. `MoveReferee.teleport_entity` ERASES the mover's busy record (it has to —
+## it is the forced-movement door, and a moved body cannot still be mid-glide). A blink resolving MID-window
+## would therefore delete the caster's own recovery tail and hand them a free self-interrupt, which is
+## exactly what §2.1.3 forbids and exactly the carve-out Shadow Step needed an experiment toggle for. Landing
+## it at the end means nothing is interrupted, so this spell needs no carve-out at all. Author
+## `recovery_beats = 0` and put the whole cost in `windup_beats`: you channel, then you are gone.
+@export var blink_travel_tiles: int = 0
+
+## ── TARGETED: MAGIC MISSILE (v0.43.0) ─────────────────────────────────────────────────────────────
+##
+## `orb_count` orbs, each dealing `orb_damage`, arriving `orb_interval_beats` apart. Fields rather than a
+## new Kind for the same reason the DoT block above is fields: a TARGETED cast's EFFECT is data. An ability
+## authored with BOTH a DoT and orbs would land both — the resolve applies whatever is present.
+##
+## THE VOLLEY IS NOT A PROJECTILE. It deliberately does NOT use the arrow pipeline, which bakes a
+## straight Bresenham path at launch with no re-aim hook, clips on walls, and stops at the first stoppable
+## occupant including allies — three properties that all contradict "these orbs home in on the body I
+## locked". Instead the run is a generation-guarded timer chain modelled on `apply_dot`, and the orbs are
+## pure per-peer FX driven by one `missile_volley` event. Damage rides normal `attack` events, so the
+## popups, the log lines, the aggro wake and the death path all come free.
+##
+## THE ESCAPE CHECK FIRES ONCE, AT RESOLVE — identical to Insect Plague. Outrun `range_tiles` before the
+## channel ends and the whole cast whiffs; survive to the resolve and all the orbs land wherever you run.
+## Per-orb re-checking would be a different spell, and a divergence from the TARGETED model this reuses.
+##
+## A KILL ENDS THE VOLLEY. The chain re-checks liveness after every hit (the `_dot_tick` contract), so orbs
+## never fire into a corpse — a 2 HP goblin eats one orb, not three.
+##
+## Damage kind is "missile": NON-PHYSICAL, so armour does not apply. Same call as "plague", same reason —
+## at 2 a hit, a flat band reduction would not soften the spell, it would erase it.
+@export var orb_count: int = 0
+@export var orb_damage: int = 0
+@export var orb_interval_beats: float = 0.0
+
+## MANA COST (v0.43.0). 0 (the default) = free, so every pre-v0.43.0 ability — kick, shield bash, and both
+## instants — is unchanged by this field existing. Authored: entangling roots 1, insect plague 2, blink 3,
+## magic missile 3.
+##
+## SPENT AT ACCEPT, NEVER REFUNDED, and this is the same rule `cooldown_beats` already follows (see its
+## note): a cast that whiffs, or one whose resolve is fizzled by a blink or a stun, still costs its mana.
+## You spent the spell the instant you committed to it. Charged on the line after `commit_in_place`
+## succeeds — the moment the decision became irrevocable — beside the cooldown charge.
+##
+## DELIBERATELY INDEPENDENT OF `instant_abilities_enabled`. Ability COOLDOWNS ride that toggle because they
+## are part of the pending §2.11.1 verdict; mana is its own system with its own `GameConfig.mana_enabled`
+## dial, so turning the instants experiment off does not make every spell free.
+##
+## Read HOST-side by the two mana gates (`_validate_use_ability` and `_use_targeted`, both immediately after
+## their cooldown check and before their busy check). Also read CLIENT-side, purely to refuse to arm a
+## targeting cursor for a spell you cannot pay for — convenience routing (§2.2.9), never authority.
+@export var mana_cost: int = 0
+
 ## COOLDOWN in BEATS before this ability may be used again (v0.27.0). 0 (default) = NO cooldown, which is
 ## byte-for-byte the pre-v0.27.0 behavior for any ability that leaves it unset.
 ##
@@ -180,6 +254,15 @@ enum TargetMode { TILE, CREATURE }
 ## be as unusable as a misauthored strike. Written as its OWN branch ABOVE the `!= STRIKE` early-return
 ## precisely so adding a Kind never silently grants it validity again.
 func is_valid_ability() -> bool:
+	# SELF (v0.43.0) gets its OWN explicit arm for the same reason TARGETED did, and sits above the
+	# `!= STRIKE` early return for the same reason: that early return grants blanket validity to every
+	# non-STRIKE Kind, so a new Kind that forgets to declare its requirements silently becomes "always
+	# valid". A self-cast needs exactly two things — an EFFECT to land (today that is a blink reach) and an
+	# occupied WINDOW to pay with. `windup + recovery > 0` matches the TARGETED test verbatim rather than
+	# demanding a positive windup specifically: a self-cast that is all tail is strange but coherent, while
+	# one with NO window at all would be an instant, which is a different Kind and a different rulebook.
+	if kind == Kind.SELF:
+		return blink_travel_tiles > 0 and (windup_beats + recovery_beats) > 0.0
 	if kind == Kind.TARGETED:
 		# v0.40.0: "has an effect to land" is now root OR damage-over-time, since a TARGETED cast's payload
 		# became data (see the DoT block above). The other two requirements are unchanged — a reach to aim
@@ -190,8 +273,13 @@ func is_valid_ability() -> bool:
 		# which is a different spell than the one authored (GLM diff review). A SINGLE tick needs no
 		# interval, since there is no gap to describe.
 		var dot_ok := dot_damage > 0 and dot_ticks > 0 and (dot_ticks == 1 or dot_interval_beats > 0.0)
+		# v0.43.0: orbs are the third payload a targeted cast may carry, and they take the SAME interval
+		# rule the DoT does — a multi-orb volley with no interval would fire its whole payload on
+		# zero-length timers, i.e. one burst, which is a different spell than the one authored. A single
+		# orb needs no interval since there is no gap to describe.
+		var orbs_ok := orb_damage > 0 and orb_count > 0 and (orb_count == 1 or orb_interval_beats > 0.0)
 		return range_tiles > 0 and (windup_beats + recovery_beats) > 0.0 \
-				and (root_beats > 0.0 or dot_ok)
+				and (root_beats > 0.0 or dot_ok or orbs_ok)
 	if kind != Kind.STRIKE:
 		return true
 	return (damage > 0 or stun_beats > 0.0) and (windup_beats + recovery_beats) > 0.0

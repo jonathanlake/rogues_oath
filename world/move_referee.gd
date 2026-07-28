@@ -532,6 +532,41 @@ func teleport_entity(entity_id: int, to: Vector2i) -> bool:
 	return true
 
 
+## Pick a uniformly-random legal BLINK destination for `entity_id`, or return the entity's CURRENT tile
+## when there is none (the caller's "it fizzled" signal). Host-only — the destination is chosen from THIS
+## referee's authoritative occupancy and the shared grid, never proposed by a client (§2.5), which is why
+## the wire only ever carries the resulting tile.
+##
+## LIVES HERE, beside `teleport_entity`, because it is the same question that function answers ("where may
+## this body legally be put") asked one step earlier, and because it needs `_occupied`/`_reserved` — which
+## are this referee's private state. It arrived in v0.42.0 inside InventoryReferee (the potion was its only
+## caller); v0.43.0 gave the wizard a Blink spell adjudicated in CombatReferee, and rather than let two
+## referees keep separate copies of "what counts as a legal landing spot" — the exact drift that produces
+## a spell and an item that disagree about walls — the one implementation moved to the referee that owns
+## the answer. Both callers resolve their own reach (`ItemType.blink_travel_tiles` /
+## `ActiveAbility.blink_travel_tiles`) and pass it as a plain int, so this stays pure.
+##
+## THE CANDIDATE SET IS WALL-BOUNDED, not a Chebyshev box: `tiles_within_travel` is a flood fill, so every
+## candidate is somewhere the entity could have WALKED to. That is what makes "blinked into a sealed room
+## and ended the run" unreachable BY CONSTRUCTION rather than by a distance check. See
+## ItemType.blink_travel_tiles for why reachability rather than line of sight.
+func pick_random_reachable_tile(entity_id: int, travel_tiles: int) -> Vector2i:
+	var from := _tile_of_peer(entity_id)
+	if from == _NO_TILE or not WorldGrid.is_walkable(from):
+		return from  # off-grid / untracked — nothing to blink out of.
+	var candidates: Array[Vector2i] = []
+	# tiles_within_travel already guarantees in-bounds + non-wall for every key, so is_tile_free is the only
+	# remaining test — it covers BOTH standing bodies (_occupied) and destinations another mover has already
+	# reserved mid-glide (_reserved), so a blink can never land on top of an arrival that is still in flight.
+	# The entity's OWN tile needs no special case: it holds their occupancy entry, so it fails is_tile_free.
+	for tile in WorldGrid.tiles_within_travel(from, travel_tiles):
+		if is_tile_free(tile):
+			candidates.append(tile)
+	if candidates.is_empty():
+		return from
+	return candidates[randi() % candidates.size()]
+
+
 ## The entity's current forced-movement interrupt generation (v0.26.0), 0 for an id never teleported.
 ## Captured by every deferred resolve at COMMIT and re-checked at FIRE — see `_interrupt_gen`.
 func interrupt_gen_of(entity_id: int) -> int:

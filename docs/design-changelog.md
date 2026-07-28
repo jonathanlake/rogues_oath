@@ -9,6 +9,46 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.43.0 (2026-07-28) — MANA, THE WIZARD'S FIRST TWO SPELLS, AND TRAITS.** The wizard was eight lines
+  of `.tres` — a name and a sprite — and casting had no cost at all. Both fixed.
+  **MANA.** A blue bar under your health, and only if your class has one: wizard and priest 15, druid 10,
+  everyone else no bar at all (not an empty one — nothing). Entangling Roots costs 1, Insect Plague 2,
+  both new wizard spells 3.
+  **YOU GET IT ALL BACK WHEN THE FIGHT ENDS**, which was Jon's rule. Two things had to be built to make
+  that rule survive contact with the game. First, an anti-flicker lockout: pace flips constantly when you
+  skim the edge of a goblin's aggro, and without a guard every flip would hand back a full pool — infinite
+  mana by walking in circles. Second, a slow explore sweep, because "when the fight ends" only fires for
+  someone who was *in* a fight: a wizard who spends while exploring had no fight to end and would have
+  walked into the next one empty.
+  **BLINK** — the potion's effect as a spell. A 2-beat cast, 3 mana, 10-beat cooldown, and it lands you on
+  a random reachable tile within three. Same wall-bounded picker the potion uses, now living on the movement
+  referee so a spell and an item can never drift apart on what counts as a legal landing spot.
+  **It is a committed cast, not an instant, and that was deliberate.** Shadow Step gets to interrupt your
+  own action because it is inside the pending instants experiment — and CLAUDE.md says not to widen that.
+  So Blink pays a real window instead, and the teleport fires at the *end* of it. That is not a pacing
+  choice: the teleport clears your busy record, so firing it mid-cast would delete your own recovery and
+  hand you a free self-interrupt — the exact thing the Commitment Rule forbids. Landing it at the end means
+  nothing is interrupted and no carve-out was needed.
+  **MAGIC MISSILE** — three orbs bloom out of the wizard and peel off one at a time into one enemy, 2 damage
+  each. It targets a creature exactly as the druid's two spells do, so the counterplay is the same: outrun
+  the caster's reach before the cast lands and it misses entirely. Once the volley starts, every orb
+  connects — but a kill ends it, so a 2 HP goblin eats one orb, not three. Armour does not apply; at 2 a hit
+  it would not soften the spell, it would erase it.
+  **Not built on the arrow pipeline,** which bakes a straight line at launch, clips on walls, and stops on
+  the first body in the way — three things that all contradict "these home in on the one I picked."
+  **TRAITS.** Passives are called Traits now, and they have hover tooltips. The rename turned out to cost
+  one label: the word "passive" appeared *nowhere* on screen — the panel listed bare bullets and never said
+  what they were. The code still says `PassiveAbility` internally, the same way the file is `backstab.gd`
+  while the player reads "Sneak Attack"; renaming resources risks Godot's uid cache for no player-visible
+  gain. Each trait now writes its own tooltip numbers, so retuning a multiplier moves the text with it.
+  **Every new number is live-tunable** — `/ab blink cooldown_beats 5`, `/ab magic_missile orb_count 5`, and
+  the debug panel's CLASSES section — so the balance questions are answerable in play.
+  **Verified:** a wizard cast Blink five times, 15 mana down to 0 in threes, five different legal
+  destinations, and the sixth press refused for mana. A volley landed exactly three 2-damage hits with the
+  orb choreography posted ahead of them. A spend followed by a refill, then a second refill correctly held
+  for six seconds by the lockout. Knight and ranger post no mana at all. One GLM pass on the diff.
+  **Known gap, said out loud:** the priest has 15 mana and nothing yet to spend it on.
+
 - **v0.42.0 (2026-07-28) — POTION OF BLINK.** The first item that does something other than heal you.
   **DRINK IT AND YOU ARE SOMEWHERE ELSE.** A random free tile within three tiles of where you stood. You
   don't aim it and you don't choose — the randomness *is* the item. Same two-beat commitment as any other
