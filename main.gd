@@ -1801,6 +1801,13 @@ func _handle_blink_event(event: Dictionary) -> void:
 	var data: Dictionary = event.get("data", {})
 	var ent := _node_for_peer(int(data.get("entity_id", 0))) as Entity
 	if ent != null:
+		# FIZZLE (v0.42.0, the blink potion): a drink that found nowhere legal to land posts this same event
+		# with from == to so the outcome routes through ONE shape instead of a second event name. Render
+		# NOTHING — a vanish flash that puts the body back where it already was reads as "something happened"
+		# when the whole point is that nothing did. The game_log line is the feedback for this branch (§2.3.4),
+		# and the rig reset below is skipped with it: no teleport happened, so no pose needs correcting.
+		if bool(data.get("fizzled", false)):
+			return
 		ent.snap_to_tile(data.get("to", ent.tile) as Vector2i)
 		# VISUAL RESET (v0.27.0): a blinker mid-swing or mid-windup arrives at its new tile in whatever pose
 		# the rig was parked in — and a WINDUP POSE has no expiry by design (play_swing hands it over), so a

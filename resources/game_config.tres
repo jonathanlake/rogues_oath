@@ -6,6 +6,7 @@
 [ext_resource type="Resource" path="res://resources/weapons/bow.tres" id="10_bow"]
 [ext_resource type="Resource" path="res://resources/weapons/club.tres" id="12_club"]
 [ext_resource type="Resource" path="res://resources/items/health_potion.tres" id="11_potion"]
+[ext_resource type="Resource" path="res://resources/items/blink_potion.tres" id="23_blink"]
 [ext_resource type="Resource" path="res://resources/items/leather_armor.tres" id="13_leather"]
 [ext_resource type="Resource" path="res://resources/items/chainmail.tres" id="14_chain"]
 [ext_resource type="Resource" path="res://resources/items/kite_shield.tres" id="21_kite"]
@@ -31,7 +32,7 @@ attacks_of_opportunity_enabled = false
 click_pathing_enabled = false
 weapon_roster = Array[Resource]([ExtResource("2_dagger"), ExtResource("3_longsword")])
 weapon_catalog = Array[Resource]([ExtResource("2_dagger"), ExtResource("3_longsword"), ExtResource("10_bow"), ExtResource("12_club")])
-item_catalog = Array[Resource]([ExtResource("11_potion"), ExtResource("13_leather"), ExtResource("14_chain"), ExtResource("21_kite")])
+item_catalog = Array[Resource]([ExtResource("11_potion"), ExtResource("23_blink"), ExtResource("13_leather"), ExtResource("14_chain"), ExtResource("21_kite")])
 ability_catalog = Array[Resource]([ExtResource("15_kick"), ExtResource("16_bash"), ExtResource("17_block"), ExtResource("18_step"), ExtResource("19_roots"), ExtResource("22_plague")])
 inventory_slots = 20
 class_roster = Array[Resource]([ExtResource("4_rogue"), ExtResource("5_knight"), ExtResource("6_wizard"), ExtResource("7_barbarian"), ExtResource("8_priest"), ExtResource("9_ranger"), ExtResource("20_druid")])

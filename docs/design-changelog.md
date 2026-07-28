@@ -9,6 +9,34 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.42.0 (2026-07-28) — POTION OF BLINK.** The first item that does something other than heal you.
+  **DRINK IT AND YOU ARE SOMEWHERE ELSE.** A random free tile within three tiles of where you stood. You
+  don't aim it and you don't choose — the randomness *is* the item. Same two-beat commitment as any other
+  drink, and the jump happens when the drink finishes, so it's an escape you have to plan a moment early
+  rather than a panic button.
+  **IT CANNOT DROP YOU SOMEWHERE YOU COULDN'T HAVE WALKED.** Jon asked whether blinking into a sealed area
+  could end a run prematurely — it could, so it doesn't. The destination is picked by the same wall-bounded
+  flood fill the pack-rally shout uses, which means every possible landing spot is somewhere you could have
+  walked to. In an open room that's exactly the 7x7 square you'd draw by hand; it only differs where a wall
+  was involved, which is the case worth differing on.
+  **We deliberately did NOT use line of sight for this,** which was the obvious first answer. Line of sight
+  forbids blinking around a corner — the item's whole point — while still happily dropping you on a
+  visible tile you can't walk back from. The question isn't "can I see it", it's "can I get back out", and
+  reachability answers that one exactly. The cost, stated plainly: this potion gets you **away**, it does
+  not get you **through**.
+  **Sealed in with nowhere to go, it fizzles and says so.** The potion is still spent — you committed to
+  drinking it — but "nothing happened" gets its own line so it can never be mistaken for a bug.
+  **The Commitment Rule is untouched.** Shadow Step is a sanctioned exception because it interrupts your
+  own action mid-flight; this teleport fires *after* the drink has played out, so it interrupts nothing and
+  needed no carve-out and no experiment toggle. It also inherits three behaviours from the shared
+  forced-movement door for free: it breaks a root, it grants no attack of opportunity, and it doesn't loot
+  what you land on.
+  **Built as data, not as a new mechanic:** blink reach is a field on the item, and it composes with the
+  heal field rather than replacing it — so a future "potion of escape" that heals *and* jumps is a
+  `.tres` edit with no code behind it.
+  **Verified:** five scripted runs, five different destinations from the same tile, every one inside the
+  three-tile reach and re-validated by the referee before it moved anything.
+
 - **v0.41.0 (2026-07-27) — SIX FIXES FROM PLAYTEST.** Three of them mine, from the last two versions.
   **THE ARCHER STOPS SHOOTING WALLS.** My v0.35.0 bug: the "shoot through your packmate anyway" roll
   fired whenever the lane wasn't clear — but that covered *an ally in the way*, *a wall*, and *no line at

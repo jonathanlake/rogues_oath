@@ -303,8 +303,74 @@ func _resolve_use(round_gen: int, user_id: int, heal_amount: int, item_name: Str
 		return
 	# Apply the heal through the combat referee's OWN pipe (its `heal` event carries hp_after so every peer
 	# renders the bar + popup — never a client compute). god mode does NOT block a heal (see apply_heal): god
-	# blocks damage, not recovery.
-	_combat.apply_heal(user_id, heal_amount, item_name)
+	# blocks damage, not recovery. Gated on a positive amount (v0.42.0) so a non-healing consumable — the
+	# blink potion — does not post a 0-point `heal` event and its "restores 0" line.
+	if heal_amount > 0:
+		_combat.apply_heal(user_id, heal_amount, item_name)
+	# BLINK (v0.42.0, the potion of blink). Re-resolved from the item NAME rather than carried in the timer
+	# bind: the bind captures PRIMITIVES ONLY (the v0.17.1 arrow idiom this whole resolve is built on), and
+	# the codebase-wide name-resolution model already makes a name → resource lookup the normal move. An
+	# unresolvable name here is config drift the use validator would already have refused, so this reads as
+	# "not a blink item" and the drink was simply the heal above.
+	var item: ItemType = GameManager.config.item_by_name(item_name)
+	if item != null and item.blink_travel_tiles > 0:
+		_resolve_blink(user_id, item.blink_travel_tiles, item_name)
+
+
+## Teleport the drinker of a blink item to a random REACHABLE free tile (v0.42.0). Host-only, called at the
+## END of the committed use window by _resolve_use — which is exactly why this needs no Commitment-Rule
+## carve-out and no `instant_abilities_enabled` gate. Shadow Step is a sanctioned §2.1.3 SUSPENSION because
+## it interrupts the user's OWN in-flight action; this teleport fires when the drink has already played to
+## completion, so it interrupts nothing and §2.1 stands untouched. Do not move this call earlier without
+## re-reading that distinction — the timing IS the compliance.
+##
+## FIZZLE IS AN OUTCOME, NOT A SWALLOW (§2.3.4): a drinker sealed in with no free reachable tile has spent
+## the potion for nothing, and that must be as legible as a successful jump. It posts the SAME `blink` event
+## carrying `fizzled` rather than inventing a second event name — one shape, one route, and every peer's
+## existing blink plumbing already carries it.
+func _resolve_blink(user_id: int, travel_tiles: int, item_name: String) -> void:
+	var from: Vector2i = _move_referee.tile_of_entity(user_id)
+	var dest := _pick_blink_tile(user_id, from, travel_tiles)
+	# teleport_entity re-derives membership, origin, walkability and freeness from its OWN state before it
+	# mutates anything, so a false return is a genuine "not legal after all" that changed nothing — and it is
+	# folded into the same fizzle branch as "no candidate existed" because the player-visible outcome is
+	# identical: the potion was drunk and you did not move.
+	if dest == from or not _move_referee.teleport_entity(user_id, dest):
+		NetEvents.post_event("blink", {
+			"entity_id": user_id, "from": from, "to": from,
+			"item": item_name, "fizzled": true,
+		}, user_id)
+		return
+	# The SAME event shape Shadow Step posts (combat_referee.gd:1711) — from/to so each peer can place the
+	# vanish and the arrival, never a `glide_to` (a glide means "tween over duration_sec", and a teleport has
+	# no travel to render). `item` rides it purely so a trace can tell a potion jump from a rogue's blink.
+	NetEvents.post_event("blink", {
+		"entity_id": user_id, "from": from, "to": dest, "item": item_name,
+	}, user_id)
+
+
+## Pick a uniformly-random legal blink destination, or return `from` when there is none (the fizzle signal).
+## Host-only — the destination is chosen from the HOST's authoritative occupancy and grid, never proposed by
+## a client (§2.5), which is why the wire only ever carries the resulting tile.
+##
+## THE CANDIDATE SET IS WALL-BOUNDED, not a Chebyshev box: `tiles_within_travel` is a flood fill, so every
+## candidate is somewhere the drinker could have WALKED to. That is what makes "blinked into a sealed room
+## and ended the run" unreachable by construction rather than by a length check. See
+## ItemType.blink_travel_tiles for why reachability rather than line of sight.
+func _pick_blink_tile(user_id: int, from: Vector2i, travel_tiles: int) -> Vector2i:
+	if not WorldGrid.is_walkable(from):
+		return from  # off-grid / untracked drinker — nothing to blink out of.
+	var candidates: Array[Vector2i] = []
+	# tiles_within_travel already guarantees in-bounds + non-wall for every key, so is_tile_free is the only
+	# remaining test — it covers BOTH standing bodies (_occupied) and destinations another mover has already
+	# reserved mid-glide (_reserved), so a blink can never land on top of an arrival that is still in flight.
+	# The drinker's OWN tile needs no special case: it holds their occupancy entry, so it fails is_tile_free.
+	for tile in WorldGrid.tiles_within_travel(from, travel_tiles):
+		if _move_referee.is_tile_free(tile):
+			candidates.append(tile)
+	if candidates.is_empty():
+		return from
+	return candidates[randi() % candidates.size()]
 
 
 ## The "equip_item" intent validator (host-only, v0.19.x loot). A player left-clicks a looted WEAPON in their bag;

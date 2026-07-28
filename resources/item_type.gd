@@ -111,6 +111,34 @@ enum EquipSlot { BODY, OFF_HAND, HEAD, HANDS, FEET, RING, AMULET }
 ## event then carries the resulting hp_after so every peer renders the bar + popup, never a client compute.
 @export var heal_amount: int = 10
 
+## BLINK REACH in TRAVEL TILES (v0.42.0, the potion of blink). 0 (the default) = not a blink item, which
+## is why every existing `.tres` is untouched by this field's mere existence. When > 0, finishing this
+## item's use TELEPORTS the drinker to a RANDOM free tile within this many travel-tiles of where they
+## stood — no aim, no choice, that randomness IS the item.
+##
+## UNITS ARE TRAVEL TILES, NOT A CHEBYSHEV BOX, and that is the whole safety story. The destination set
+## comes from `WorldGrid.tiles_within_travel` — the same wall-bounded flood fill the pack-rally shout uses
+## (GameConfig.rally_travel_tiles) — so the potion can only ever drop you somewhere you could have WALKED
+## to. In open floor a travel tile IS a king-step, so 3 reads exactly like the 7x7 box you would draw by
+## hand; it diverges only where a wall was involved, which is precisely the case worth diverging on.
+##
+## WHY NOT A RAW BOX + LINE OF SIGHT (Jon's question, 2026-07-28): a raw box lets the potion phase THROUGH
+## a wall into a sealed pocket, which can end a run outright — and LOS is the wrong instrument for fixing
+## that. LOS forbids blinking around a corner, which is the item's entire fantasy, while still permitting a
+## visible-but-inescapable tile. The hazard is not "can I see it", it is "can I get back out", and
+## reachability answers that one exactly. Wall-phasing is the deliberate cost: this potion gets you AWAY,
+## it does not get you THROUGH.
+##
+## Composes with `heal_amount` rather than replacing it — the use resolve applies whatever is authored, so
+## a future "potion of escape" that heals AND blinks is a `.tres` edit, not a referee edit (the same
+## data-not-shape reasoning ActiveAbility's DoT fields carry). NOTE the authoring trap that implies: a PURE
+## blink potion must author `heal_amount = 0` explicitly, because the script default is 10 and the editor's
+## saver strips default-equal values — an omitted heal field means a 10-point heal, not none.
+##
+## Read HOST-side by InventoryReferee at the END of the committed drink window; never a client value, and
+## never the wire (the resulting `blink` event carries the host-chosen tile).
+@export var blink_travel_tiles: int = 0
+
 ## Which SOCKET this wearable occupies (v0.27.1) — meaningful for an EQUIPMENT item, ignored for a
 ## POTION. Read HOST-side by the equip validator, which routes on it: BODY takes the body-armor path,
 ## and every other value is REFUSED ("no slot for that yet") until §2.10's remaining sockets land. The

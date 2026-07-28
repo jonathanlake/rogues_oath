@@ -438,6 +438,16 @@ func _on_event_received(event: Dictionary) -> void:
 			# a distinct outcome, distinct line). The "..." mirrors the windup "draws the..." telegraph shape.
 			# Name + item flow through add_line's sink escape like every line.
 			add_line("%s drinks the %s..." % [str(data.get("name", "Someone")), str(data.get("item", "item"))])
+		"blink":
+			# FIZZLED BLINKS ONLY (v0.42.0). A SUCCESSFUL blink is the most legible event in the game — a body
+			# vanishes and reappears somewhere else — so narrating it would be noise, and Shadow Step has
+			# deliberately shipped without a log line since v0.26.0. This arm exists for the one blink outcome
+			# that is INVISIBLE: a blink potion drunk with nowhere legal to land. §2.3.4's rule is that a
+			# distinct outcome gets a distinct line, and "the potion did nothing" is exactly the outcome that
+			# would otherwise be indistinguishable from a bug. Gating on `fizzled` is what keeps Shadow Step's
+			# logging byte-identical to before.
+			if bool(data.get("fizzled", false)):
+				add_line("The %s fizzles — nowhere to go." % str(data.get("item", "potion")))
 		"equip_item":
 			# A committed weapon / body-armor equip (v0.19.x loot, §2.3.4 — a distinct line). Party-wide:
 			# everyone sees who armed themselves with what. Names flow through add_line's sink escape. On the
