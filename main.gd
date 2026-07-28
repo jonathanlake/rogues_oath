@@ -1319,6 +1319,13 @@ func _handle_died_event(event: Dictionary) -> void:
 	var dead_node := _node_for_peer(dead_id)
 	if dead_node != null:
 		dead_node.hide_weapon_rig()
+		# Same reasoning for the CREATURE-cast brackets (v0.38.0): a target killed MID-CHANNEL never gets a
+		# resolve to clear its marker, and its own hold timer would leave it drawn on the body for the rest
+		# of the cast window. Monsters free their node a beat later so it would go anyway, but a PLAYER
+		# node persists through death (the party frame greys, the body stays) — so without this the corpse
+		# keeps a live "something is being cast at me" cue. Unconditional (no generation): the body is dead,
+		# whatever was aimed at it is moot.
+		dead_node.hide_targeted()
 	# Prune the dead entity from the overlay's live pace dict (v0.10.3) — its node frees so a stale entry is
 	# already inert (no node to ring), but drop it for hygiene so the dict tracks only living players.
 	_tactical_players.erase(dead_id)
@@ -1567,7 +1574,22 @@ func _handle_root_cast_event(event: Dictionary) -> void:
 	var target_tile: Vector2i = data.get("target_tile", caster.tile)
 	caster.face_toward(signi(target_tile.x - caster.tile.x))
 	var cast_sec := float(data.get("cast_sec", 0.0))
-	_fx.danger_tile(target_tile, cast_sec, Color(0.25, 0.85, 0.3, 0.45))
+	# TWO MODES, TWO CUES (v0.38.0), because the cue IS the counterplay instruction and must match what the
+	# host will actually do at resolve:
+	#  - CREATURE (`target_id` present) — mark the BODY with closing brackets that travel with it. The cast
+	#    follows that entity, so the answer is "get out of the caster's reach", and a square on the ground
+	#    would be advising a sidestep that no longer works.
+	#  - TILE (no `target_id`) — paint the ground, unchanged from v0.34.0: step off the square to dodge.
+	# Falls back to the ground paint if the marked entity can't be resolved on this peer (a body that
+	# despawned in the same breath), so the cast is never left with no telegraph at all.
+	# PRESENCE, not a magic value: `has` rather than comparing against 0. The referee only ever adds this
+	# key for a creature-mode cast, so "is it there" is exactly the question, and asking it directly keeps
+	# this reader honest if the entity-id space ever changes shape.
+	var target := _node_for_peer(int(data.get("target_id", 0))) as Entity if data.has("target_id") else null
+	if target != null:
+		target.play_targeted(cast_sec)
+	else:
+		_fx.danger_tile(target_tile, cast_sec, Color(0.25, 0.85, 0.3, 0.45))
 	caster.play_spell_cast(cast_sec, Color(0.35, 0.9, 0.35))
 
 

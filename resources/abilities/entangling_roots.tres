@@ -5,6 +5,7 @@
 [resource]
 script = ExtResource("1_aa")
 kind = 3
+target_mode = 1
 display_name = "Entangling Roots"
 atlas_coords = Vector2i(2, 10)
 log_verb = "entangles"

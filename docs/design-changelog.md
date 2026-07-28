@@ -9,6 +9,34 @@ See also: `DESIGN.md` (living design), `ROADMAP.md` (milestone chain), `README.m
 
 ---
 
+- **v0.38.0 (2026-07-27) — ROOT GRABS THE ENEMY, NOT THE GROUND.** Jon's diagnosis from playtest:
+  *"it can be a huge whiff of a cooldown if you click the tile and the goblin moves off it last second…
+  it adds a level of depth, having to time where the goblin will be, but I'm uncertain if that becomes a
+  little too reflex based like an action game."* And his own answer, which is the one we built: **some
+  spells target a tile, some target a creature.**
+  **ENTANGLING ROOTS NOW LOCKS ONTO THE ENEMY.** Click a goblin and the roots follow it — it can walk,
+  chase, or flee, and they still land where it ends up. No more losing a 40-beat cooldown because it
+  happened to take a step as you clicked.
+  **IT IS STILL NOT A SURE THING, and the escape is a footrace.** If the target gets outside your spell's
+  range before the cast finishes, it escapes and you eat the whole cooldown. So the counterplay didn't go
+  away, it changed shape: dodging used to be a one-tile sidestep and a reflex; now it's *run*. That was
+  the deliberate choice — a lock with no answer at all would be a 30-beat lockdown nobody can play
+  against. (A target that dies mid-cast fizzles it too.)
+  **MISCLICKS ARE FREE NOW.** A creature-targeting spell aimed at bare ground or at a friend is simply
+  refused — *"No target there."* — before anything is spent. No cast, no recovery, no cooldown.
+  **THE MARKER MOVED ONTO THE VICTIM.** A tile-targeting cast still paints the ground (the shaman's smite
+  is permanently that kind — step off it). A creature-targeting cast puts green brackets **on the target**
+  that close in as the cast finishes and travel with it, because that's the cue that tells you the right
+  answer is to run rather than sidestep.
+  **The smite is untouched** and stays a ground spell, which is the point of making this a per-spell
+  setting rather than a global rule.
+  **Verified over the wire, two instances:** a goblin that walked two tiles mid-cast still got rooted
+  (under the old rules that was a miss), and a second player who ran from 3 tiles away to 9 escaped it
+  cleanly — the log naming them by name rather than blaming the caster for a miss. One GLM red-team pass,
+  which caught a real one: the resolve was looking up *the tile the locked enemy stands on* and then
+  asking who was there, instead of just using the enemy it had locked. Same answer almost always, wrong
+  answer occasionally, and conceptually backwards for a spell about committing to a body. Fixed.
+
 - **v0.37.0 (2026-07-27) — BIGGER, FOR TIRED EYES.** A legibility batch, deliberately small: Jon asked
   for the debug panel and the chat window to be enlargeable ("some of us are getting older and our
   eyesight isn't what it used to be"), and after seeing the cost he **cut the debug-panel

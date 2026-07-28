@@ -164,6 +164,13 @@ var _stun_wobble_tween: Tween = null
 var _rooted_fx: Node2D = null
 var _rooted_fx_tween: Tween = null
 var _rooted_fx_gen: int = 0
+# TARGETED-BY-A-CAST marker (v0.38.0) — the CREATURE-mode telegraph. Own fx slot + generation, the rooted
+# cue's shape exactly. Lives ON THE TARGET rather than on the ground because that is what the mechanic
+# does: a creature-targeted cast follows the body, so a ground square would tell the player to sidestep,
+# which no longer works, and would say nothing about the thing that DOES work (running out of reach).
+var _targeted_fx: Node2D = null
+var _targeted_fx_tween: Tween = null
+var _targeted_fx_gen: int = 0
 # Overhead THINKING cue (v0.24.0 stamina experiment): a grey "…" held for the monster's rolled hesitation
 # window. Own fx slot + generation (never collides with stun/cast); self-clearing on a local timer —
 # there is deliberately no expire event (the duration rides the one `thinking` broadcast).
@@ -645,6 +652,56 @@ func play_rooted(hold_sec: float) -> void:
 	_rooted_fx_tween.tween_property(roots, "scale", Vector2(0.9, 1.05), 0.45)
 	# FLOORED, never gated — see _MIN_CUE_HOLD_SEC. Same two-belt shape as the stun icon above.
 	get_tree().create_timer(maxf(hold_sec, _MIN_CUE_HOLD_SEC)).timeout.connect(hide_rooted.bind(gen))
+
+
+## MARKED BY A CREATURE-TARGETED CAST (v0.38.0, §2.3.4) — four converging corner brackets that close in on
+## the body for the cast window, in the control channel's green. Driven per-peer from the `root_cast` event
+## when it carries a `target_id`; self-clearing on a generation-guarded local timer like the thinking cue,
+## since the cast's outcome (a `status_applied` root, or a whiff) is its own separate event.
+##
+## THIS IS THE COUNTERPLAY'S ONLY TELL, which is why it is on the BODY and not the ground. A tile-targeted
+## cast paints the square and the answer is "step off it"; a creature-targeted cast follows you, and the
+## answer is "get out of reach" — so the marker has to travel with the target or it would be telling the
+## victim to do the one thing that no longer saves them. The brackets CLOSING conveys the deadline; the
+## colour ties it to the green channel the caster's own cast symbol uses.
+##
+## NO gameplay meaning whatsoever: the host owns whether the cast lands, and re-reads range at resolve.
+func play_targeted(hold_sec: float) -> void:
+	hide_targeted()
+	_targeted_fx_gen += 1
+	var gen := _targeted_fx_gen
+	var fx := Node2D.new()
+	add_child(fx)
+	_targeted_fx = fx
+	# Four L-brackets, one per corner, built from Polygon2Ds like every other cue (font-independent, no art
+	# dependency). Each is drawn at the top-left and rotated into place, so one shape serves all four.
+	for i in 4:
+		var bracket := Polygon2D.new()
+		bracket.polygon = PackedVector2Array([
+			Vector2(-14, -14), Vector2(-6, -14), Vector2(-6, -11), Vector2(-11, -11),
+			Vector2(-11, -6), Vector2(-14, -6)])
+		bracket.color = Color(0.35, 0.95, 0.4)
+		bracket.rotation = i * TAU / 4.0
+		fx.add_child(bracket)
+	# Closing in: the brackets start wide and tighten over the channel, so the window reads as a countdown
+	# rather than a static highlight. Scale on the PARENT so all four converge on the body together.
+	_targeted_fx_tween = create_tween()
+	_targeted_fx_tween.tween_property(fx, "scale", Vector2(1.0, 1.0), maxf(hold_sec, 0.05)) \
+			.from(Vector2(1.9, 1.9))
+	get_tree().create_timer(maxf(hold_sec, _MIN_CUE_HOLD_SEC)).timeout.connect(hide_targeted.bind(gen))
+
+
+## Clear the targeted brackets. Same two-belt/generation contract as hide_rooted: no-arg is unconditional
+## (death / re-target pre-clear), a bound generation no-ops if a NEWER cast has since marked this body.
+func hide_targeted(gen: int = -1) -> void:
+	if gen != -1 and gen != _targeted_fx_gen:
+		return
+	if _targeted_fx_tween != null and _targeted_fx_tween.is_valid():
+		_targeted_fx_tween.kill()
+	_targeted_fx_tween = null
+	if _targeted_fx != null and is_instance_valid(_targeted_fx):
+		_targeted_fx.queue_free()
+	_targeted_fx = null
 
 
 ## Clear the rooted tendrils. No-arg (gen -1) = unconditional (status_expired / re-root pre-clear / death);

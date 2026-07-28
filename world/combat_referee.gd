@@ -1313,6 +1313,25 @@ func _use_targeted(user_id: int, ability: ActiveAbility, data: Dictionary) -> Di
 	var cheb := maxi(absi(target_tile.x - my_tile.x), absi(target_tile.y - my_tile.y))
 	if cheb > ability.range_tiles:
 		return { "ok": false, "reason": "Out of range." }
+	# CREATURE MODE (v0.38.0) — resolve the clicked tile to a BODY, here, from the referee's own occupancy.
+	# THE WIRE IS UNCHANGED: the client still sends only a tile, and the host does the tile→entity lookup
+	# itself, so a client can never name its own target (§2.5 — never adjudicate from a client value).
+	#
+	# AN EMPTY (or friendly) TILE IS REFUSED, and refused BEFORE the commit above, so a misclick costs
+	# nothing — no channel, no recovery, no 40-beat cooldown. That is the whole point of the mode: a spell
+	# that grabs a specific enemy has no meaning aimed at bare ground, and eating the cooldown for clicking
+	# dirt is exactly the "huge whiff of a cooldown" Jon asked to get rid of. It is NOT the client-side
+	# filtering §2.2.9 warns against either — the host answers with a distinct sentence the sender sees
+	# (§2.2.8 bonk + its own game-log line), so the click is never a silent no-op.
+	var locked_id: int = _NO_ENTITY
+	if ability.target_mode == ActiveAbility.TargetMode.CREATURE:
+		locked_id = _move_referee.entity_at(target_tile)
+		var locked := _node_of_id(locked_id)
+		if locked_id == _NO_ENTITY or locked == null or not is_alive(locked_id):
+			return { "ok": false, "reason": "No target there." }
+		var caster_probe := _node_of_id(user_id)
+		if caster_probe == null or not caster_probe.is_hostile_to(locked):
+			return { "ok": false, "reason": "Not an enemy." }
 	# ── Accept ──
 	# Forcing window (§2.8.7): a hostile cast keeps the caster tactical, like every other offensive action.
 	if _pace != null:
@@ -1327,25 +1346,38 @@ func _use_targeted(user_id: int, ability: ActiveAbility, data: Dictionary) -> Di
 	_move_referee.set_facing(user_id, (target_tile - my_tile).sign())
 	_charge_strike_cooldown(user_id, ability)
 	var caster := _node_of_id(user_id)
-	# Name the CURRENT occupant, best-effort, for the telegraph line only — the real resolve re-reads the
-	# tile at cast end, so a dodge turns this into a fizzle. An empty tile still telegraphs.
-	var occ_id: int = _move_referee.entity_at(target_tile)
+	# Name the CURRENT occupant. In TILE mode this is best-effort telegraph text only (the resolve re-reads
+	# the square, so a dodge turns it into a fizzle); in CREATURE mode it is the body we just locked, which
+	# the gate above proved is alive and hostile.
+	var occ_id: int = locked_id if locked_id != _NO_ENTITY else _move_referee.entity_at(target_tile)
 	var occ_name := _name_of(_node_of_id(occ_id)) if occ_id != _NO_ENTITY else ""
 	# The telegraph on its OWN event (smite_cast's field shape) — a distinct channel per §2.3.4, so the
 	# green control-cast can never be confused with the red smite or a white melee wind-up.
-	NetEvents.post_event("root_cast", {
+	#
+	# `locked_id` RIDES THE EVENT (v0.38.0) because the two modes need DIFFERENT cues, and the cue has to
+	# match the mechanic or it lies: a TILE cast paints the ground (step off it to dodge), while a CREATURE
+	# cast must mark the BODY and follow it (run out of range to escape). Present-only — 0 means tile mode,
+	# so nothing about the v0.34.0 event shape changed for a tile-targeted cast.
+	var cast_data := {
 		"caster_id": user_id,
 		"caster_name": _name_of(caster),
 		"target_tile": target_tile,
 		"target_name": occ_name,
 		"cast_sec": cast_sec,
-	}, user_id)
+	}
+	if locked_id != _NO_ENTITY:
+		cast_data["target_id"] = locked_id
+	NetEvents.post_event("root_cast", cast_data, user_id)
 	# interrupt_gen BOUND AT COMMIT and re-checked at fire. The smite skips this because only players blink
 	# and only monsters smite; a PLAYER caster closes that documented gap — a druid shadow-stepped (or, in
 	# future, knocked) out of its own channel is no longer standing where it cast from, so the roots fizzle.
+	# `locked_id` and `range_tiles` are bound too (v0.38.0): the creature resolve needs to know WHO it
+	# grabbed and how far the caster's reach is, and both are read from the ability HERE at commit rather
+	# than re-fetched at fire — stamp-and-bake (§2.8.2), so retuning the ability mid-channel cannot change
+	# a cast already in flight.
 	get_tree().create_timer(cast_sec).timeout.connect(
 			_resolve_targeted.bind(user_id, target_tile, ability.root_beats, recovery_sec,
-					_move_referee.interrupt_gen_of(user_id)))
+					_move_referee.interrupt_gen_of(user_id), locked_id, ability.range_tiles))
 	return { "ok": true, "deferred": true }
 
 
@@ -1356,8 +1388,20 @@ func _use_targeted(user_id: int, ability: ActiveAbility, data: Dictionary) -> Di
 ##  - caster STUNNED — the sanctioned §2.1 interrupt, stun-parity with the smite and the windup ability.
 ## Otherwise whoever HOSTILE and LIVING occupies the tile NOW is ROOTED for `root_beats`. NO DAMAGE: the
 ## root IS the payload, and mixing a damage event in would make the log read as a hit.
+##
+## CREATURE MODE (v0.38.0) changes only WHICH TILE is asked about. When `locked_id` is a real entity the
+## cast committed to a BODY, so the square the player clicked is history: we re-read that entity's CURRENT
+## authoritative tile and resolve there. Everything below — hostility, liveness, the root, the aggro wake,
+## the whiff tail — is then byte-identical between the two modes, which is the point of resolving the
+## difference into a tile up front instead of forking the outcome logic.
+##
+## THE ESCAPE IS THE COUNTERPLAY (Jon's ruling). A locked target that is still alive but has left
+## `range_tiles` of the caster whiffs — the tile is deliberately NOT resolved in that case, so it falls
+## through to the same whiff branch a dodged tile-cast takes. A locked target that DIED mid-channel also
+## whiffs, via the same liveness test the tile path already applies. So the mode does not remove the
+## counterplay, it changes its shape: sidestepping stops working, running works.
 func _resolve_targeted(caster_id: int, target_tile: Vector2i, root_beats: float, recovery_sec: float,
-		interrupt_gen: int) -> void:
+		interrupt_gen: int, locked_id: int = _NO_ENTITY, range_tiles: int = 0) -> void:
 	if not is_alive(caster_id):
 		return
 	if _move_referee.interrupt_gen_of(caster_id) != interrupt_gen:
@@ -1365,7 +1409,37 @@ func _resolve_targeted(caster_id: int, target_tile: Vector2i, root_beats: float,
 	if is_stunned(caster_id):
 		return
 	var caster := _node_of_id(caster_id)
-	var occ_id: int = _move_referee.entity_at(target_tile)
+	# CREATURE: follow the body. Range is measured from the CASTER's authoritative tile (it has not moved —
+	# the channel is an in-place commit, and a caster forcibly moved out of it was already caught by the
+	# interrupt-gen test above) to the target's tile RIGHT NOW.
+	#
+	# THE LOCK IS THE ANSWER — resolve to the ENTITY, never back through its tile. An earlier cut of this
+	# read the locked body's tile and then asked who was standing there, which is a round trip
+	# (entity → tile → entity) that can only ever return the same answer or a WRONG one: any disagreement
+	# between the occupancy map's two directions would silently root a different body or fizzle on a target
+	# that was right there. A mode whose whole premise is "commit to a BODY" must not re-derive that body
+	# from geography.
+	#
+	# `target_tile` is still reassigned to wherever the target actually ended up, because it is what the
+	# EVENT reports: an escape should read as "the roots erupted where it now is and grasped nothing", not
+	# as a fizzle on the square you originally clicked and stopped watching several seconds ago.
+	#
+	# `escaped` is recorded HERE, at the range test that decides it, rather than inferred later from
+	# "locked and still alive" — the two are not the same claim, and only this one is the reason.
+	var escaped := false
+	var occ_id: int = _NO_ENTITY
+	if locked_id == _NO_ENTITY:
+		occ_id = _move_referee.entity_at(target_tile)
+	elif is_alive(locked_id):
+		target_tile = _move_referee.tile_of_entity(locked_id)
+		var caster_tile: Vector2i = _move_referee.tile_of_entity(caster_id)
+		var reach := maxi(absi(target_tile.x - caster_tile.x), absi(target_tile.y - caster_tile.y))
+		if reach <= range_tiles:
+			occ_id = locked_id
+		else:
+			escaped = true
+	# else: killed mid-channel — fall through to the whiff on the originally-clicked tile. There is no body
+	# left to report a position for, and the death already told that story.
 	if occ_id != _NO_ENTITY:
 		var occ := _node_of_id(occ_id)
 		if occ != null and is_alive(occ_id) and caster != null and caster.is_hostile_to(occ):
@@ -1385,12 +1459,13 @@ func _resolve_targeted(caster_id: int, target_tile: Vector2i, root_beats: float,
 			if occ is Monster:
 				occ.notify_attacked()
 			return
-	# WHIFF — the target stepped off, died, or the ground was bare. A distinct §2.3.4 outcome on the same
-	# `attack` event every other whiff uses (kind "ability"), so no new client plumbing is needed.
+	# WHIFF — the target stepped off, died, escaped the reach, or the ground was bare. A distinct §2.3.4
+	# outcome on the same `attack` event every other whiff uses (kind "ability"), so no new client plumbing
+	# is needed.
 	# WHIFF RECOVERY IS A DIAL (v0.32.0, whiff_recovery_beats): the miss pays whatever _whiff_tail_sec says
 	# it owes and duration_sec quotes exactly that, so the spent tell matches the window the host holds.
 	var paid_sec := _whiff_tail_sec(caster, recovery_sec)
-	NetEvents.post_event("attack", {
+	var whiff_data := {
 		"attacker_id": caster_id,
 		"attacker_name": _name_of(caster),
 		"target_id": _NO_ENTITY,
@@ -1402,7 +1477,18 @@ func _resolve_targeted(caster_id: int, target_tile: Vector2i, root_beats: float,
 		"kind": "ability",
 		"whiff": true,
 		"duration_sec": paid_sec,
-	}, caster_id)
+	}
+	# ESCAPED (v0.38.0), present-only: a CREATURE cast whose living target outran the caster's reach. It is
+	# a genuinely different story from every other whiff — nobody mistimed anything, the target simply won
+	# the footrace — and §2.3.4 says a distinct outcome gets a distinct line, so the log can say so instead
+	# of reusing "hits nothing", which would read as the caster having fumbled. Absent on every other whiff,
+	# including a creature target that DIED mid-channel (that outcome's story is the death).
+	# Read from the flag the RANGE TEST set, so this can only ever mean "out of reach" and never stands in
+	# for some other reason the cast failed to land on a living target.
+	if escaped:
+		whiff_data["escaped"] = true
+		whiff_data["target_name"] = _name_of(_node_of_id(locked_id))
+	NetEvents.post_event("attack", whiff_data, caster_id)
 	# LAST, after the fizzle event is on the wire (the ordering rule every whiff release shares). The three
 	# regimes of `whiff_recovery_beats`: FULL (the default) leaves the window untouched; NONE releases now;
 	# PARTIAL releases at the PAID boundary the event just quoted.

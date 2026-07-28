@@ -41,6 +41,36 @@ enum Kind { STRIKE, BLOCK, BLINK, TARGETED }
 ## This ability's shape (see Kind). Defaults to STRIKE, so every pre-v0.26.0 `.tres` keeps its exact behavior.
 @export var kind: Kind = Kind.STRIKE
 
+## WHAT a TARGETED cast commits to (v0.38.0, Jon's ruling). Ignored by every other Kind.
+##  - TILE     — the v0.34.0 behavior: the cast names a SQUARE, and whoever hostile is standing on it when
+##               the channel ends gets the effect. Stepping one tile off dodges it completely. This is the
+##               monster smite's model (§2.3.4's red danger tile) and stays the default, so any TARGETED
+##               `.tres` authored before this field keeps its exact behavior.
+##  - CREATURE — the cast LOCKS ONTO A BODY. The host resolves whoever occupies the clicked tile at cast
+##               START, remembers that ENTITY, and at the end applies the effect wherever that entity now
+##               stands. Not a guaranteed hit: the target must still be alive and still within
+##               `range_tiles` of the caster when the channel ends, so the counterplay stops being a
+##               one-tile sidestep and becomes RUN.
+##
+## WHY BOTH EXIST, rather than migrating everything to CREATURE (Jon, 2026-07-27): the tile model asks you
+## to predict where someone WILL be, which is real depth but reads as twitchy on a 2-beat channel — "a huge
+## whiff of a cooldown if the goblin moves off it last second". The creature model asks you to commit to a
+## BODY and then keep it in reach, which is a positioning problem rather than a reflex one. Neither is
+## strictly better, so the shape belongs to the SPELL: ground-effect magic names ground, and a spell that
+## grabs a specific enemy names that enemy.
+##
+## THE CLIENT NEVER SENDS AN ENTITY ID. A creature-targeted click still puts a TILE on the wire, exactly as
+## a tile-targeted one does, and the host resolves it against its own occupancy (§2.5 — never adjudicate
+## from a client value). The wire shape is identical between the two modes; only the host's interpretation
+## differs, which is why this field is a host-side read and not a protocol change.
+##
+## ORDINALS ARE SERIALIZED, like Kind above — APPEND-ONLY, never reorder or insert.
+enum TargetMode { TILE, CREATURE }
+
+## Which of the two a TARGETED cast uses (see TargetMode). TILE by default so v0.34.0's authored
+## Entangling Roots would have been unchanged by this field's mere existence.
+@export var target_mode: TargetMode = TargetMode.TILE
+
 ## Player-facing name — HUD hotbar tooltip + the source of the combat-log verb. Empty = unnamed (still usable).
 ## ALSO the COOLDOWN KEY for an instant (the referee's per-entity ready-at map is keyed by it) and the id the
 ## `ability_used` / `ability_cooldown` events carry so each peer's HUD can find the right socket. Keep it unique

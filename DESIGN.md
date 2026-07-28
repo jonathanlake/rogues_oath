@@ -1068,6 +1068,36 @@ by stepping off, interrupt-gen guarded since a PLAYER caster can be blinked mid-
 **The DRUID** is the seventh class: the 32rogues druid sprite, leather armor, club, Entangling
 Roots. Backstab treating ROOTED as a compromised state (the §2.3 note) stays FUTURE — not wired.
 
+**v0.38.0 — A TARGETED CAST NAMES A TILE *OR* A CREATURE (`ActiveAbility.TargetMode`).** v0.34.0 gave
+every targeted cast the smite's model: commit to a SQUARE, and whoever stands on it at the end gets hit.
+Jon played it and found the failure mode — *"it can be a huge whiff of a cooldown if you click the tile
+and the goblin moves off it last second"* — and named the tension exactly: predicting where someone will
+be is real depth, but on a 2-beat channel it reads as a reflex test rather than a decision. So the answer
+is not to replace the model but to make it a PROPERTY OF THE SPELL: ground-effect magic names ground, and
+a spell that grabs a specific enemy names that enemy.
+- **TILE** (the default, unchanged): the v0.34.0 behavior. A monster's smite is permanently this — it is a
+  telegraphed patch of ground and sidestepping it is the whole game.
+- **CREATURE** (Entangling Roots, v0.38.0): the host resolves the clicked tile to a BODY at cast START and
+  applies the effect to that body wherever it stands at the end.
+**IT IS NOT A GUARANTEED HIT, and the replacement counterplay is Jon's ruling: OUT OF RANGE AT RESOLVE =
+WHIFF.** A locked target that dies fizzles the cast, and one still alive but beyond `range_tiles` when the
+channel ends escapes it entirely — the caster pays the full window and cooldown for nothing. So the
+counterplay changes SHAPE rather than disappearing: sidestepping stops working, running works. That is a
+positioning problem instead of a timing one, which is what Jon was reaching for. Locking with no failure
+condition was considered and rejected — a 30-beat hard CC that cannot be answered is not a decision
+anyone gets to make.
+**THE WIRE IS UNCHANGED AND THE CLIENT NEVER NAMES A TARGET.** A creature-mode click still sends only a
+TILE; the host does the tile→entity lookup from its own occupancy and remembers the id. §2.5 holds without
+a protocol change, and a client cannot nominate what it roots. The resolve reads the LOCKED ENTITY
+directly, never re-deriving it from its tile — a mode built on committing to a body must not rediscover
+that body from geography.
+**A creature cast REFUSES an empty or friendly tile** before committing anything, so a misclick costs no
+channel, no recovery and no cooldown. That is a §2.2.8 rejection with its own sentence, not the
+client-side filtering §2.2.9 warns against: the host answers, and the player hears why.
+**The telegraph moved onto the body** (§2.3.4): a tile cast paints the square, a creature cast marks the
+target with closing brackets that travel with it. The cue has to say which counterplay is available, and a
+square on the ground would be advising a sidestep that no longer saves you.
+
 **v0.35.0 — A HOSTILE CAST IS AN AGGRO SOURCE.** Landing a control spell now wakes the target's brain
 and fires the pack rally, exactly as damage does (§2.9's aggro line). Shipping v0.34.0 without it left
 one offensive act in the game that a monster could sleep through: aggro was wired to `apply_damage`,

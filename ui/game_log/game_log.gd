@@ -541,6 +541,12 @@ func _log_attack(data: Dictionary) -> void:
 		# A dodged SMITE (v0.19.10) gets its own line — the player stepped off the red tile in time (§2.3.4).
 		if str(data.get("kind", "")) == "smite":
 			add_line("%s's smite fizzles — dodged!%s" % [attacker_name, tail])
+		# ESCAPED (v0.38.0): a CREATURE-targeted cast whose living target outran the caster's reach. Its own
+		# sentence, because "hits nothing" would blame the caster for a miss they did not make — the target
+		# won a footrace, which is the counterplay working exactly as designed and should read that way.
+		elif bool(data.get("escaped", false)):
+			add_line("%s gets out of reach — %s's spell fizzles.%s" % [
+					str(data.get("target_name", "The target")), attacker_name, tail])
 		else:
 			add_line("%s's attack hits nothing.%s" % [attacker_name, tail])
 		return
