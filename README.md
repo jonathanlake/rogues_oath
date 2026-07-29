@@ -43,7 +43,7 @@ Not sure which doc to open? Start here.
 | **[DESIGN.md](DESIGN.md)** | The design: **Part 1** a 2-min overview, **Part 2** the full system spec, **Part 3** the why, **Part 4** open questions | Authoritative long-form prose; jump by section number (§2.1, §2.7…) |
 | **[ROADMAP.md](ROADMAP.md)** | The milestone chain — what's done and what's next | Checkbox milestones + a parking lot of unscheduled ideas |
 | **[CLAUDE.md](CLAUDE.md)** | How the project is built: structure, conventions, ground rules | Concise rules + a router to the docs below |
-| **[docs/](docs/)** | Depth on tap: [dev commands](docs/dev-commands.md), the [overnight runbook](docs/overnight-runbook.md), the [changelog](docs/design-changelog.md), [research notes](docs/research) | Focused single-topic files |
+| **[docs/](docs/)** | Depth on tap: [dev commands](docs/dev-commands.md), the [modifier resolver](docs/modifier-resolver.md) (how items/traits/abilities modify anything — and the field-vs-stat-vs-trait rule for sorting new content), the [overnight runbook](docs/overnight-runbook.md), the [changelog](docs/design-changelog.md), [research notes](docs/research) | Focused single-topic files |
 
 In-game, type `/help` in the chat for the dev commands. The scripted two-instance test harness and
 the contributor ground rules are in `CLAUDE.md`.

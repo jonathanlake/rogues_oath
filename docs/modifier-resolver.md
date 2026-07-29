@@ -62,27 +62,31 @@ Jon's stated ambition (2026-07-28), verbatim in substance:
 > be able to manipulate any state the player has, interact with the terrain, enemies, and each other
 > (traits buffing active abilities).
 
-The current shape cannot get there, for two reasons that are worth separating.
+The pre-v0.50.0 shape could not get there, for two reasons that are worth separating. **This section is
+the historical diagnosis** — it describes the state at v0.49.0, which is what the migration below is
+dismantling. For where things stand now, read the status line at the top.
 
-### 1. Six of the eight trait hooks are one function wearing six hats
+### 1. Six of the eight trait hooks were one function wearing six hats
 
-`resources/passive_ability.gd` has eight entry points. Three are **reactions** — `before_attack`,
-`after_attack`, `on_nearby_death` — "something happened, observe it". Those are fine: there are few, they
-are semantically distinct, and naming them is worth more than uniformity.
+At v0.49.0 `resources/passive_ability.gd` had eight entry points. Three are **reactions** —
+`before_attack`, `after_attack`, `on_nearby_death` — "something happened, observe it". Those are fine:
+there are few, they are semantically distinct, and naming them is worth more than uniformity. **They are
+not migrating** and are untouched.
 
-The other five plus the query are all *adjust a number, given a context*:
+The other five plus the query were all *adjust a number, given a context*:
 
-| hook | added | what it adjusts |
-|---|---|---|
-| `modify_damage` | v0.11.0 | outgoing damage |
-| `modify_windup_beats` | v0.35.0 | a wielder's windup |
-| `modify_recovery_beats` | v0.35.0 | a wielder's recovery |
-| `modify_move_beats` | v0.49.0 | a step's cost |
-| `modify_damage_taken` | v0.49.0 | incoming damage |
-| `spell_range_bonus` | v0.49.0 | a targeted cast's reach |
+| hook | added | what it adjusts | status |
+|---|---|---|---|
+| `modify_damage` | v0.11.0 | outgoing damage | migrates LAST (behaviour change) |
+| `modify_windup_beats` | v0.35.0 | a wielder's windup | **next up** |
+| `modify_recovery_beats` | v0.35.0 | a wielder's recovery | **next up** |
+| `modify_move_beats` | v0.49.0 | a step's cost | forces named suppression |
+| `modify_damage_taken` | v0.49.0 | incoming damage | pending |
+| ~~`spell_range_bonus`~~ | v0.49.0 | a targeted cast's reach | **GONE — migrated v0.50.0** |
 
-Every new number anyone wants to touch costs a contract change, a header amendment, and a dispatch site.
-Three of the four v0.49.0 traits needed a brand-new hook each. That curve does not flatten.
+Every new number anyone wanted to touch cost a contract change, a header amendment, and a dispatch site.
+Three of the four v0.49.0 traits needed a brand-new hook each. That curve does not flatten — which is why
+`modify_stat` replaced the *next* one rather than a seventh hook being added.
 
 ### 2. The real explosion is SOURCES × HOOKS, not hooks
 

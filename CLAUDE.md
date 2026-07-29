@@ -183,10 +183,12 @@ Placeholder-to-possibly-final: use it for all prototyping.
   panel, or the command framework.
 - Unattended build-verify sessions follow **`docs/overnight-runbook.md`** — read it before
   running a `/goal` night or anything cron-shaped.
-- **`docs/modifier-resolver.md`** is the designed-not-started replacement for the six numeric
-  `PassiveAbility` hooks — read it before adding a seventh, or before letting items/abilities
-  modify anything. It carries Jon's stacking and suppression rulings and the one-stat-at-a-time
-  migration order; ROADMAP's parking lot points at it.
+- **`docs/modifier-resolver.md`** is the replacement for the numeric `PassiveAbility` hooks —
+  **step 1 shipped v0.50.0** (`Stats.resolve`, `ABILITY_RANGE` migrated, equipment a trait source);
+  the remaining five numeric hooks migrate one stat per version. Read it before adding a numeric
+  hook, before letting items/abilities modify anything, and **before sorting any new content** —
+  it carries Jon's **three-layer rule** (field vs stat vs trait), the stacking/suppression rulings,
+  the migration order, and the OPEN trait-stacking/upgrade question. ROADMAP's parking lot points at it.
 - Current status + the milestone chain live in **`ROADMAP.md`** — read it at session start;
   update its checkboxes in the milestone's final commit.
 - Release history (the append-only changelog) lives in **`docs/design-changelog.md`** — DESIGN.md
